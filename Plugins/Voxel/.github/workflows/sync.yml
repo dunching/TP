@@ -1,0 +1,40 @@
+name: Sync
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: macOS
+
+    steps:
+      - name: Sync
+        run: |
+          cd ~/VoxelPluginSync
+
+          git checkout master
+          git pull
+          git pull --tags --force origin
+          git push origin-public --force --tags
+          git push origin-public
+
+          git checkout dev
+          git pull
+          git pull --tags --force origin
+          git push origin-public --force --tags
+          git push origin-public
+
+          git checkout dev-phy
+          git pull
+          git pull --tags --force origin
+          git push origin-public --force --tags
+          git push origin-public
+
+          git checkout 2.0p
+          git pull
+          git pull --tags --force origin
+          git push origin-public --force --tags
+          git push origin-public
+
+          git push --delete origin-public SlackCommits

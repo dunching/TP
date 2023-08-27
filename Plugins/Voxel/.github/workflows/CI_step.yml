@@ -1,0 +1,46 @@
+name: CI Step
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        required: true
+        type: string
+      engine:
+        required: true
+        type: string
+      cmd:
+        required: true
+        type: string
+
+jobs:
+  Build:
+    runs-on: Windows
+    defaults:
+      run:
+        working-directory: D:\BUILD\HostProject-${{ inputs.engine }}
+
+    steps:
+      - name: Configuring UE CLI
+        run: ue4 setroot "D:\BUILD\UnrealEngine-${{ inputs.engine }}"
+
+      - name: Pull
+        run: |
+          cd Plugins/VoxelPlugin
+          git reset --hard
+          git fetch origin +${{ github.sha }}:${{ github.ref }}
+          git checkout ${{ github.ref }}
+
+      - name: Package
+        run: ue4 package ${{ inputs.cmd }} -noturnkeyvariables
+          
+      - name: Report Status
+        uses: slackapi/slack-github-action@v1.21.0
+        if: failure()
+        with:
+          payload: |
+            {
+              "text": "${{ github.event.pull_request.message || github.event.head_commit.message }} failed on ${{ inputs.name }} ${{ inputs.engine }}\n${{ github.event.pull_request.html_url || github.event.head_commit.url }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

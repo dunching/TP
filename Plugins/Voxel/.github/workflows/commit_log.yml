@@ -1,0 +1,17 @@
+name: CommitLog
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "dev" ]
+
+jobs:
+  build:
+    runs-on: main
+
+    steps:
+      - name: Execute script
+        run: |
+          cd D:\BUILD\VoxelPlugin_CommitLog
+          git pull
+          python .github/scripts/commit_log.py

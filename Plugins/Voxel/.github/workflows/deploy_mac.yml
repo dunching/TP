@@ -1,0 +1,40 @@
+name: Deploy Mac
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version'
+        required: true
+        default: '2.0p-315.0'
+      unreal_versions:
+        description: 'Unreal versions'
+        required: true
+        default: '502'
+
+jobs:
+  build:
+    runs-on: macOS
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run
+        run: |
+          cd /Volumes/EXTERNAL/VoxelBuilder
+          git pull
+          arch -arm64 ue4 setroot "/Users/Shared/Epic Games/UE_5.2"
+          arch -arm64 ue4 build
+          arch -arm64 ue4 run -run=VoxelBuilder -branch="${{ github.event.inputs.version }}" -unrealVersions="${{ github.event.inputs.unreal_versions }}" -token=${{ secrets.VOXEL_AUTH_SERVER_TOKEN }} -dllerrors
+          arch -arm64 ue4 run -run=VoxelBuilder -branch="${{ github.event.inputs.version }}" -unrealVersions="${{ github.event.inputs.unreal_versions }}" -token=${{ secrets.VOXEL_AUTH_SERVER_TOKEN }} -voxeldebug -dllerrors
+
+      - name: Report Status
+        uses: slackapi/slack-github-action@v1.21.0
+        if: failure()
+        with:
+          payload: |
+            {
+              "text": "Deploy failed https://github.com/VoxelPluginDev/VoxelPlugin/actions/workflows/deploy_mac.yml"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

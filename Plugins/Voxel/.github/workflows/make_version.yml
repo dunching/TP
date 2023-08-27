@@ -1,0 +1,39 @@
+name: Make Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version'
+        required: true
+        default: '2.0p-315.0'
+      branch:
+        description: 'Branch'
+        required: true
+        default: '2.0p'
+
+jobs:
+  build:
+    runs-on: Windows
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run
+        run: |
+          cd D:\BUILD\VoxelBuilder
+          git pull
+          ue4 setroot "D:\BUILD\UnrealEngine-5.2"
+          ue4 build
+          ue4 run -run=VoxelBuilder -make -version="${{ github.event.inputs.version }}" -branch="${{ github.event.inputs.branch }}"
+
+      - name: Report Status
+        uses: slackapi/slack-github-action@v1.21.0
+        if: failure()
+        with:
+          payload: |
+            {
+              "text": "Make Version failed https://github.com/VoxelPluginDev/VoxelPlugin/actions/workflows/deploy.yml"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

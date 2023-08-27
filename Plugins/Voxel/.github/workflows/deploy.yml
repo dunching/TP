@@ -1,0 +1,40 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version'
+        required: true
+        default: '2.0p-315.0'
+      unreal_versions:
+        description: 'Unreal versions'
+        required: true
+        default: '501,502'
+
+jobs:
+  build:
+    runs-on: Windows
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run
+        run: |
+          cd D:\BUILD\VoxelBuilder
+          git pull
+          ue4 setroot "D:\BUILD\UnrealEngine-5.2"
+          ue4 build
+          ue4 run -run=VoxelBuilder -branch="${{ github.event.inputs.version }}" -unrealVersions="${{ github.event.inputs.unreal_versions }}" -token=${{ secrets.VOXEL_AUTH_SERVER_TOKEN }}
+          ue4 run -run=VoxelBuilder -branch="${{ github.event.inputs.version }}" -unrealVersions="${{ github.event.inputs.unreal_versions }}" -token=${{ secrets.VOXEL_AUTH_SERVER_TOKEN }} -voxeldebug
+
+      - name: Report Status
+        uses: slackapi/slack-github-action@v1.21.0
+        if: failure()
+        with:
+          payload: |
+            {
+              "text": "Deploy failed https://github.com/VoxelPluginDev/VoxelPlugin/actions/workflows/deploy.yml"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

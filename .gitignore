@@ -1,0 +1,17 @@
+/*.sln
+/Saved
+/.vs
+/Binaries
+/Build
+/DerivedDataCache
+/Intermediate
+/OutDir
+/Script
+/Content/Developers
+/Content/Collections
+/Content/Test
+/Plugins/*/Intermediate
+/Plugins/*/Binaries
+/Platforms
+/.vsconfig
+/Content/MegascansPlugin

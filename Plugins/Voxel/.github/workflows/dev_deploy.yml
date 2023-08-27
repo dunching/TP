@@ -1,0 +1,37 @@
+name: Dev deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "dev" ]
+
+concurrency:
+  group: "dev"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: Windows
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run
+        run: |
+          cd D:\BUILD\VoxelBuilder
+          git pull
+          ue4 setroot "D:\BUILD\UnrealEngine-5.2"
+          ue4 build
+          ue4 run -run=VoxelBuilder -branch="dev" -unrealVersions="502" -token=${{ secrets.VOXEL_AUTH_SERVER_TOKEN }}
+          ue4 run -run=VoxelBuilder -branch="dev" -unrealVersions="502" -token=${{ secrets.VOXEL_AUTH_SERVER_TOKEN }} -voxeldebug
+
+      - name: Report Status
+        uses: slackapi/slack-github-action@v1.21.0
+        if: failure()
+        with:
+          payload: |
+            {
+              "text": "Dev deploy failed on 5.2"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
