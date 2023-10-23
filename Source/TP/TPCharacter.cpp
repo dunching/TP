@@ -13,17 +13,23 @@
 #include "Kismet/GameplayStatics.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/StaticMeshActor.h"
+#include <Runtime/Engine/Classes/Kismet/KismetMathLibrary.h>
 
 #include "VoxelMinimal.h"
 #include "VoxelActor.h"
 #include "VoxelChunkSpawner.h"
 #include "VoxelRuntime.h"
+#include "TPCharacterMovementComponent.h"
 
 
 //////////////////////////////////////////////////////////////////////////
 // ATPCharacter
 
-ATPCharacter::ATPCharacter()
+ATPCharacter::ATPCharacter(const FObjectInitializer& ObjectInitializer) :
+    Super(
+        ObjectInitializer.
+        SetDefaultSubobjectClass<UTPCharacterMovementComponent>(ACharacter::CharacterMovementComponentName)
+    )
 {
     // Set size for collision capsule
     GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
@@ -89,6 +95,42 @@ void ATPCharacter::BeginPlay()
             ));
         }
     }
+}
+
+void ATPCharacter::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    GetCharacterMovement()->SetGravityDirection(-GetActorLocation().GetSafeNormal());
+}
+
+FRotator ATPCharacter::GetViewRotation() const
+{
+    if (Controller != nullptr)
+    {
+        const auto PCRot = Controller->GetControlRotation();
+        const FRotator GravityRelativeDesiredRotation = (GetGravityTransform() * PCRot.Quaternion()).Rotator();
+
+        DrawDebugLine(GetWorld(), GetActorLocation(), GetActorLocation() + (GravityRelativeDesiredRotation.Vector() * 100), FColor::Yellow, false, 5.f);
+
+        return GravityRelativeDesiredRotation;
+    }
+    else if (GetLocalRole() < ROLE_Authority)
+    {
+        // check if being spectated
+        for (FConstPlayerControllerIterator Iterator = GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)
+        {
+            APlayerController* PlayerController = Iterator->Get();
+            if (PlayerController &&
+                PlayerController->PlayerCameraManager &&
+                PlayerController->PlayerCameraManager->GetViewTargetPawn() == this)
+            {
+                return PlayerController->BlendedTargetViewRotation;
+            }
+        }
+    }
+
+    return GetActorRotation();
 }
 
 void ATPCharacter::OnChunkChanged(const FBox& Box, int32 LOD, int32 Size)
@@ -183,6 +225,12 @@ void ATPCharacter::Move(const FInputActionValue& Value)
         const FRotator Rotation = Controller->GetControlRotation();
         const FRotator YawRotation(0, Rotation.Yaw, 0);
 
+//         // get forward vector
+//         const FVector ForwardDirection = CameraBoom->GetForwardVector();
+// 
+//         // get right vector 
+//         const FVector RightDirection = CameraBoom->GetRightVector();
+
         // get forward vector
         const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
 
@@ -205,6 +253,7 @@ void ATPCharacter::Look(const FInputActionValue& Value)
         // add yaw and pitch input to controller
         AddControllerYawInput(LookAxisVector.X);
         AddControllerPitchInput(LookAxisVector.Y);
+ //       CameraBoom->AddRelativeRotation(FRotator(LookAxisVector.Y, 0.f, 0.f));
     }
 }
 
