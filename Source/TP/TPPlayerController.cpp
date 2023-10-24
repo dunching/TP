@@ -5,8 +5,74 @@
 #include <IXRTrackingSystem.h>
 #include <IXRCamera.h>
 #include <Kismet/KismetMathLibrary.h>
+#include "TPCharacter.h"
 
 void ATPPlayerController::UpdateRotation(float DeltaTime)
 {
-	Super::UpdateRotation(DeltaTime);
+	// Calculate Delta to be applied on ViewRotation
+	FRotator DeltaRot(RotationInput);
+
+	FRotator ViewRotation = GetControlRotation();
+
+	if (PlayerCameraManager)
+	{
+		PlayerCameraManager->ProcessViewRotation(DeltaTime, ViewRotation, DeltaRot);
+	}
+
+	AActor* ViewTarget = GetViewTarget();
+	if (!PlayerCameraManager || !ViewTarget || !ViewTarget->HasActiveCameraComponent() || ViewTarget->HasActivePawnControlCameraComponent())
+	{
+		if (IsLocalPlayerController() && GEngine->XRSystem.IsValid() && GetWorld() != nullptr && GEngine->XRSystem->IsHeadTrackingAllowedForWorld(*GetWorld()))
+		{
+			auto XRCamera = GEngine->XRSystem->GetXRCamera();
+			if (XRCamera.IsValid())
+			{
+				XRCamera->ApplyHMDRotation(this, ViewRotation);
+			}
+		}
+	}
+
+	SetControlRotation(ViewRotation);
+
+	APawn* const P = GetPawnOrSpectator();
+	if (P)
+	{
+		P->FaceRotation(ViewRotation, DeltaTime);
+	}
+}
+
+void ATPPlayerController::SetControlRotation(const FRotator& NewRotation)
+{
+	if (!IsValidControlRotation(NewRotation))
+	{
+		logOrEnsureNanError(TEXT("AController::SetControlRotation attempted to apply NaN-containing or NaN-causing rotation! (%s)"), *NewRotation.ToString());
+		return;
+	}
+
+	if (!ControlRotation.Equals(NewRotation, 1e-3f))
+	{
+		ControlRotation = NewRotation;
+
+		if (RootComponent && RootComponent->IsUsingAbsoluteRotation())
+		{
+			APawn* const P = GetPawnOrSpectator();
+			if (P)
+			{
+				RootComponent->SetWorldRotation(P->GetGravityTransform() * GetControlRotation().Quaternion());
+			}
+		}
+	}
+	else
+	{
+		//UE_LOG(LogPlayerController, Log, TEXT("Skipping SetControlRotation %s for %s (Pawn %s)"), *NewRotation.ToString(), *GetNameSafe(this), *GetNameSafe(GetPawn()));
+	}
+}
+
+FRotator ATPPlayerController::GetDesiredRotation() const
+{
+	if (RootComponent && RootComponent->IsUsingAbsoluteRotation())
+	{
+		return RootComponent->GetComponentRotation();
+	}
+	return FRotator::ZeroRotator;
 }

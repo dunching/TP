@@ -8,6 +8,12 @@ public class TP : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        if (Target.bBuildEditor == true)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+            PrivateDependencyModuleNames.Add("SubobjectDataInterface");
+        }
+
         PrivateDependencyModuleNames.AddRange(new string[] {
             "VoxelCore",
             "VoxelGraphCore",

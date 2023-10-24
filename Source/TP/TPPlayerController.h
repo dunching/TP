@@ -14,6 +14,11 @@ class ATPPlayerController : public APlayerController
     GENERATED_BODY()
 
 public:
+
     virtual void UpdateRotation(float DeltaTime);
+
+    virtual void SetControlRotation(const FRotator& NewRotation);
+
+    virtual FRotator GetDesiredRotation() const;
 
 };

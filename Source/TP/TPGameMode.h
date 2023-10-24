@@ -14,6 +14,3 @@ class ATPGameMode : public AGameModeBase
 public:
 	ATPGameMode();
 };
-
-
-

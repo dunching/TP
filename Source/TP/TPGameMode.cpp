@@ -4,6 +4,10 @@
 #include "TPCharacter.h"
 #include "UObject/ConstructorHelpers.h"
 
+#if WITH_EDITOR
+#include "Editor/EditorEngine.h"
+#endif
+
 ATPGameMode::ATPGameMode()
 {
 	// set default pawn class to our Blueprinted character

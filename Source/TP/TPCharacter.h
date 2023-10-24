@@ -39,8 +39,12 @@ class ATPCharacter : public ACharacter
         class UInputAction* LookAction;
 
 public:
+
     ATPCharacter(const FObjectInitializer& ObjectInitializer);
 
+    FQuat GetWorldTransform() const;
+
+    bool HasCustomGravity() const;
 
 protected:
 

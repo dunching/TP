@@ -66,11 +66,87 @@ ATPCharacter::ATPCharacter(const FObjectInitializer& ObjectInitializer) :
     // are set in the derived blueprint asset named ThirdPersonCharacter (to avoid direct content references in C++)
 }
 
+FQuat ATPCharacter::GetWorldTransform() const
+{
+    FQuat WorldTransform = FQuat::Identity;
+    const UCharacterMovementComponent* const MovementComponent = GetCharacterMovement();
+    if (MovementComponent)
+    {
+        WorldTransform = MovementComponent->GetGravityToWorldTransform();
+    }
+
+    return WorldTransform;
+}
+
+bool ATPCharacter::HasCustomGravity() const
+{
+    const UCharacterMovementComponent* const MovementComponent = GetCharacterMovement();
+    if (MovementComponent)
+    {
+        return MovementComponent->HasCustomGravity();
+    }
+
+    return false;
+}
+
+void TestTrans(UWorld*WorldPtr)
+{
+    // Need at least 4 segments
+    auto Segments = 100;
+    FVector Center(0);
+    float Radius = 500;
+
+    const float AngleInc = 2.f * UE_PI / Segments;
+    int32 NumSegmentsY = Segments;
+    float Latitude = AngleInc;
+    float SinY1 = 0.0f, CosY1 = 1.0f;
+
+    TArray<FVector>Pts;
+    while (NumSegmentsY--)
+    {
+        const float SinY2 = FMath::Sin(Latitude);
+        const float CosY2 = FMath::Cos(Latitude);
+
+        FVector Vertex1 = FVector(SinY1, 0.0f, CosY1) * Radius + Center;
+        FVector Vertex3 = FVector(SinY2, 0.0f, CosY2) * Radius + Center;
+        float Longitude = AngleInc;
+
+        int32 NumSegmentsX = Segments;
+        while (NumSegmentsX--)
+        {
+            const float SinX = FMath::Sin(Longitude);
+            const float CosX = FMath::Cos(Longitude);
+
+            const FVector Vertex2 = FVector((CosX * SinY1), (SinX * SinY1), CosY1) * Radius + Center;
+            const FVector Vertex4 = FVector((CosX * SinY2), (SinX * SinY2), CosY2) * Radius + Center;
+
+            Pts.Add(Vertex1);
+            Pts.Add(Vertex2);
+
+            Vertex1 = Vertex2;
+            Vertex3 = Vertex4;
+            Longitude += AngleInc;
+        }
+        SinY1 = SinY2;
+        CosY1 = CosY2;
+        Latitude += AngleInc;
+    }
+
+    FVector Dir = FVector::RightVector;
+    FlushPersistentDebugLines(WorldPtr);
+    for (auto& ITer : Pts)
+    {
+        DrawDebugLine(WorldPtr, Center, ITer, FColor::Red, true);
+
+        DrawDebugLine(WorldPtr, ITer, ITer + (ITer.Rotation().RotateVector(Dir) * 100), FColor::Yellow, true);
+    }
+}
+
 void ATPCharacter::BeginPlay()
 {
     // Call the base class  
     Super::BeginPlay();
-
+ //   TestTrans(GetWorld());
     //Add Input Mapping Context
     if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
     {
@@ -109,9 +185,8 @@ FRotator ATPCharacter::GetViewRotation() const
     if (Controller != nullptr)
     {
         const auto PCRot = Controller->GetControlRotation();
-        const FRotator GravityRelativeDesiredRotation = (GetGravityTransform() * PCRot.Quaternion()).Rotator();
 
-        DrawDebugLine(GetWorld(), GetActorLocation(), GetActorLocation() + (GravityRelativeDesiredRotation.Vector() * 100), FColor::Yellow, false, 5.f);
+        const FRotator GravityRelativeDesiredRotation = (PCRot.Quaternion()).Rotator();
 
         return GravityRelativeDesiredRotation;
     }
