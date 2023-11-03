@@ -9,6 +9,26 @@
 void UTPCharacterMovementComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    WorldToGravityTransform = UKismetMathLibrary::MakeRotFromZX(
+        -GravityDirection,
+        CharacterOwner->Controller->GetDesiredRotation().Vector()
+    ).Quaternion();
+
+    GravityToWorldTransform = WorldToGravityTransform.Inverse();
+
+//     DrawDebugLine(
+//         GetWorld(),
+//         UpdatedComponent->GetComponentLocation() + (-GravityDirection * 50),
+//         UpdatedComponent->GetComponentLocation() + (-GravityDirection * 50) + (WorldToGravityTransform.GetAxisX() * 100),
+//         FColor::Yellow, false, 3.f
+//     );
+//     DrawDebugLine(
+//         GetWorld(),
+//         UpdatedComponent->GetComponentLocation() + (-GravityDirection * 50),
+//         UpdatedComponent->GetComponentLocation() + (-GravityDirection * 50) + (WorldToGravityTransform.GetAxisY() * 100),
+//         FColor::White, false, 3.f
+//     );
 }
 
 void UTPCharacterMovementComponent::SetGravityDirection(const FVector& InNewGravityDir)
@@ -20,35 +40,175 @@ void UTPCharacterMovementComponent::SetGravityDirection(const FVector& InNewGrav
         {
             GravityDirection = NewGravityDir;
 
-            WorldToGravityTransform = UKismetMathLibrary::MakeRotFromZX(
-                -GravityDirection,
-                CharacterOwner->Controller->GetDesiredRotation().Vector()
-            ).Quaternion();
-
-            DrawDebugLine(
-                GetWorld(),
-                UpdatedComponent->GetComponentLocation(),
-                UpdatedComponent->GetComponentLocation() + (WorldToGravityTransform.GetAxisX() * 100),
-                FColor::Yellow, false, 3.f
-            );
-
-            GravityToWorldTransform = WorldToGravityTransform.Inverse();
-
             bHasCustomGravity = !GravityDirection.Equals(DefaultGravityDirection);
         }
     }
 }
 
+void UTPCharacterMovementComponent::CalcVelocity(float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration)
+{
+    // Do not update velocity when using root motion or when SimulatedProxy and not simulating root motion - SimulatedProxy are repped their Velocity
+    if (!HasValidData() || HasAnimRootMotion() || DeltaTime < MIN_TICK_TIME || (CharacterOwner && CharacterOwner->GetLocalRole() == ROLE_SimulatedProxy && !bWasSimulatingRootMotion))
+    {
+        return;
+    }
+
+    Friction = FMath::Max(0.f, Friction);
+    const float MaxAccel = GetMaxAcceleration();
+    float MaxSpeed = GetMaxSpeed();
+
+    // Check if path following requested movement
+    bool bZeroRequestedAcceleration = true;
+    FVector RequestedAcceleration = FVector::ZeroVector;
+    float RequestedSpeed = 0.0f;
+    if (ApplyRequestedMove(DeltaTime, MaxAccel, MaxSpeed, Friction, BrakingDeceleration, RequestedAcceleration, RequestedSpeed))
+    {
+        bZeroRequestedAcceleration = false;
+    }
+
+    if (bForceMaxAccel)
+    {
+        // Force acceleration at full speed.
+        // In consideration order for direction: Acceleration, then Velocity, then Pawn's rotation.
+        if (Acceleration.SizeSquared() > UE_SMALL_NUMBER)
+        {
+            Acceleration = Acceleration.GetSafeNormal() * MaxAccel;
+        }
+        else
+        {
+            Acceleration = MaxAccel * (Velocity.SizeSquared() < UE_SMALL_NUMBER ? UpdatedComponent->GetForwardVector() : Velocity.GetSafeNormal());
+        }
+
+        AnalogInputModifier = 1.f;
+    }
+
+    // Path following above didn't care about the analog modifier, but we do for everything else below, so get the fully modified value.
+    // Use max of requested speed and max speed if we modified the speed in ApplyRequestedMove above.
+    const float MaxInputSpeed = FMath::Max(MaxSpeed * AnalogInputModifier, GetMinAnalogSpeed());
+    MaxSpeed = FMath::Max(RequestedSpeed, MaxInputSpeed);
+
+    // Apply braking or deceleration
+    const bool bZeroAcceleration = Acceleration.IsZero();
+    const bool bVelocityOverMax = IsExceedingMaxSpeed(MaxSpeed);
+
+    // Only apply braking if there is no acceleration, or we are over our max speed and need to slow down to it.
+    if ((bZeroAcceleration && bZeroRequestedAcceleration) || bVelocityOverMax)
+    {
+        const FVector OldVelocity = Velocity;
+
+        const float ActualBrakingFriction = (bUseSeparateBrakingFriction ? BrakingFriction : Friction);
+        ApplyVelocityBraking(DeltaTime, ActualBrakingFriction, BrakingDeceleration);
+
+        // Don't allow braking to lower us below max speed if we started above it.
+        if (bVelocityOverMax && Velocity.SizeSquared() < FMath::Square(MaxSpeed) && FVector::DotProduct(Acceleration, OldVelocity) > 0.0f)
+        {
+            Velocity = OldVelocity.GetSafeNormal() * MaxSpeed;
+        }
+    }
+    else if (!bZeroAcceleration)
+    {
+        // Friction affects our ability to change direction. This is only done for input acceleration, not path following.
+        const FVector AccelDir = Acceleration.GetSafeNormal();
+        const float VelSize = Velocity.Size();
+        Velocity = Velocity - (Velocity - AccelDir * VelSize) * FMath::Min(DeltaTime * Friction, 1.f);
+    }
+
+    // Apply fluid friction
+    if (bFluid)
+    {
+        Velocity = Velocity * (1.f - FMath::Min(Friction * DeltaTime, 1.f));
+    }
+
+    // Apply input acceleration
+    if (!bZeroAcceleration)
+    {
+        const float NewMaxInputSpeed = IsExceedingMaxSpeed(MaxInputSpeed) ? Velocity.Size() : MaxInputSpeed;
+
+        UE_LOG(LogTemp, Log, TEXT("Velocity %s"), *Velocity.ToString());
+        UE_LOG(LogTemp, Log, TEXT("Acceleration %s"), *(Acceleration * DeltaTime).ToString());
+        Velocity += Acceleration * DeltaTime;
+
+        Velocity = Velocity.GetClampedToMaxSize(NewMaxInputSpeed * VelocityScale);
+    }
+
+    // Apply additional requested acceleration
+    if (!bZeroRequestedAcceleration)
+    {
+        const float NewMaxRequestedSpeed = IsExceedingMaxSpeed(RequestedSpeed) ? Velocity.Size() : RequestedSpeed;
+        Velocity += RequestedAcceleration * DeltaTime;
+        Velocity = Velocity.GetClampedToMaxSize(NewMaxRequestedSpeed);
+    }
+
+    if (bUseRVOAvoidance)
+    {
+        CalcAvoidanceVelocity(DeltaTime);
+    }
+}
+
+void UTPCharacterMovementComponent::MaintainHorizontalGroundVelocity()
+{
+    FVector GravityRelativeVelocity = RotateWorldToGravity(Velocity);
+    if (!FMath::IsNearlyZero(GravityRelativeVelocity.Z))
+    {
+        if (bMaintainHorizontalGroundVelocity)
+        {
+            // Ramp movement already maintained the velocity, so we just want to remove the vertical component.
+            const auto Size = GravityRelativeVelocity.Size();
+
+            VelocityScale = (Size - GravityRelativeVelocity.Z) / Size;
+
+            GravityRelativeVelocity.Z = 0.f;
+        }
+        else
+        {
+            // Rescale velocity to be horizontal but maintain magnitude of last update.
+            GravityRelativeVelocity = GravityRelativeVelocity.GetSafeNormal2D() * GravityRelativeVelocity.Size();
+        }
+    }
+
+    Velocity = RotateGravityToWorld(GravityRelativeVelocity);
+}
+
 FVector UTPCharacterMovementComponent::ConstrainInputAcceleration(const FVector& InputAcceleration) const
 {
-    return GetWorldToGravityTransform() * InputAcceleration;
+    const auto ControlRotation = CharacterOwner->Controller->GetControlRotation().Quaternion();
+    const auto Rot =  WorldToGravityTransform * ControlRotation;
+
+//     DrawDebugLine(
+//         GetWorld(),
+//         UpdatedComponent->GetComponentLocation(),
+//         UpdatedComponent->GetComponentLocation() + (Rot.GetAxisX() * 100),
+//         FColor::Black, false, 3.f
+//     );
+// 
+//     DrawDebugLine(
+//         GetWorld(),
+//         UpdatedComponent->GetComponentLocation(),
+//         UpdatedComponent->GetComponentLocation() + (Rot.GetAxisY() * 100),
+//         FColor::Blue, false, 3.f
+//     );
+
+    return Rot * InputAcceleration;
 }
 
 FRotator UTPCharacterMovementComponent::ComputeOrientToMovementRotation(
     const FRotator& CurrentRotation, float DeltaTime, FRotator& DeltaRotation
 ) const
 {
-    return Super::ComputeOrientToMovementRotation(CurrentRotation, DeltaTime, DeltaRotation);
+    if (Acceleration.SizeSquared() < UE_KINDA_SMALL_NUMBER)
+    {
+        // AI path following request can orient us in that direction (it's effectively an acceleration)
+        if (bHasRequestedVelocity && RequestedVelocity.SizeSquared() > UE_KINDA_SMALL_NUMBER)
+        {
+            return RequestedVelocity.GetSafeNormal().Rotation();
+        }
+
+        // Don't change rotation if there is no acceleration.
+        return CurrentRotation;
+    }
+
+    // Rotate toward direction of acceleration.
+    return (GetGravityToWorldTransform() * Acceleration.ToOrientationQuat()).Rotator();
 }
 
 void UTPCharacterMovementComponent::PhysicsRotation(float DeltaTime)
@@ -63,21 +223,22 @@ void UTPCharacterMovementComponent::PhysicsRotation(float DeltaTime)
         return;
     }
 
-    FRotator CurrentRotation = FRotator::ZeroRotator;
-
     FRotator DeltaRot = GetDeltaRotation(DeltaTime);
     DeltaRot.DiagnosticCheckNaN(TEXT("CharacterMovementComponent::PhysicsRotation(): GetDeltaRotation"));
 
     FRotator DesiredRotation = FRotator::ZeroRotator;
+    FRotator CurrentRotation = FRotator::ZeroRotator;
+
+    CurrentRotation = UpdatedComponent->GetComponentRotation();
+    CurrentRotation = (GetGravityToWorldTransform() * CurrentRotation.Quaternion()).Rotator();
+
     if (bOrientRotationToMovement)
     {
-        CurrentRotation = UpdatedComponent->GetComponentRotation();
         DesiredRotation = ComputeOrientToMovementRotation(CurrentRotation, DeltaTime, DeltaRot);
     }
     else if (CharacterOwner->Controller && bUseControllerDesiredRotation)
     {
-        CurrentRotation = CharacterOwner->Controller->GetDesiredRotation();
-        DesiredRotation = CharacterOwner->Controller->GetDesiredRotation();
+        DesiredRotation = CharacterOwner->Controller->GetControlRotation();
     }
     else if (!CharacterOwner->Controller && bRunPhysicsWithNoController && bUseControllerDesiredRotation)
     {
@@ -90,9 +251,6 @@ void UTPCharacterMovementComponent::PhysicsRotation(float DeltaTime)
     {
         return;
     }
-
-    CurrentRotation = (GetGravityToWorldTransform() * CurrentRotation.Quaternion()).Rotator();
-    DesiredRotation = (GetGravityToWorldTransform() * DesiredRotation.Quaternion()).Rotator();
 
     const bool bWantsToBeVertical = ShouldRemainVertical();
 
@@ -143,12 +301,19 @@ void UTPCharacterMovementComponent::PhysicsRotation(float DeltaTime)
             GravityRelativeDesiredRotation.Pitch = FRotator::NormalizeAxis(GravityRelativeDesiredRotation.Pitch);
             GravityRelativeDesiredRotation.Yaw = FRotator::NormalizeAxis(GravityRelativeDesiredRotation.Yaw);
             GravityRelativeDesiredRotation.Roll = FRotator::NormalizeAxis(GravityRelativeDesiredRotation.Roll);
-
+            
             DesiredRotation = UKismetMathLibrary::MakeRotFromZX(-GetGravityDirection(), GravityRelativeDesiredRotation.Vector());
         }
 
+//         DrawDebugLine(
+//             GetWorld(),
+//             UpdatedComponent->GetComponentLocation(),
+//             UpdatedComponent->GetComponentLocation() + (DesiredRotation.Vector() * 100),
+//             FColor::Green, false, 3.f
+//         );
         // Set the new rotation.
         DesiredRotation.DiagnosticCheckNaN(TEXT("CharacterMovementComponent::PhysicsRotation(): DesiredRotation"));
+
         MoveUpdatedComponent(FVector::ZeroVector, DesiredRotation, /*bSweep*/ false);
     }
 }

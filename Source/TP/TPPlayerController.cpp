@@ -49,22 +49,17 @@ void ATPPlayerController::SetControlRotation(const FRotator& NewRotation)
 		return;
 	}
 
-	if (!ControlRotation.Equals(NewRotation, 1e-3f))
-	{
-		ControlRotation = NewRotation;
+	ControlRotation = NewRotation;
 
-		if (RootComponent && RootComponent->IsUsingAbsoluteRotation())
-		{
-			APawn* const P = GetPawnOrSpectator();
-			if (P)
-			{
-				RootComponent->SetWorldRotation(P->GetGravityTransform() * GetControlRotation().Quaternion());
-			}
-		}
-	}
-	else
+	if (RootComponent && RootComponent->IsUsingAbsoluteRotation())
 	{
-		//UE_LOG(LogPlayerController, Log, TEXT("Skipping SetControlRotation %s for %s (Pawn %s)"), *NewRotation.ToString(), *GetNameSafe(this), *GetNameSafe(GetPawn()));
+		APawn* const P = GetPawnOrSpectator();
+		if (P)
+		{
+			RootComponent->SetWorldRotation(
+                P->GetGravityTransform() 
+			);
+		}
 	}
 }
 

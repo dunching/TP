@@ -23,6 +23,13 @@ public:
 
     virtual void SetGravityDirection(const FVector& GravityDir)override;
 
+    virtual void CalcVelocity(
+        float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration
+    )override;
+
+
+    virtual void MaintainHorizontalGroundVelocity()override;
+
     virtual FVector ConstrainInputAcceleration(const FVector& InputAcceleration) const override;
 
     virtual FRotator ComputeOrientToMovementRotation(
@@ -32,5 +39,9 @@ public:
     virtual void PhysicsRotation(float DeltaTime)override;
 
     virtual void PhysWalking(float deltaTime, int32 Iterations)override;
+
+private:
+
+    float VelocityScale = 1.f;
 
 };
