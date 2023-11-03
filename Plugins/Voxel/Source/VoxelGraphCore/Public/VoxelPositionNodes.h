@@ -38,19 +38,3 @@ struct VOXELGRAPHCORE_API FVoxelNode_QueryWithPosition : public FVoxelNode
 	virtual void PromotePin(FVoxelPin& Pin, const FVoxelPinType& NewType) override;
 #endif
 };
-
-// If possible, will collapse positions with the same XY and will set Z to 0
-USTRUCT(Category = "Misc")
-struct VOXELGRAPHCORE_API FVoxelNode_Query2D : public FVoxelNode
-{
-	GENERATED_BODY()
-	GENERATED_VOXEL_NODE_BODY()
-
-	VOXEL_TEMPLATE_INPUT_PIN(FVoxelWildcard, Data, nullptr);
-	VOXEL_TEMPLATE_OUTPUT_PIN(FVoxelWildcard, OutData);
-
-#if WITH_EDITOR
-	virtual FVoxelPinTypeSet GetPromotionTypes(const FVoxelPin& Pin) const override;
-	virtual void PromotePin(FVoxelPin& Pin, const FVoxelPinType& NewType) override;
-#endif
-};

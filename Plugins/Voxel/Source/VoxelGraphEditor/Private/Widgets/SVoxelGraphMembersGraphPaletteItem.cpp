@@ -3,9 +3,7 @@
 #include "SVoxelGraphMembersGraphPaletteItem.h"
 #include "SchemaActions/VoxelGraphMembersGraphSchemaAction.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SMembersGraphPaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActionData* const InCreateData)
+void SVoxelGraphMembersGraphPaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActionData* const InCreateData)
 {
 	ActionPtr = InCreateData->Action;
 
@@ -38,7 +36,7 @@ void SMembersGraphPaletteItem::Construct(const FArguments& InArgs, FCreateWidget
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedRef<SWidget> SMembersGraphPaletteItem::CreateTextSlotWidget(FCreateWidgetForActionData* const InCreateData, TAttribute<bool> bIsReadOnly)
+TSharedRef<SWidget> SVoxelGraphMembersGraphPaletteItem::CreateTextSlotWidget(FCreateWidgetForActionData* const InCreateData, TAttribute<bool> bIsReadOnly)
 {
 	TSharedRef<SOverlay> DisplayWidget =
 		SNew(SOverlay)
@@ -47,13 +45,13 @@ TSharedRef<SWidget> SMembersGraphPaletteItem::CreateTextSlotWidget(FCreateWidget
 		[
 			SNew(SVoxelDetailText)
 			.Font(FAppStyle::GetFontStyle("NormalText"))
-			.Text(this, &SMembersGraphPaletteItem::GetDisplayText)
+			.Text(this, &SVoxelGraphMembersGraphPaletteItem::GetDisplayText)
 		];
 
 	return DisplayWidget;
 }
 
-FText SMembersGraphPaletteItem::GetDisplayText() const
+FText SVoxelGraphMembersGraphPaletteItem::GetDisplayText() const
 {
 	const TSharedPtr<FVoxelGraphMembersGraphSchemaAction> Action = GetAction();
 	if (!ensure(Action))
@@ -68,7 +66,7 @@ FText SMembersGraphPaletteItem::GetDisplayText() const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedPtr<FVoxelGraphMembersGraphSchemaAction> SMembersGraphPaletteItem::GetAction() const
+TSharedPtr<FVoxelGraphMembersGraphSchemaAction> SVoxelGraphMembersGraphPaletteItem::GetAction() const
 {
 	const TSharedPtr<FEdGraphSchemaAction> Action = ActionPtr.Pin();
 	if (!Action)
@@ -78,5 +76,3 @@ TSharedPtr<FVoxelGraphMembersGraphSchemaAction> SMembersGraphPaletteItem::GetAct
 
 	return StaticCastSharedPtr<FVoxelGraphMembersGraphSchemaAction>(Action);
 }
-
-END_VOXEL_NAMESPACE(Graph)

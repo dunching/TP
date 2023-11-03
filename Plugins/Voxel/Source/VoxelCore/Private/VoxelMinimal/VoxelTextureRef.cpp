@@ -21,9 +21,7 @@ struct FVoxelTextureRefImpl
 	UTexture* Texture = nullptr;
 };
 
-class FVoxelTexturePool
-	: public FVoxelTicker
-	, public FGCObject
+class FVoxelTexturePool : public FVoxelSingleton
 {
 public:
 	struct FPooledTexture
@@ -36,7 +34,7 @@ public:
 
 	VOXEL_COUNTER_HELPER(STAT_VoxelNumTexturesPooled, NumTexturesPooledStat);
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelSingleton Interface
 	virtual void Tick() override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -72,9 +70,6 @@ public:
 
 		NumTexturesPooledStat = NumTexturesPooled;
 	}
-	//~ End FVoxelTicker Interface
-
-	//~ Begin FGCObject Interface
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -86,11 +81,7 @@ public:
 			ensure(Ref->Texture);
 		}
 	}
-	virtual FString GetReferencerName() const override
-	{
-		return "FVoxelTexturePool";
-	}
-	//~ End FGCObject Interface
+	//~ End FVoxelSingleton Interface
 
 	TSharedRef<FVoxelTextureRef> MakeTexture(FName DebugName, const FVoxelTextureKey& Key)
 	{
@@ -158,17 +149,7 @@ public:
 		return Ref;
 	}
 };
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-FVoxelTexturePool* GVoxelTexturePool = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(CreateGVoxelTexturePool)
-{
-	GVoxelTexturePool = new FVoxelTexturePool();
-}
+FVoxelTexturePool* GVoxelTexturePool = MakeVoxelSingleton(FVoxelTexturePool);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -212,7 +193,7 @@ FVoxelTextureRef::~FVoxelTextureRef()
 
 	if (Key.Type == EVoxelTextureType::GpuTexture2D)
 	{
-		ENQUEUE_RENDER_COMMAND(ReturnToPool)([Impl = Impl, ReturnToPool](FRHICommandList& RHICmdList)
+		VOXEL_ENQUEUE_RENDER_COMMAND(ReturnToPool)([Impl = Impl, ReturnToPool](FRHICommandList& RHICmdList)
 		{
 			if (UVoxelGpuTexture* GpuTexture = Cast<UVoxelGpuTexture>(Impl->Texture))
 			{

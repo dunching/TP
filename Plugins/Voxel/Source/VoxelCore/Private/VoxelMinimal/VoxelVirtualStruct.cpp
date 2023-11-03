@@ -2,6 +2,8 @@
 
 #include "VoxelMinimal.h"
 
+DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelVirtualStruct);
+
 #if DO_CHECK
 VOXEL_RUN_ON_STARTUP_GAME(CheckVoxelVirtualStruct)
 {

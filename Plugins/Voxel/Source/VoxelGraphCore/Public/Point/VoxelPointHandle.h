@@ -3,8 +3,8 @@
 #pragma once
 
 #include "VoxelMinimal.h"
-#include "VoxelSpawnableRef.h"
 #include "Point/VoxelPointId.h"
+#include "Point/VoxelPointChunkRef.h"
 #include "VoxelPointHandle.generated.h"
 
 USTRUCT(BlueprintType)
@@ -13,38 +13,42 @@ struct VOXELGRAPHCORE_API FVoxelPointHandle
 	GENERATED_BODY()
 
 public:
-	FVoxelSpawnableRef SpawnableRef;
+	FVoxelPointChunkRef ChunkRef;
 	FVoxelPointId PointId;
 
 public:
 	FORCEINLINE UWorld* GetWorld() const
 	{
-		return SpawnableRef.GetWorld();
+		return ChunkRef.GetWorld();
 	}
 	FORCEINLINE bool IsValid() const
 	{
 		return
-			SpawnableRef.IsValid() &&
+			ChunkRef.IsValid() &&
 			PointId.IsValid();
 	}
 	FORCEINLINE bool operator==(const FVoxelPointHandle& Other) const
 	{
 		return
-			SpawnableRef == Other.SpawnableRef &&
+			ChunkRef == Other.ChunkRef &&
 			PointId == Other.PointId;
 	}
 	FORCEINLINE friend uint32 GetTypeHash(const FVoxelPointHandle& Handle)
 	{
 		return
-			GetTypeHash(Handle.SpawnableRef) ^
+			GetTypeHash(Handle.ChunkRef) ^
 			GetTypeHash(Handle.PointId);
 	}
 
 public:
 	TSharedPtr<FVoxelRuntime> GetRuntime(FString* OutError = nullptr) const;
+
 	bool GetAttributes(
-		TVoxelMap<FName, FVoxelPinValue>& OutAttributes,
+		TVoxelMap<FName, FVoxelPinValue>& InOutAttributes,
 		FString* OutError = nullptr) const;
+
+	bool Serialize(FArchive& Ar);
+	bool Identical(const FVoxelPointHandle* Other, uint32 PortFlags) const;
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
 private:
@@ -56,6 +60,8 @@ struct TStructOpsTypeTraits<FVoxelPointHandle> : TStructOpsTypeTraitsBase2<FVoxe
 {
 	enum
 	{
+		WithSerializer = true,
+		WithIdentical = true,
 		WithNetSerializer = true,
 	};
 };

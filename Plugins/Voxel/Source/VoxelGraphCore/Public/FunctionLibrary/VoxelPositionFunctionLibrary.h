@@ -30,10 +30,6 @@ public:
 	UPARAM(meta = (NotTemplate)) FVoxelVectorBuffer GetPosition3D() const
 	{
 		FindVoxelQueryParameter_Function(FVoxelPositionQueryParameter, PositionQueryParameter);
-		if (PositionQueryParameter->IsGrid2D())
-		{
-			VOXEL_MESSAGE(Error, "{0}: Using GetPosition3D on 2D positions, please use GetPosition2D instead", this);
-		}
 		return PositionQueryParameter->GetPositions();
 	}
 };

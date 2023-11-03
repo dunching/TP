@@ -17,11 +17,13 @@ private:
 
 public:
 	//~ Begin UVoxelGraphNode Interface
-	virtual void PostPasteNode() override;
+	virtual EVoxelGraphParameterType GetParameterType() const override
+	{
+		return EVoxelGraphParameterType::Parameter;
+	}
 
 	virtual void AllocateParameterPins(const FVoxelGraphParameter& Parameter) override;
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
-	virtual FLinearColor GetNodeTitleColor() const override;
 
 	virtual bool CanPromotePin(const UEdGraphPin& Pin, FVoxelPinTypeSet& OutTypes) const override;
 	virtual void PromotePin(UEdGraphPin& Pin, const FVoxelPinType& NewType) override;

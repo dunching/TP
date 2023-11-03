@@ -14,6 +14,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_Select, Result)
 	const FVoxelPinType IndexType = GetNodeRuntime().GetPinData(IndexPin).Type;
 
 	if (IndexType.Is<bool>() ||
+		IndexType.Is<uint8>() ||
 		IndexType.Is<int32>())
 	{
 		const FVoxelFutureValue IndexValue = Get(IndexPin, Query);
@@ -24,6 +25,10 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_Select, Result)
 			if (IndexType.Is<bool>())
 			{
 				Index = IndexValue.Get<bool>() ? 1 : 0;
+			}
+			else if (IndexType.Is<uint8>())
+			{
+				Index = IndexValue.Get<uint8>();
 			}
 			else
 			{
@@ -40,37 +45,43 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_Select, Result)
 	}
 	else if (
 		IndexType.Is<FVoxelBoolBuffer>() ||
+		IndexType.Is<FVoxelByteBuffer>() ||
 		IndexType.Is<FVoxelInt32Buffer>())
 	{
-		const TValue<FVoxelBuffer> IndexValue = Get<FVoxelBuffer>(IndexPin, Query);
+		const TValue<FVoxelBuffer> Indices = Get<FVoxelBuffer>(IndexPin, Query);
 
-		return VOXEL_ON_COMPLETE(IndexType, IndexValue)
+		return VOXEL_ON_COMPLETE(IndexType, Indices)
 		{
-			FVoxelInt32Buffer Indices;
-			if (IndexType.Is<FVoxelBoolBuffer>())
-			{
-				Indices = FVoxelBufferUtilities::BoolToInt32(CastChecked<FVoxelBoolBuffer>(*IndexValue));
-			}
-			else
-			{
-				Indices = CastChecked<FVoxelInt32Buffer>(*IndexValue);
-			}
-
-			if (Indices.Num() == 0)
+			if (Indices->Num() == 0)
 			{
 				return {};
 			}
 
-			if (Indices.IsConstant())
+			if (Indices->IsConstant())
 			{
-				const int32 Index = Indices.GetConstant();
-
-				if (!ValuePins.IsValidIndex(Index))
+				if (Indices->IsA<FVoxelBoolBuffer>())
 				{
-					return {};
+					checkVoxelSlow(ValuePins.Num() == 2);
+					return Get(ValuePins[Indices->AsChecked<FVoxelBoolBuffer>().GetConstant() ? 1 : 0], Query);
 				}
-
-				return Get(ValuePins[Index], Query);
+				else if (Indices->IsA<FVoxelByteBuffer>())
+				{
+					const int32 Index = Indices->AsChecked<FVoxelByteBuffer>().GetConstant();
+					if (!ValuePins.IsValidIndex(Index))
+					{
+						return {};
+					}
+					return Get(ValuePins[Index], Query);
+				}
+				else
+				{
+					const int32 Index = Indices->AsChecked<FVoxelInt32Buffer>().GetConstant();
+					if (!ValuePins.IsValidIndex(Index))
+					{
+						return {};
+					}
+					return Get(ValuePins[Index], Query);
+				}
 			}
 
 			TVoxelArray<TValue<FVoxelBuffer>> Buffers;
@@ -82,26 +93,29 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_Select, Result)
 
 			return VOXEL_ON_COMPLETE(Buffers, Indices)
 			{
-				const FVoxelPinType BufferType = GetNodeRuntime().GetPinData(ResultPin).Type;
+				TVoxelArray<const FVoxelBuffer*> BufferPtrs;
+				BufferPtrs.Reserve(Buffers.Num());
 
-				const TSharedRef<FVoxelBuffer> Result = FVoxelBuffer::Make(BufferType.GetInnerType());
+				int32 Num = Indices->Num();
 				for (const TSharedRef<const FVoxelBuffer>& Buffer : Buffers)
 				{
-					CheckVoxelBuffersNum(Indices, *Buffer);
-					check(Result->NumTerminalBuffers() == Buffer->NumTerminalBuffers());
-				}
+					BufferPtrs.Add(&Buffer.Get());
 
-				for (int32 Index = 0; Index < Result->NumTerminalBuffers(); Index++)
-				{
-					TArray<const FVoxelTerminalBuffer*> TerminalBuffers;
-					for (const TSharedRef<const FVoxelBuffer>& Buffer : Buffers)
+					if (!FVoxelBufferAccessor::MergeNum(Num, *Buffer))
 					{
-						TerminalBuffers.Add(&Buffer->GetTerminalBuffer(Index));
+						RaiseBufferError(GetNodeRef());
+						return {};
 					}
-					Select(Result->GetTerminalBuffer(Index), Indices, TerminalBuffers);
 				}
 
-				return FVoxelRuntimePinValue::Make(Result, BufferType);
+				const FVoxelPinType BufferType = GetNodeRuntime().GetPinData(ResultPin).Type;
+
+				return FVoxelRuntimePinValue::Make(
+					FVoxelBufferUtilities::Select(
+						BufferType.GetInnerType(),
+						*Indices,
+						BufferPtrs),
+					BufferType);
 			};
 		};
 	}
@@ -109,92 +123,6 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_Select, Result)
 	{
 		ensure(false);
 		return {};
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void FVoxelNode_Select::Select(
-	FVoxelTerminalBuffer& OutBuffer,
-	const FVoxelInt32Buffer& Indices,
-	const TConstVoxelArrayView<const FVoxelTerminalBuffer*> Buffers)
-{
-	VOXEL_SCOPE_COUNTER_FORMAT_COND(Indices.Num() > 1024, "Select Num=%d", Indices.Num());
-
-	if (!ensure(Indices.Num() >= 2) ||
-		!ensure(Buffers.Num() > 0))
-	{
-		return;
-	}
-
-	const FVoxelPinType InnerType = OutBuffer.GetInnerType();
-	for (const FVoxelTerminalBuffer* Buffer : Buffers)
-	{
-		if (!ensure(Buffer->GetInnerType() == InnerType))
-		{
-			return;
-		}
-	}
-
-	if (OutBuffer.IsA<FVoxelSimpleTerminalBuffer>())
-	{
-		FVoxelSimpleTerminalBuffer& OutSimpleBuffer = CastChecked<FVoxelSimpleTerminalBuffer>(OutBuffer);
-		const TConstVoxelArrayView<const FVoxelSimpleTerminalBuffer*> SimpleBuffers = ReinterpretCastVoxelArrayView<const FVoxelSimpleTerminalBuffer*>(Buffers);
-
-		const TSharedRef<FVoxelBufferStorage> Storage = OutSimpleBuffer.MakeNewStorage();
-		Storage->Allocate(Indices.Num());
-
-		ForeachVoxelBufferChunk(Indices.Num(), [&](const FVoxelBufferIterator& Iterator)
-		{
-			const TConstVoxelArrayView<int32> IndicesView = Indices.GetRawView_NotConstant(Iterator);
-
-			VOXEL_SWITCH_TERMINAL_TYPE_SIZE(Storage->GetTypeSize())
-			{
-				using Type = VOXEL_GET_TYPE(TypeInstance);
-				const TVoxelArrayView<Type> WriteView = Storage->As<Type>().GetRawView_NotConstant(Iterator);
-
-				for (int32 Index = 0; Index < Iterator.Num(); Index++)
-				{
-					const int32 BufferIndex = IndicesView[Index];
-
-					if (!SimpleBuffers.IsValidIndex(BufferIndex))
-					{
-						WriteView[Index] = 0;
-						continue;
-					}
-
-					const FVoxelSimpleTerminalBuffer* SimpleBuffer = SimpleBuffers[BufferIndex];
-					WriteView[Index] = SimpleBuffer->GetStorage<Type>()[Index];
-				}
-			};
-		});
-
-		OutSimpleBuffer.SetStorage(Storage);
-	}
-	else
-	{
-		FVoxelComplexTerminalBuffer& OutComplexBuffer = CastChecked<FVoxelComplexTerminalBuffer>(OutBuffer);
-		const TConstVoxelArrayView<const FVoxelComplexTerminalBuffer*> ComplexBuffers = ReinterpretCastVoxelArrayView<const FVoxelComplexTerminalBuffer*>(Buffers);
-
-		const TSharedRef<FVoxelComplexBufferStorage> Storage = OutComplexBuffer.MakeNewStorage();
-		Storage->Allocate(Indices.Num());
-
-		for (int32 Index = 0; Index < Indices.Num(); Index++)
-		{
-			const int32 BufferIndex = Indices[Index];
-
-			if (!ComplexBuffers.IsValidIndex(BufferIndex))
-			{
-				continue;
-			}
-
-			const FVoxelComplexTerminalBuffer* ComplexBuffer = ComplexBuffers[BufferIndex];
-			ComplexBuffer->GetStorage()[Index].CopyTo((*Storage)[Index]);
-		}
-
-		OutComplexBuffer.SetStorage(Storage);
 	}
 }
 

@@ -113,6 +113,8 @@ TSharedRef<SEditableTextBox> SVoxelGraphEditorActionMenu::GetFilterTextBox() con
 
 void SVoxelGraphEditorActionMenu::CollectAllActions(FGraphActionListBuilderBase& OutAllActions)
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	if (!ensure(WeakGraphObj.IsValid()))
 	{
 		return;

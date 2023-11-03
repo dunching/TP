@@ -9,7 +9,7 @@
 struct FVoxelPinType;
 struct FVoxelPinTypeSet;
 
-UCLASS()
+UCLASS(Abstract)
 class VOXELBLUEPRINT_API UK2Node_VoxelBaseNode : public UK2Node_CallFunction
 {
 	GENERATED_BODY()

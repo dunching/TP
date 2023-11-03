@@ -30,7 +30,6 @@ public:
 	virtual void OnRenameNode(const FString& NewName) override;
 	virtual UEdGraphPin* GetPassThroughPin(const UEdGraphPin* FromPin) const override;
 	virtual bool ShouldDrawNodeAsControlPointOnly(int32& OutInputPinIndex, int32& OutOutputPinIndex) const override;
-	virtual bool CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const override;
 	//~ End UVoxelGraphNode Interface
 
 	void PropagatePinType();

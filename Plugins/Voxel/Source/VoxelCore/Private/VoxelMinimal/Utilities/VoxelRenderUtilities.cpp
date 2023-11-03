@@ -458,10 +458,45 @@ FVoxelGPUBufferReadback::~FVoxelGPUBufferReadback()
 
 	const TSharedRef<TVoxelUniquePtr<FRHIGPUBufferReadback>> ReadbackRef = MakeSharedCopy(MakeUniqueCopy(Readback));
 
-	ENQUEUE_RENDER_COMMAND(FVoxelGPUBufferReadback_DestroyReadback)([ReadbackRef](FRHICommandList& RHICmdList)
+	VOXEL_ENQUEUE_RENDER_COMMAND(FVoxelGPUBufferReadback_DestroyReadback)([ReadbackRef](FRHICommandList& RHICmdList)
 	{
 		ReadbackRef->Reset();
 	});
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void RHIUpdateTexture2D_Safe(
+	FRHITexture2D* Texture,
+	const uint32 MipIndex,
+	const FUpdateTextureRegion2D& UpdateRegion,
+	const uint32 SourcePitch,
+	const TConstVoxelArrayView<uint8> SourceData)
+{
+	// FD3D12Texture::UpdateTexture2D doesn't use SrcX/SrcX
+	check(UpdateRegion.SrcX == 0);
+	check(UpdateRegion.SrcY == 0);
+
+	// See FD3D11DynamicRHI::RHIUpdateTexture2D
+	const FPixelFormatInfo& FormatInfo = GPixelFormats[Texture->GetFormat()];
+	const size_t UpdateHeightInTiles = FMath::DivideAndRoundUp(UpdateRegion.Height, uint32(FormatInfo.BlockSizeY));
+	const size_t SourceDataSize = static_cast<size_t>(SourcePitch) * UpdateHeightInTiles;
+	check(SourceData.Num() >= SourceDataSize);
+
+	if (!ensure(UpdateRegion.DestX + UpdateRegion.Width <= Texture->GetSizeX()) ||
+		!ensure(UpdateRegion.DestY + UpdateRegion.Height <= Texture->GetSizeY()))
+	{
+		return;
+	}
+
+	RHIUpdateTexture2D_Unsafe(
+		Texture,
+		MipIndex,
+		UpdateRegion,
+		SourcePitch,
+		SourceData.GetData());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -491,7 +526,8 @@ FMaterialRenderProxy* FVoxelRenderUtilities::CreateColoredRenderProxy(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(RenderUtilities)
+namespace Voxel::RenderUtilities
+{
 
 DECLARE_VOXEL_SHADER_NAMESPACE(RenderUtilities, "Utilities");
 
@@ -499,7 +535,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FUploadParameters, )
 	RDG_BUFFER_ACCESS(UploadBuffer, ERHIAccess::CopyDest)
 END_SHADER_PARAMETER_STRUCT()
 
-END_VOXEL_NAMESPACE(RenderUtilities)
+}
 
 void FVoxelRenderUtilities::UpdateBuffer(
 	FRHICommandListBase& RHICmdList,
@@ -538,7 +574,7 @@ void FVoxelRenderUtilities::UpdateBuffer(
 	const int64 Offset,
 	TSharedPtr<FVirtualDestructor> KeepAlive)
 {
-	VOXEL_USE_NAMESPACE(RenderUtilities);
+	using namespace Voxel::RenderUtilities;
 
 	FUploadParameters* UploadParameters = GraphBuilder.AllocParameters<FUploadParameters>();
 	UploadParameters->UploadBuffer = Buffer;
@@ -683,7 +719,7 @@ void FVoxelRenderUtilities::AsyncCopyTexture(
 
 	if (!GRHISupportsAsyncTextureCreation)
 	{
-		ENQUEUE_RENDER_COMMAND(AsyncCopyTexture)([=](FRHICommandListImmediate& RHICmdList)
+		VOXEL_ENQUEUE_RENDER_COMMAND(AsyncCopyTexture)([=](FRHICommandListImmediate& RHICmdList)
 		{
 			if (!TargetTexture.IsValid())
 			{
@@ -775,7 +811,7 @@ void FVoxelRenderUtilities::AsyncCopyTexture(
 			return;
 		}
 
-		ENQUEUE_RENDER_COMMAND(AsyncCopyTexture_Finalize)([=](FRHICommandListImmediate&)
+		VOXEL_ENQUEUE_RENDER_COMMAND(AsyncCopyTexture_Finalize)([=](FRHICommandListImmediate&)
 		{
 			UpdateTextureRef(TargetTexture.Get(), UploadTextureRHI);
 			OnComplete.ExecuteIfBound();
@@ -787,7 +823,8 @@ void FVoxelRenderUtilities::AsyncCopyTexture(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(RenderUtilities)
+namespace Voxel::RenderUtilities
+{
 
 BEGIN_VOXEL_COMPUTE_SHADER(BuildIndirectDispatchArgs)
 	VOXEL_SHADER_PARAMETER_CST(int32, ThreadGroupSize)
@@ -796,7 +833,7 @@ BEGIN_VOXEL_COMPUTE_SHADER(BuildIndirectDispatchArgs)
 	VOXEL_SHADER_PARAMETER_UAV(Buffer<uint>, IndirectDispatchArgs)
 END_VOXEL_SHADER()
 
-END_VOXEL_NAMESPACE(RenderUtilities)
+}
 
 void FVoxelRenderUtilities::BuildIndirectDispatchArgsFromNum_1D(
 	FRDGBuilder& GraphBuilder,
@@ -805,7 +842,7 @@ void FVoxelRenderUtilities::BuildIndirectDispatchArgsFromNum_1D(
 	FRDGBufferSRVRef NumSRV,
 	int32 Multiplier)
 {
-	VOXEL_USE_NAMESPACE(RenderUtilities);
+	using namespace Voxel::RenderUtilities;
 
 	BEGIN_VOXEL_SHADER_CALL(BuildIndirectDispatchArgs)
 	{
@@ -823,7 +860,8 @@ void FVoxelRenderUtilities::BuildIndirectDispatchArgsFromNum_1D(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(RenderUtilities)
+namespace Voxel::RenderUtilities
+{
 
 BEGIN_VOXEL_COMPUTE_SHADER(ClampNum)
 	VOXEL_SHADER_PARAMETER_UAV(Buffer<uint>, Num)
@@ -831,7 +869,7 @@ BEGIN_VOXEL_COMPUTE_SHADER(ClampNum)
 	VOXEL_SHADER_PARAMETER_CST(int32, Max)
 END_VOXEL_SHADER()
 
-END_VOXEL_NAMESPACE(RenderUtilities)
+}
 
 void FVoxelRenderUtilities::ClampNum(
 	FRDGBuilder& GraphBuilder,
@@ -839,7 +877,7 @@ void FVoxelRenderUtilities::ClampNum(
 	int32 Min,
 	int32 Max)
 {
-	VOXEL_USE_NAMESPACE(RenderUtilities);
+	using namespace Voxel::RenderUtilities;
 
 	BEGIN_VOXEL_SHADER_CALL(ClampNum)
 	{
@@ -856,7 +894,8 @@ void FVoxelRenderUtilities::ClampNum(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(RenderUtilities)
+namespace Voxel::RenderUtilities
+{
 
 BEGIN_VOXEL_COMPUTE_SHADER(ClearBuffer)
 	VOXEL_SHADER_PARAMETER_INDIRECT_ARGS()
@@ -864,7 +903,7 @@ BEGIN_VOXEL_COMPUTE_SHADER(ClearBuffer)
 	VOXEL_SHADER_PARAMETER_UAV(Buffer<uint>, BufferToClear)
 END_VOXEL_SHADER()
 
-END_VOXEL_NAMESPACE(RenderUtilities)
+}
 
 void FVoxelRenderUtilities::ClearBuffer(
 	FRDGBuilder& GraphBuilder,
@@ -874,8 +913,8 @@ void FVoxelRenderUtilities::ClearBuffer(
 	uint32 NumMultiplier)
 {
 	RDG_EVENT_SCOPE(GraphBuilder, "ClearBuffer %s", BufferUAV->Name);
-	VOXEL_USE_NAMESPACE(RenderUtilities);
 	ensure(BufferUAV->Desc.Format == PF_R32_UINT);
+	using namespace Voxel::RenderUtilities;
 
 	const FVoxelRDGBuffer IndirectDispatchArgs = MakeVoxelRDGBuffer_Indirect(IndirectDispatchArgs);
 	BuildIndirectDispatchArgsFromNum_1D(GraphBuilder, 512, IndirectDispatchArgs, NumSRV, NumMultiplier);
@@ -894,7 +933,8 @@ void FVoxelRenderUtilities::ClearBuffer(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(RenderUtilities)
+namespace Voxel::RenderUtilities
+{
 
 BEGIN_VOXEL_SHADER_PERMUTATION_DOMAIN(CopyToTextureArray)
 {
@@ -909,7 +949,7 @@ BEGIN_VOXEL_COMPUTE_SHADER(CopyToTextureArray)
 	SHADER_PARAMETER_UAV(RWTexture2DArray<uint>, TextureArray)
 END_VOXEL_SHADER()
 
-END_VOXEL_NAMESPACE(RenderUtilities)
+}
 
 void FVoxelRenderUtilities::CopyToTextureArray(
 	FRDGBuilder& GraphBuilder,
@@ -925,7 +965,7 @@ void FVoxelRenderUtilities::CopyToTextureArray(
 		return;
 	}
 
-	VOXEL_USE_NAMESPACE(RenderUtilities);
+	using namespace Voxel::RenderUtilities;
 	RDG_EVENT_SCOPE(GraphBuilder, "CopyToTextureArray %s Slice %d", *TextureArray->GetName().ToString(), SliceIndex);
 
 	const int64 NumBytes =

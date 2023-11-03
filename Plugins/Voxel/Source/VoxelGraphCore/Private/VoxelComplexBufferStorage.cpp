@@ -13,47 +13,30 @@ void FVoxelComplexBufferStorage::Allocate(const int32 Num)
 	checkf(ArrayNum == 0, TEXT("Buffer already allocated"));
 	check(Chunks.Num() == 0);
 
-	if (Num == 0)
-	{
-		return;
-	}
-
-	ArrayNum = Num;
-
-	const int32 NumChunks = FMath::DivideAndRoundUp(Num, NumPerChunk);
-
-	Chunks.Reserve(NumChunks);
-	for (int32 Index = 0; Index < NumChunks; Index++)
-	{
-		Chunks.Add(AllocateChunk());
-	}
-	check(Chunks.Num() == NumChunks);
-
-	if (!InnerStruct->GetCppStructOps()->HasZeroConstructor())
-	{
-		VOXEL_SCOPE_COUNTER_FORMAT_COND(Num > 128, "Construct %s Num=%d", *InnerStruct->GetName(), Num);
-		for (int32 Index = 0; Index < Num; Index++)
-		{
-			InnerStruct->GetCppStructOps()->Construct((*this)[Index].GetMemory());
-		}
-	}
-
-	AllocatedSizeTracker = GetAllocatedSize();
+	AddZeroed(Num);
 }
 
 void FVoxelComplexBufferStorage::Empty()
 {
+	VOXEL_FUNCTION_COUNTER();
+
+	if (InnerStruct->GetCppStructOps()->HasDestructor())
+	{
+		VOXEL_SCOPE_COUNTER_FORMAT_COND(Num() > 128, "Destruct %s Num=%d", *InnerStruct->GetName(), Num());
+		for (int32 Index = 0; Index < Num(); Index++)
+		{
+			InnerStruct->GetCppStructOps()->Destruct((*this)[Index].GetMemory());
+		}
+	}
+
 	ArrayNum = 0;
 
-	if (Chunks.Num() > 0)
+	for (void* Chunk : Chunks)
 	{
-		for (void* Chunk : Chunks)
-		{
-			check(Chunk);
-			FVoxelMemory::Free(Chunk);
-		}
-		Chunks.Empty();
+		check(Chunk);
+		FVoxelMemory::Free(Chunk);
 	}
+	Chunks.Empty();
 
 	AllocatedSizeTracker = GetAllocatedSize();
 }

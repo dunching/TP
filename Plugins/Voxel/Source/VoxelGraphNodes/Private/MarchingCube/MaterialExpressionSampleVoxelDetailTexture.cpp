@@ -23,6 +23,12 @@ void UMaterialExpressionSampleVoxelDetailTexture::SetupCustomExpression(UMateria
 	PIXEL_PARAMETERS_HAS_VoxelDetailTexture_CellIndex && \
 	PIXEL_PARAMETERS_HAS_VoxelDetailTexture_Delta
 
+	FLATTEN
+	if (TextureIndex == -1)
+	{
+		return 0;
+	}
+
 	const uint2 TextureCoordinates = CellTextureCoordinates[TextureIndex * NumCells + Parameters.VoxelDetailTexture_CellIndex];
 	float2 UVs = float2(TextureCoordinates.x, TextureCoordinates.y) * TextureSize;
 
@@ -31,15 +37,25 @@ void UMaterialExpressionSampleVoxelDetailTexture::SetupCustomExpression(UMateria
 	UVs *= Texture_InvSize;
 
 	// No derivatives in raytraced shaders, need to use SampleLevel
-	#if RAYHITGROUPSHADER || RAYMISSHADER || RAYCALLABLESHADER || VERTEXSHADER
-		return Texture2DSampleLevel(Texture, TextureSampler, UVs, 0);
+	#if USE_FORCE_TEXTURE_MIP
+		return Texture2DSampleLevel(Texture, TextureSampler, UVs, 0).SWIZZLE;
 	#else
-		return Texture2DSample(Texture, TextureSampler, UVs);
+		return Texture2DSample(Texture, TextureSampler, UVs).SWIZZLE;
 	#endif
 #else
 	return 0;
 #endif
 	)";
+
+	if (GetCustomOutputType() == CMOT_Float1)
+	{
+		Custom.Code.ReplaceInline(TEXT("SWIZZLE"), TEXT("r"), ESearchCase::CaseSensitive);
+	}
+	else
+	{
+		ensure(GetCustomOutputType() == CMOT_Float4);
+		Custom.Code.ReplaceInline(TEXT("SWIZZLE"), TEXT("rgba"), ESearchCase::CaseSensitive);
+	}
 }
 #endif
 
@@ -52,7 +68,7 @@ int32 UMaterialExpressionSampleVoxelDetailTexture::Compile(FMaterialCompiler* Co
 		return Compiler->Error(TEXT("DetailTexture is null"));
 	}
 
-	const FString Guid = DetailTexture->Guid.ToString();
+	const FString Guid = DetailTexture->GetGuid().ToString();
 
 	UMaterialExpressionCustom* Custom = NewObject<UMaterialExpressionCustom>();
 	Custom->Inputs.Empty();
@@ -81,7 +97,7 @@ int32 UMaterialExpressionSampleVoxelDetailTexture::Compile(FMaterialCompiler* Co
 		Inputs.Add(Compiler->ScalarParameter(FName(Guid + "_Texture_InvSize"), 0.f));
 		Custom->Inputs.Add({ "Texture_InvSize" });
 
-		Inputs.Add(Compiler->ScalarParameter(FName(Guid + "_TextureIndex"), 0.f));
+		Inputs.Add(Compiler->ScalarParameter(FName(Guid + "_TextureIndex"), -1));
 		Custom->Inputs.Add({ "TextureIndex" });
 
 		Inputs.Add(Compiler->ScalarParameter(FName(Guid + "_TextureSize"), 0.f));

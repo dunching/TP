@@ -1,4 +1,4 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -8,12 +8,11 @@
 
 class FVoxelDependency;
 
-class VOXELGRAPHCORE_API FVoxelPointStorageSpawnableData
+class VOXELGRAPHCORE_API FVoxelPointStorageChunkData
 {
 public:
 	const TSharedRef<FVoxelDependency> Dependency;
-	mutable FVoxelCriticalSection CriticalSection;
-	FVoxelPointIdBufferStorage NewPointIds;
+	mutable FVoxelFastCriticalSection CriticalSection;
 
 	struct FAttribute
 	{
@@ -22,7 +21,7 @@ public:
 	};
 	TVoxelMap<FName, TSharedPtr<FAttribute>> NameToAttributeOverride;
 
-	explicit FVoxelPointStorageSpawnableData(const TSharedRef<FVoxelDependency>& Dependency)
+	explicit FVoxelPointStorageChunkData(const TSharedRef<FVoxelDependency>& Dependency)
 		: Dependency(Dependency)
 	{
 	}
@@ -39,7 +38,7 @@ public:
 	void ClearData();
 	void Serialize(FArchive& Ar);
 
-	TSharedPtr<const FVoxelPointStorageSpawnableData> FindSpawnableData(const FVoxelSpawnableRef& SpawnableRef) const;
+	TSharedRef<FVoxelPointStorageChunkData> FindOrAddChunkData(const FVoxelPointChunkRef& ChunkRef);
 
 	bool SetPointAttribute(
 		const FVoxelPointHandle& Handle,
@@ -49,6 +48,6 @@ public:
 		FString* OutError = nullptr);
 
 private:
-	mutable FVoxelCriticalSection CriticalSection;
-	TVoxelMap<FVoxelSpawnableRef, TSharedPtr<FVoxelPointStorageSpawnableData>> SpawnableRefToSpawnableData_RequiresLock;
+	mutable FVoxelFastCriticalSection CriticalSection;
+	TVoxelMap<FVoxelPointChunkRef, TSharedPtr<FVoxelPointStorageChunkData>> ChunkRefToChunkData_RequiresLock;
 };

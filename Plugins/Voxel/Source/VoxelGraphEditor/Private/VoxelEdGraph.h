@@ -15,14 +15,28 @@ class UVoxelEdGraph : public UEdGraph
 	GENERATED_BODY()
 
 public:
-	TWeakPtr<FVoxelGraphToolkit> WeakToolkit;
-
+	void SetToolkit(const TSharedRef<FVoxelGraphToolkit>& Toolkit);
 	TSharedPtr<FVoxelGraphToolkit> GetGraphToolkit() const;
+
+	void MigrateIfNeeded();
+	void MigrateAndReconstructAll();
 
 	//~ Begin UObject interface
 	virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	//~ End UObject interface
+
 private:
+	TWeakPtr<FVoxelGraphToolkit> WeakToolkit;
 	TArray<TSharedPtr<FVoxelGraphDelayOnGraphChangedScope>> DelayOnGraphChangedScopeStack;
+
+private:
+	using FVersion = DECLARE_VOXEL_VERSION
+	(
+		FirstVersion,
+		SplitInputSetterAndRemoveLocalVariablesDefault
+	);
+
+	UPROPERTY()
+	int32 Version = FVersion::FirstVersion;
 };

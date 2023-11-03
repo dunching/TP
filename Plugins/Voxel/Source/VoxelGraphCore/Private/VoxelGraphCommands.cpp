@@ -1,15 +1,19 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelMinimal.h"
-#include "VoxelInvoker.h"
 #include "VoxelActor.h"
 #include "VoxelSettings.h"
 #include "VoxelComponent.h"
 #include "VoxelGraphExecutor.h"
-#include "VoxelGraphNodeStatInterface.h"
+#include "VoxelParameterContainer.h"
 #include "Material/VoxelMaterialDefinition.h"
+#include "FunctionLibrary/VoxelParameterFunctionLibrary.h"
 #if WITH_EDITOR
+#include "MessageLogModule.h"
+#include "IMessageLogListing.h"
 #include "Editor/EditorEngine.h"
+#include "Widgets/Notifications/SNotificationList.h"
+#include "Framework/Notifications/NotificationManager.h"
 #endif
 
 TSet<FObjectKey> GVoxelObjectsDestroyedByFrameRateLimit;
@@ -19,19 +23,19 @@ VOXEL_CONSOLE_COMMAND(
 	"voxel.RefreshAll",
 	"")
 {
-	GVoxelOnClearNodeStats.Broadcast();
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog").GetLogListing("Voxel")->ClearMessages();
+	}
+
+	for (IVoxelNodeStatProvider* Provider : GVoxelNodeStatProviders)
+	{
+		Provider->ClearStats();
+	}
+#endif
 
 	GVoxelGraphExecutorManager->RecompileAll();
-
-	ForEachObjectOfClass<UVoxelInvokerComponent>([&](UVoxelInvokerComponent* Component)
-	{
-		if (Component->IsTemplate())
-		{
-			return;
-		}
-
-		Component->UpdateInvoker();
-	});
 
 	ForEachObjectOfClass<AVoxelActor>([&](AVoxelActor* Actor)
 	{
@@ -55,6 +59,242 @@ VOXEL_CONSOLE_COMMAND(
 	{
 		Definition->QueueRebuildTextures();
 	});
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+static TArray<FString> ParseArguments(const TArray<FString>& Args)
+{
+	TArray<FString> Result;
+
+	FString CurrentArg;
+	for (int32 Index = 0; Index < Args.Num(); Index++)
+	{
+		if (Args[Index].StartsWith("\""))
+		{
+			CurrentArg = Args[Index];
+			CurrentArg.RemoveFromStart("\"");
+
+			if (CurrentArg.EndsWith("\""))
+			{
+				CurrentArg.RemoveFromEnd("\"");
+				Result.Add(CurrentArg);
+			}
+			continue;
+		}
+
+		if (CurrentArg.IsEmpty())
+		{
+			Result.Add(Args[Index]);
+			continue;
+		}
+
+		if (!Args[Index].EndsWith("\""))
+		{
+			CurrentArg += " " + Args[Index];
+			continue;
+		}
+
+		CurrentArg += " " + Args[Index];
+		CurrentArg.RemoveFromEnd("\"");
+		Result.Add(CurrentArg);
+		CurrentArg = {};
+	}
+
+	return Result;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+VOXEL_CONSOLE_WORLD_COMMAND(
+	GetParameter,
+	"voxel.get",
+	"[ActorName] [ParameterName] Gets graph parameter value from specific actor if specified, all voxel actors otherwise. Actor name is optional.")
+{
+	if (Args.Num() == 0)
+	{
+		UE_LOG(LogConsoleResponse, Warning, TEXT("Missing parameter name argument"));
+		return;
+	}
+
+	TArray<FString> ParsedArgs = ParseArguments(Args);
+
+	FString ActorName;
+	FName ParameterName;
+	if (ParsedArgs.Num() > 1)
+	{
+		ActorName = ParsedArgs[0];
+		ParameterName = FName(ParsedArgs[1]);
+	}
+	else
+	{
+		ParameterName = FName(ParsedArgs[0]);
+	}
+
+	if (ActorName.IsEmpty())
+	{
+		for (TActorIterator<AVoxelActor> It(World, AVoxelActor::StaticClass()); It; ++It)
+		{
+			const AVoxelActor* Actor = *It;
+			if (!ensure(Actor))
+			{
+				continue;
+			}
+
+			if (!UVoxelParameterFunctionLibrary::HasVoxelParameter(Actor->ParameterContainer, ParameterName))
+			{
+				continue;
+			}
+
+			FVoxelPinValue Value = UVoxelParameterFunctionLibrary::GetVoxelParameter(Actor->ParameterContainer, ParameterName);
+			if (!Value.IsValid())
+			{
+				continue;
+			}
+
+			UE_LOG(LogConsoleResponse, Log, TEXT("%s.%s=%s"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString(), *Value.ExportToString());
+		}
+		return;
+	}
+
+	for (TActorIterator<AVoxelActor> It(World, AVoxelActor::StaticClass()); It; ++It)
+	{
+		const AVoxelActor* Actor = *It;
+		if (!ensure(Actor) ||
+			Actor->GetActorNameOrLabel() != ActorName)
+		{
+			continue;
+		}
+
+		if (!UVoxelParameterFunctionLibrary::HasVoxelParameter(Actor->ParameterContainer, ParameterName))
+		{
+			UE_LOG(LogConsoleResponse, Warning, TEXT("%s: No parameter %s found"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString());
+			return;
+		}
+
+		const FVoxelPinValue Value = UVoxelParameterFunctionLibrary::GetVoxelParameter(Actor->ParameterContainer, ParameterName);
+		if (!Value.IsValid())
+		{
+			return;
+		}
+
+		UE_LOG(LogConsoleResponse, Log, TEXT("%s.%s=%s"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString(), *Value.ExportToString());
+		return;
+	}
+
+	UE_LOG(LogConsoleResponse, Warning, TEXT("No actor %s found"), *ActorName);
+}
+
+VOXEL_CONSOLE_WORLD_COMMAND(
+	SetParameter,
+	"voxel.set",
+	"[ActorName] [ParameterName] [Value] Sets graph parameter value for either specific voxel actor if specified, otherwise all voxel actors. Actor name is optional.")
+{
+	TArray<FString> ParsedArgs = ParseArguments(Args);
+	if (ParsedArgs.Num() < 2)
+	{
+		UE_LOG(LogConsoleResponse, Warning, TEXT("Missing arguments"));
+		return;
+	}
+
+	FString ActorName;
+	FName ParameterName;
+	FString ParameterValue;
+	if (ParsedArgs.Num() > 2)
+	{
+		ActorName = ParsedArgs[0];
+		ParameterName = FName(ParsedArgs[1]);
+		ParameterValue = ParsedArgs[2];
+	}
+	else
+	{
+		ParameterName = FName(ParsedArgs[0]);
+		ParameterValue = ParsedArgs[1];
+	}
+
+	if (ActorName.IsEmpty())
+	{
+		for (TActorIterator<AVoxelActor> It(World, AVoxelActor::StaticClass()); It; ++It)
+		{
+			const AVoxelActor* Actor = *It;
+			if (!ensure(Actor))
+			{
+				continue;
+			}
+
+			if (!UVoxelParameterFunctionLibrary::HasVoxelParameter(Actor->ParameterContainer, ParameterName))
+			{
+				continue;
+			}
+
+			FVoxelPinValue Value = UVoxelParameterFunctionLibrary::GetVoxelParameter(Actor->ParameterContainer, ParameterName);
+			if (!Value.IsValid())
+			{
+				continue;
+			}
+
+			if (!Value.ImportFromString(ParameterValue))
+			{
+				UE_LOG(LogConsoleResponse, Warning, TEXT("%s: Failed to set %s=%s"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString(), *ParameterValue);
+				continue;
+			}
+
+			FString Error;
+			if (!Actor->ParameterContainer->Set(ParameterName, Value, &Error))
+			{
+				UE_LOG(LogConsoleResponse, Warning, TEXT("%s: %s"), *Actor->GetActorNameOrLabel(), *Error);
+				continue;
+			}
+
+			UE_LOG(LogConsoleResponse, Log, TEXT("%s.%s=%s"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString(), *Value.ExportToString());
+		}
+
+		return;
+	}
+
+	for (TActorIterator<AVoxelActor> It(World, AVoxelActor::StaticClass()); It; ++It)
+	{
+		const AVoxelActor* Actor = *It;
+		if (!ensure(Actor) ||
+			Actor->GetActorNameOrLabel() != ActorName)
+		{
+			continue;
+		}
+
+		if (!UVoxelParameterFunctionLibrary::HasVoxelParameter(Actor->ParameterContainer, ParameterName))
+		{
+			UE_LOG(LogConsoleResponse, Warning, TEXT("%s: No parameter %s found"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString());
+			return;
+		}
+
+		FVoxelPinValue Value = UVoxelParameterFunctionLibrary::GetVoxelParameter(Actor->ParameterContainer, ParameterName);
+		if (!Value.IsValid())
+		{
+			return;
+		}
+
+		if (!Value.ImportFromString(ParameterValue))
+		{
+			UE_LOG(LogConsoleResponse, Warning, TEXT("%s: Failed to set %s=%s"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString(), *ParameterValue);
+			return;
+		}
+
+		FString Error;
+		if (!Actor->ParameterContainer->Set(ParameterName, Value, &Error))
+		{
+			UE_LOG(LogConsoleResponse, Warning, TEXT("%s: %s"), *Actor->GetActorNameOrLabel(), *Error);
+			return;
+		}
+
+		UE_LOG(LogConsoleResponse, Log, TEXT("%s.%s=%s"), *Actor->GetActorNameOrLabel(), *ParameterName.ToString(), *Value.ExportToString());
+		return;
+	}
+
+	UE_LOG(LogConsoleResponse, Warning, TEXT("No actor %s found"), *ActorName);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -128,6 +368,11 @@ public:
 	{
 		VOXEL_FUNCTION_COUNTER();
 
+		if (!GetDefault<UVoxelSettings>()->bEnablePerformanceMonitoring)
+		{
+			return;
+		}
+
 		if (GEditor->ShouldThrottleCPUUsage() ||
 			GEditor->PlayWorld ||
 			GIsPlayInEditorWorld)
@@ -146,7 +391,7 @@ public:
 		const double SanitizedDeltaTime = FMath::Clamp(FApp::GetDeltaTime(), 0.001, 1);
 		Buffer.AddValue(SanitizedDeltaTime);
 
-		if (Buffer.GetAverageValue() < 1.f / GetDefault<UVoxelSettings>()->MinFPS)
+		if (1.f / Buffer.GetAverageValue() > GetDefault<UVoxelSettings>()->MinFPS)
 		{
 			bDestroyedRuntimes = false;
 			return;
@@ -158,7 +403,18 @@ public:
 		}
 		bDestroyedRuntimes = true;
 
-		VOXEL_MESSAGE(Info, "Average framerate is below 8fps, destroying all voxel runtimes. Use Ctrl F5 to re-create them");
+		FNotificationInfo Info(INVTEXT("Average framerate is below 8fps, destroying all voxel runtimes. Use Ctrl F5 to re-create them"));
+		Info.ExpireDuration = 4.f;
+		Info.ButtonDetails.Add(FNotificationButtonInfo(
+			INVTEXT("Disable Monitoring"),
+			INVTEXT("Disable framerate monitoring"),
+			MakeLambdaDelegate([]
+			{
+				GetMutableDefault<UVoxelSettings>()->bEnablePerformanceMonitoring = false;
+				GetMutableDefault<UVoxelSettings>()->PostEditChange();
+			}),
+			SNotificationItem::CS_None));
+		FSlateNotificationManager::Get().AddNotification(Info);
 
 		ForEachObjectOfClass_Copy<AVoxelActor>([&](AVoxelActor* Actor)
 		{

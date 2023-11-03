@@ -77,7 +77,7 @@ public:
 		return bIsSilenced;
 	}
 
-	void Execute(FTokenizedMessage& Message, TSet<const UEdGraph*>& OutGraphs);
+	void AppendTo(FTokenizedMessage& Message, TSet<const UEdGraph*>& OutGraphs) const;
 	TSharedRef<FTokenizedMessage> BuildMessage(TSet<const UEdGraph*>& OutGraphs) const;
 
 private:
@@ -203,11 +203,12 @@ struct TVoxelMessageArgProcessor<FString>
 #undef PROCESS_NUMBER
 
 template<typename T>
-struct TVoxelMessageArgProcessor<TWeakObjectPtr<T>, typename TEnableIf<TIsDerivedFrom<T, UObject>::Value>::Type>
+struct TVoxelMessageArgProcessor<TWeakObjectPtr<T>>
 {
 	static void ProcessArg(FVoxelMessageBuilder& Builder, const TWeakObjectPtr<const T> Object)
 	{
-		FVoxelMessageArgProcessor::ProcessObjectArg(Builder, Object);
+		// Don't require including T
+		FVoxelMessageArgProcessor::ProcessObjectArg(Builder, ReinterpretCastRef<TWeakObjectPtr<UObject>>(Object));
 	}
 };
 
@@ -387,11 +388,8 @@ struct VOXELCORE_API FVoxelMessages
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnNodeMessageLogged, const UEdGraph* Graph, const TSharedRef<FTokenizedMessage>& Message);
 	static FOnNodeMessageLogged OnNodeMessageLogged;
 
-	DECLARE_MULTICAST_DELEGATE_OneParam(FOnClearNodeMessages, const UEdGraph* Graph);
-	static FOnClearNodeMessages OnClearNodeMessages;
-
-	DECLARE_MULTICAST_DELEGATE_OneParam(FOnGatherCallstacks, TVoxelArray<TSharedPtr<FVoxelMessageBuilder>>& OutCallstacks);
-	static FOnGatherCallstacks OnGatherCallstacks;
+	using FGatherCallstack = TFunction<void(TVoxelArray<TSharedPtr<FVoxelMessageBuilder>>& OutCallstacks)>;
+	static TArray<FGatherCallstack> GatherCallstacks;
 
 public:
 	static void LogMessage(const TSharedRef<FTokenizedMessage>& Message);

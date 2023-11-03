@@ -151,6 +151,9 @@ TSharedRef<FDistanceFieldVolumeData> FVoxelDistanceFieldWrapper::Build() const
 			{
 				FPlatformMemory::Memcpy(&StreamableMipData[OutMip.BulkOffset + IndirectionTableBytes], DistanceFieldBrickData.GetData(), DistanceFieldBrickData.Num());
 			}
+
+			// HACK: set BulkSize to 0 so no read request is ever emitted as they crash in packaged
+			OutMip.BulkSize = 0;
 		}
 
 		OutMip.IndirectionDimensions = Mip.IndirectionSize;

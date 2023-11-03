@@ -38,8 +38,6 @@ public:
 	virtual void SaveTabState(const FVoxelEditedDocumentInfo& EditedDocumentInfo) VOXEL_PURE_VIRTUAL();
 	virtual void ClearSavedDocuments() VOXEL_PURE_VIRTUAL();
 
-	virtual TArray<UEdGraph*> GetAllEdGraphs() const VOXEL_PURE_VIRTUAL({});
-
 	void OnGraphChanged(const UEdGraph* EdGraph);
 
 protected:
@@ -49,7 +47,6 @@ public:
 	//~ Begin FVoxelToolkit Interface
 	virtual void Initialize() override;
 	virtual void SaveDocuments() override;
-	virtual void PostUndo() override;
 	virtual void SetTabManager(const TSharedRef<FTabManager>& TabManager) override;
 	//~ End FVoxelToolkit Interface
 

@@ -58,38 +58,7 @@ VOXEL_CONSOLE_COMMAND(
 	GVoxelTaskExecutor->LogAllTasks();
 }
 
-FVoxelTaskExecutor* GVoxelTaskExecutor = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(CreateGVoxelTaskExecutorManager)
-{
-	GVoxelTaskExecutor = new FVoxelTaskExecutor();
-
-	FVoxelRenderUtilities::OnPreRender().AddLambda([](FRDGBuilder& GraphBuilder)
-	{
-		GVoxelTaskExecutor->Tick_RenderThread(GraphBuilder);
-	});
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-FVoxelTaskExecutor::FVoxelTaskExecutor()
-{
-	TFunction<void()> Callback = [this]
-	{
-		bIsExiting.Store(true);
-		Groups.Reset();
-
-		VOXEL_SCOPE_LOCK(ThreadsCriticalSection);
-		Threads.Reset();
-	};
-
-	FCoreDelegates::OnPreExit.AddLambda(Callback);
-	FCoreDelegates::OnExit.AddLambda(Callback);
-	GOnVoxelModuleUnloaded_DoCleanup.AddLambda(Callback);
-	FTaskGraphInterface::Get().AddShutdownCallback(Callback);
-}
+FVoxelTaskExecutor* GVoxelTaskExecutor = MakeVoxelSingleton(FVoxelTaskExecutor);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -126,6 +95,27 @@ void FVoxelTaskExecutor::AddGroup(const TSharedRef<FVoxelTaskGroup>& Group)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelTaskExecutor::Initialize()
+{
+	TFunction<void()> Callback = [this]
+	{
+		bIsExiting.Store(true);
+		Groups.Reset();
+
+		VOXEL_SCOPE_LOCK(ThreadsCriticalSection);
+		Threads.Reset();
+	};
+
+	FCoreDelegates::OnPreExit.AddLambda(Callback);
+	FCoreDelegates::OnExit.AddLambda(Callback);
+	GOnVoxelModuleUnloaded_DoCleanup.AddLambda(Callback);
+
+	FVoxelRenderUtilities::OnPreRender().AddLambda([this](FRDGBuilder& GraphBuilder)
+	{
+		Tick_RenderThread(GraphBuilder);
+	});
+}
 
 void FVoxelTaskExecutor::Tick()
 {
@@ -178,7 +168,7 @@ void FVoxelTaskExecutor::Tick()
 
 	if (Threads.Num() != GVoxelNumThreads)
 	{
-		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [this]
+		AsyncVoxelTask([this]
 		{
 			VOXEL_SCOPE_LOCK(ThreadsCriticalSection);
 
@@ -198,8 +188,13 @@ void FVoxelTaskExecutor::Tick()
 	{
 		VOXEL_SCOPE_COUNTER("Process game groups");
 
+		// Max 100ms tick
+		const double EndTime = FPlatformTime::Seconds() + 0.1;
+
 		TWeakPtr<FVoxelTaskGroup> WeakGroup;
-		while (GameGroupsQueue.Dequeue(WeakGroup))
+		while (
+			FPlatformTime::Seconds() < EndTime &&
+			GameGroupsQueue.Dequeue(WeakGroup))
 		{
 			TSharedPtr<FVoxelTaskGroup> TmpGroup = WeakGroup.Pin();
 			if (!TmpGroup)
@@ -207,15 +202,21 @@ void FVoxelTaskExecutor::Tick()
 				continue;
 			}
 
-			const FVoxelTaskGroupScope Scope(*TmpGroup);
+			FVoxelTaskGroupScope Scope;
+			if (!Scope.Initialize(*TmpGroup))
+			{
+				// Exiting
+				continue;
+			}
+
 			// Reset to only have one valid group ref for ShouldExit
 			TmpGroup.Reset();
 
-			Scope.Group->ProcessGameTasks();
+			Scope.GetGroup().ProcessGameTasks();
 		}
 	}
 
-	AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [this]
+	AsyncVoxelTask([this]
 	{
 		VOXEL_SCOPE_COUNTER("Gather game tasks");
 		Groups.ForeachGroup([&](FVoxelTaskGroup& Group)
@@ -228,6 +229,10 @@ void FVoxelTaskExecutor::Tick()
 		});
 	});
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 DECLARE_GPU_STAT(FVoxelTaskExecutor);
 
@@ -261,11 +266,17 @@ void FVoxelTaskExecutor::Tick_RenderThread(FRDGBuilder& GraphBuilder)
 			return;
 		}
 
-		const FVoxelTaskGroupScope Scope(*GroupToProcess);
+		FVoxelTaskGroupScope Scope;
+		if (!Scope.Initialize(*GroupToProcess))
+		{
+			// Exiting
+			return;
+		}
+
 		// Reset to only have one valid group ref for ShouldExit
 		GroupToProcess.Reset();
 
-		Scope.Group->ProcessRenderTasks(GraphBuilder);
+		Scope.GetGroup().ProcessRenderTasks(GraphBuilder);
 	}
 }
 
@@ -282,6 +293,11 @@ void FVoxelTaskExecutor::FTaskGroupArray::Add(const TSharedRef<FVoxelTaskGroup>&
 {
 	VOXEL_FUNCTION_COUNTER();
 	FVoxelScopeLock_Write Lock(CriticalSection);
+
+	if (GVoxelTaskExecutor->IsExiting())
+	{
+		return;
+	}
 
 #if VOXEL_DEBUG && 0
 	for (const FTaskGroup& Group : Groups)
@@ -425,15 +441,21 @@ GetNextTask:
 		goto Wait;
 	}
 
-	const FVoxelTaskGroupScope Scope(*TmpGroup);
+	FVoxelTaskGroupScope Scope;
+	if (!Scope.Initialize(*TmpGroup))
+	{
+		// Exiting
+		goto Wait;
+	}
+
 	// Reset to only have one valid group ref for ShouldExit
 	TmpGroup.Reset();
 
-	checkVoxelSlow(Scope.Group->AsyncProcessor.Load() == this);
+	checkVoxelSlow(Scope.GetGroup().AsyncProcessor.Load() == this);
 
-	Scope.Group->ProcessAsyncTasks();
+	Scope.GetGroup().ProcessAsyncTasks();
 
-	const void* Old = Scope.Group->AsyncProcessor.Exchange(nullptr);
+	const void* Old = Scope.GetGroup().AsyncProcessor.Exchange(nullptr);
 	checkVoxelSlow(Old == this);
 
 	goto GetNextTask;

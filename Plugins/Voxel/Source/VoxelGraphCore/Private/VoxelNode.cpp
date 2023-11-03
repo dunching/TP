@@ -7,7 +7,7 @@
 #include "VoxelSourceParser.h"
 #include "VoxelGraph.h"
 #include "VoxelGraphExecutor.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 
 DEFINE_UNIQUE_VOXEL_ID(FVoxelPinRuntimeId);
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelNodeRuntime);
@@ -106,6 +106,7 @@ FVoxelFutureValue FVoxelNodeRuntime::Get(const FVoxelPinRef& Pin, const FVoxelQu
 {
 	const FPinData& PinData = GetPinData(Pin);
 	checkVoxelSlow(PinData.bIsInput);
+	ensureVoxelSlow(!PinData.Metadata.bConstantPin);
 
 	FVoxelFutureValue Value = (*PinData.Compute)(Query);
 	checkVoxelSlow(Value.IsValid());
@@ -119,25 +120,28 @@ FVoxelFutureValue FVoxelNodeRuntime::Get(const FVoxelPinRef& Pin, const FVoxelQu
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedRef<const FVoxelComputeValue> FVoxelNodeRuntime::GetCompute(const FVoxelPinRef& Pin) const
+TSharedRef<const FVoxelComputeValue> FVoxelNodeRuntime::GetCompute(
+	const FVoxelPinRef& Pin,
+	const TSharedRef<FVoxelQueryContext>& Context) const
 {
 	const TSharedPtr<FPinData> PinData = PinDatas.FindRef(Pin);
 	checkVoxelSlow(PinData);
-	return PinData->Compute.ToSharedRef();
+	ensureVoxelSlow(!PinData->Metadata.bConstantPin);
+
+	return MakeVoxelShared<FVoxelComputeValue>([Context, Compute = PinData->Compute.ToSharedRef()](const FVoxelQuery& InQuery)
+	{
+		const FVoxelQuery NewQuery = InQuery.MakeNewQuery(Context);
+		const FVoxelQueryScope Scope(NewQuery);
+		return (*Compute)(NewQuery);
+	});
 }
 
 FVoxelDynamicValueFactory FVoxelNodeRuntime::MakeDynamicValueFactory(const FVoxelPinRef& Pin) const
 {
 	const TSharedPtr<FPinData> PinData = PinDatas.FindRef(Pin);
 	checkVoxelSlow(PinData);
+	ensureVoxelSlow(!PinData->Metadata.bConstantPin);
 	return FVoxelDynamicValueFactory(PinData->Compute.ToSharedRef(), PinData->Type, PinData->StatName);
-}
-
-FVoxelCachedValueFactory FVoxelNodeRuntime::MakeCachedValueFactory(const FVoxelPinRef& Pin) const
-{
-	const TSharedPtr<FPinData> PinData = PinDatas.FindRef(Pin);
-	checkVoxelSlow(PinData);
-	return FVoxelCachedValueFactory(PinData->Compute.ToSharedRef(), PinData->Type, PinData->StatName);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -149,7 +153,8 @@ FVoxelPinRuntimeId GetVoxelPinRuntimeId(const FVoxelGraphPinRef& PinRef)
 	static FVoxelFastCriticalSection CriticalSection;
 	VOXEL_SCOPE_LOCK(CriticalSection);
 
-	static TVoxelAddOnlyMap<FVoxelGraphPinRef, FVoxelPinRuntimeId> PinRefToId;
+	static TMap<FVoxelGraphPinRef, FVoxelPinRuntimeId> PinRefToId;
+
 	FVoxelPinRuntimeId& Id = PinRefToId.FindOrAdd(PinRef);
 	if (!Id.IsValid())
 	{
@@ -162,11 +167,13 @@ FVoxelNodeRuntime::FPinData::FPinData(
 	const FVoxelPinType& Type,
 	const bool bIsInput,
 	const FName StatName,
-	const FVoxelGraphPinRef& PinRef)
+	const FVoxelGraphPinRef& PinRef,
+	const FVoxelPinMetadataFlags& Metadata)
 	: Type(Type)
 	, bIsInput(bIsInput)
 	, StatName(StatName)
 	, PinId(GetVoxelPinRuntimeId(PinRef))
+	, Metadata(Metadata)
 {
 	ensure(!Type.IsWildcard());
 }
@@ -461,7 +468,7 @@ void FVoxelNode::PostSerialize()
 ///////////////////////////////////////////////////////////////////////////////
 
 #if WITH_EDITOR
-TSharedRef<IVoxelNodeDefinition> FVoxelNode::GetNodeDefinition()
+TSharedRef<FVoxelNodeDefinition> FVoxelNode::GetNodeDefinition()
 {
 	return MakeVoxelShared<FVoxelNodeDefinition>(*this);
 }
@@ -532,6 +539,12 @@ void FVoxelNode::PromotePin(FVoxelPin& Pin, const FVoxelPinType& NewType)
 
 void FVoxelNode::PromotePin_Runtime(FVoxelPin& Pin, const FVoxelPinType& NewType)
 {
+	// For convenience
+	if (Pin.GetType() == NewType)
+	{
+		return;
+	}
+
 #if WITH_EDITOR
 	ensure(GetPromotionTypes(Pin).Contains(NewType));
 #endif
@@ -541,13 +554,15 @@ void FVoxelNode::PromotePin_Runtime(FVoxelPin& Pin, const FVoxelPinType& NewType
 		return;
 	}
 
+	// If this fails, PromotePin_Runtime needs to be overriden
+	ensure(Pin.GetType().IsWildcard() || EnumHasAllFlags(Pin.Flags, EVoxelPinFlags::TemplatePin));
+
 	if (Pin.GetType().IsWildcard())
 	{
 		Pin.SetType(NewType);
-		return;
 	}
 
-	if (!ensure(EnumHasAllFlags(Pin.Flags, EVoxelPinFlags::TemplatePin)))
+	if (!EnumHasAllFlags(Pin.Flags, EVoxelPinFlags::TemplatePin))
 	{
 		return;
 	}
@@ -794,15 +809,34 @@ FName FVoxelNode::CreatePin(
 	const EVoxelPinFlags Flags,
 	const int32 MinArrayNum)
 {
+	if (bIsInput)
+	{
 #if WITH_EDITOR
-	ensure(
-		bIsInput ||
-		Metadata.DefaultValue.IsEmpty());
-	ensure(
-		Metadata.DefaultValue.IsEmpty() ||
-		Type.IsWildcard() ||
-		FVoxelPinValue(Type.GetPinDefaultValueType()).ImportFromString(Metadata.DefaultValue));
+		ensure(
+			Metadata.DefaultValue.IsEmpty() ||
+			Type.IsWildcard() ||
+			FVoxelPinValue(Type.GetPinDefaultValueType()).ImportFromString(Metadata.DefaultValue));
 #endif
+
+		// Use Internal_GetStruct as we might be in a struct constructor
+		if (Internal_GetStruct()->IsChildOf(StaticStructFast<FVoxelExecNode>()))
+		{
+			ensure(Metadata.bVirtualPin);
+		}
+	}
+	else
+	{
+#if WITH_EDITOR
+		ensure(Metadata.DefaultValue.IsEmpty());
+#endif
+
+		ensure(!Metadata.bArrayPin);
+		ensure(!Metadata.bVirtualPin);
+		ensure(!Metadata.bConstantPin);
+		ensure(!Metadata.bDisplayLast);
+		ensure(!Metadata.bNoDefault);
+		ensure(!Metadata.bShowInDetail);
+	}
 
 	FVoxelPinType BaseType = Type;
 	if (Metadata.BaseClass)
@@ -934,7 +968,7 @@ void FVoxelNode::RegisterPin(FDeferredPin Pin, const bool bApplyMinNum)
 	{
 		Pin.Metadata.Tooltip = MakeAttributeLambda([Struct = GetStruct(), Name = Pin.ArrayOwner.IsNone() ? Pin.Name : Pin.ArrayOwner]
 		{
-			return FVoxelSourceParser::Get().GetPinTooltip(Struct, Name);
+			return GVoxelSourceParser->GetPinTooltip(Struct, Name);
 		});
 	}
 
@@ -1192,7 +1226,8 @@ void FVoxelNode::InitializeNodeRuntime(
 			Pin.GetType(),
 			Pin.bIsInput,
 			FName(DebugName + "." + Pin.Name.ToString()),
-			FVoxelGraphPinRef{ NodeRef, Pin.Name });
+			FVoxelGraphPinRef{ NodeRef, Pin.Name },
+			Pin.Metadata);
 
 		NodeRuntime->PinDatas.Add(Pin.Name, PinData);
 	}

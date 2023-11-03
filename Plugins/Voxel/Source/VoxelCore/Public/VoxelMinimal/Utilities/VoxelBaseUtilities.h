@@ -61,6 +61,11 @@ struct TVoxelTypeForBits<Bits, typename TEnableIf<32 < Bits && Bits <= 64>::Type
 	using Type = uint64;
 };
 
+template<int32 Bytes>
+struct TVoxelTypeForBytes : TVoxelTypeForBits<Bytes * 8>
+{
+};
+
 template<typename ElementType, uint32 Alignment>
 struct TIsContiguousContainer<TResourceArray<ElementType, Alignment>> : TIsContiguousContainer<TArray<ElementType, TMemoryImageAllocator<Alignment>>>
 {
@@ -283,7 +288,7 @@ namespace FVoxelUtilities
 		return Index & (NumPerChunk - 1);
 	}
 
-	VOXELCORE_API FText ConvertToTimeText(double Value);
+	VOXELCORE_API FText ConvertToTimeText(double Value, int32 NumExtraDigits = 0);
 	VOXELCORE_API FText ConvertToNumberText(double Value);
 
 	VOXELCORE_API bool IsInt(const FStringView& Text);
@@ -304,9 +309,7 @@ namespace FVoxelUtilities
 		return FCString::Atof(Text.GetData());
 	}
 
-	VOXELCORE_API FName NamePrintf(const TCHAR* Format, ...);
 	VOXELCORE_API FName AppendName(const FStringView& Base, FName Name);
-	VOXELCORE_API void AppendInt(TCHAR* Buffer, int32 Value, int32& Num);
 
 	FORCEINLINE uint8 CastToUINT8(int32 Value)
 	{
@@ -734,6 +737,18 @@ namespace FVoxelUtilities
 	void Memset(ArrayType&& Array, const uint8 Value)
 	{
 		FMemory::Memset(GetData(Array), Value, GetNum(Array) * sizeof(decltype(*GetData(Array))));
+	}
+	template<typename ArrayType>
+	void LargeMemzero(ArrayType&& Array)
+	{
+		VOXEL_FUNCTION_COUNTER_NUM(GetNum(Array), 4096);
+		FVoxelUtilities::Memzero(Array);
+	}
+	template<typename ArrayType>
+	void LargeMemset(ArrayType&& Array, const uint8 Value)
+	{
+		VOXEL_FUNCTION_COUNTER_NUM(GetNum(Array), 4096);
+		FVoxelUtilities::Memset(Array, Value);
 	}
 	template<typename DstArrayType, typename SrcArrayType, typename = typename TEnableIf<
 		!TIsConst<typename TRemoveReference<decltype(*GetData(DeclVal<DstArrayType>()))>::Type>::Value &&

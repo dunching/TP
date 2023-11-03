@@ -290,7 +290,8 @@ void FVoxelPinValue::Fixup_Array(UObject* Outer)
 {
 	for (FVoxelTerminalPinValue& Value : Array)
 	{
-		if (!Value.CanBeCastedTo(Type.GetInnerType()))
+		if (!Value.IsValid() ||
+			!Value.CanBeCastedTo(Type.GetInnerType()))
 		{
 			Value = FVoxelTerminalPinValue(Type.GetInnerType());
 		}

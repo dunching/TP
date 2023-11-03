@@ -1,9 +1,8 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Point/VoxelRaymarchDistanceFieldNode.h"
 #include "VoxelPositionQueryParameter.h"
 #include "VoxelGradientNodes.h"
-#include "VoxelGraphNodeStatInterface.h"
 
 void FVoxelRaymarchDistanceFieldProcessor::Compute()
 {
@@ -16,7 +15,8 @@ void FVoxelRaymarchDistanceFieldProcessor::Compute()
 	Positions.Z.SetStorage(PositionZ);
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = BaseQuery.CloneParameters();
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(Positions);
+	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = GradientStep;
+	Parameters->Add<FVoxelPositionQueryParameter>().Initialize(Positions);
 
 	const TVoxelFutureValue<FVoxelFloatBuffer> NewDistances = Surface->GetDistance(BaseQuery.MakeNewQuery(Parameters));
 
@@ -149,7 +149,7 @@ void FVoxelRaymarchDistanceFieldProcessor::ProcessDistances(const FVoxelFloatBuf
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = BaseQuery.CloneParameters();
 	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = GradientStep;
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(FVoxelVectorBuffer::Make(
+	Parameters->Add<FVoxelPositionQueryParameter>().Initialize(FVoxelVectorBuffer::Make(
 		NewPositionX,
 		NewPositionY,
 		NewPositionZ));
@@ -221,7 +221,8 @@ void FVoxelRaymarchDistanceFieldProcessor::ProcessGradient(const FVoxelVectorBuf
 	}
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = BaseQuery.CloneParameters();
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(FVoxelVectorBuffer::Make(
+	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = GradientStep;
+	Parameters->Add<FVoxelPositionQueryParameter>().Initialize(FVoxelVectorBuffer::Make(
 		NewPositionX,
 		NewPositionY,
 		NewPositionZ));
@@ -263,7 +264,7 @@ void FVoxelRaymarchDistanceFieldProcessor::Finalize()
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = BaseQuery.CloneParameters();
 	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = GradientStep;
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(Position);
+	Parameters->Add<FVoxelPositionQueryParameter>().Initialize(Position);
 
 	const TSharedRef<const FVoxelSurface> LocalSurface = Surface;
 

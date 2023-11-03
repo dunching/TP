@@ -10,8 +10,11 @@ class FVoxelCoreModule : public IModuleInterface
 public:
 	virtual void StartupModule() override
 	{
-		VOXEL_LLM_SCOPE();
 		LOG_VOXEL(Log, "VOXEL_DEBUG=%d", VOXEL_DEBUG);
+		
+#if ENABLE_LOW_LEVEL_MEM_TRACKER
+		GVoxelLLMDisabled = !FLowLevelMemTracker::Get().IsTagSetActive(ELLMTagSet::None);
+#endif
 
 		ensure(!GIsVoxelCoreModuleLoaded);
 		GIsVoxelCoreModuleLoaded = true;
@@ -34,6 +37,9 @@ public:
 		// Run cleanup twice in case first cleanup added voxel nodes back to the pool
 		GOnVoxelModuleUnloaded_DoCleanup.Broadcast();
 		GOnVoxelModuleUnloaded_DoCleanup.Broadcast();
+
+		void DestroyVoxelSingletonManager();
+		DestroyVoxelSingletonManager();
 
 		GOnVoxelModuleUnloaded.Broadcast();
 	}

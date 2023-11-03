@@ -6,63 +6,15 @@
 #include "Tools/UEdMode.h"
 #include "InteractiveToolManager.h"
 #include "BaseTools/SingleClickTool.h"
-#include "SculptVolume/VoxelSculptVolume.h"
-#include "SculptVolume/VoxelSetSculptVolumeSurfaceExecNode.h"
+#include "VoxelActor.h"
 #include "VoxelSculptEdMode.generated.h"
 
 class FVoxelSculptCommands : public TVoxelCommands<FVoxelSculptCommands>
 {
 public:
-	TSharedPtr<FUICommandInfo> Select;
 	TSharedPtr<FUICommandInfo> Sculpt;
 
 	virtual void RegisterCommands() override;
-};
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-UCLASS()
-class UVoxelSelectToolProperties : public UInteractiveToolPropertySet
-{
-	GENERATED_BODY()
-
-public:
-	UPROPERTY(EditAnywhere, Category = Test)
-	bool bTest = true;
-};
-
-UCLASS()
-class UVoxelSelectTool : public USingleClickTool
-{
-	GENERATED_BODY()
-
-public:
-	//~ Begin USingleClickTool Interface
-	virtual void Setup() override;
-	virtual void Shutdown(EToolShutdownType ShutdownType) override;
-	virtual FInputRayHit IsHitByClick(const FInputDeviceRay& ClickPos) override;
-	virtual void OnClicked(const FInputDeviceRay& ClickPos) override;
-	//~ End USingleClickTool Interface
-
-private:
-	UPROPERTY(Transient)
-	TObjectPtr<UVoxelSelectToolProperties> Properties;
-};
-
-UCLASS()
-class UVoxelSelectToolBuilder : public USingleClickToolBuilder
-{
-	GENERATED_BODY()
-
-public:
-	//~ Begin USingleClickToolBuilder Interface
-	virtual UInteractiveTool* BuildTool(const FToolBuilderState& SceneState) const override
-	{
-		return NewObject<UVoxelSelectTool>(SceneState.ToolManager);
-	}
-	//~ End USingleClickToolBuilder Interface
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -76,7 +28,7 @@ class AVoxelPreviewActor : public AVoxelActor
 
 public:
 	UPROPERTY(EditAnywhere, Category = "Config")
-	TObjectPtr<AVoxelSculptVolume> SculptVolume;
+	TObjectPtr<AVoxelActor> TargetActor;
 };
 
 UCLASS()
@@ -112,14 +64,12 @@ public:
 	void UpdatePosition(const FInputDeviceRay& Position);
 	bool DoEdit() const;
 
-private:
+public:
 	UPROPERTY(Transient)
 	TObjectPtr<AVoxelPreviewActor> PreviewActor;
 
 	bool bIsEditing = false;
 	TOptional<FInputDeviceRay> LastRay;
-
-	const TSharedRef<FVoxelRuntimeParameter_SetSculptVolumeSurface> NewSurfaceParameter = MakeVoxelShared<FVoxelRuntimeParameter_SetSculptVolumeSurface>();
 };
 
 UCLASS()

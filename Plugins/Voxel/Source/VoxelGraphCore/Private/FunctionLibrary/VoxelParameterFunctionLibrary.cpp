@@ -4,50 +4,6 @@
 #include "VoxelParameterView.h"
 #include "VoxelParameterContainer.h"
 
-void UVoxelParameterFunctionLibrary::K2_GetVoxelParameter(
-	UVoxelParameterContainer* ParameterContainer,
-	FName Name,
-	int32& Value)
-{
-	check(false);
-}
-
-void UVoxelParameterFunctionLibrary::GetVoxelParameterImpl(
-	UVoxelParameterContainer* ParameterContainer,
-	const FName Name,
-	void* OutData,
-	const FProperty* PropertyForTypeCheck)
-{
-	if (!ParameterContainer)
-	{
-		VOXEL_MESSAGE(Error, "ParameterContainer is null");
-		return;
-	}
-
-	const TSharedPtr<IVoxelParameterRootView> ParameterRootView = ParameterContainer->GetParameterView();
-	if (!ensure(ParameterRootView))
-	{
-		return;
-	}
-
-	const IVoxelParameterView* ParameterView = ParameterRootView->FindByName(Name);
-	if (!ParameterView)
-	{
-		VOXEL_MESSAGE(Error, "Failed to find specified parameter ({0}). Valid parameters: {1}", Name, ParameterRootView->GetValidParameters());
-		return;
-	}
-
-	const FVoxelPinValue Value = ParameterView->GetValue();
-	const FVoxelPinType OutType = FVoxelPinType(*PropertyForTypeCheck);
-	if (!Value.CanBeCastedTo(OutType))
-	{
-		VOXEL_MESSAGE(Error, "Invalid parameter type ({0}). Required type: {1}", OutType.ToString(), Value.GetType().ToString());
-		return;
-	}
-
-	Value.ExportToProperty(*PropertyForTypeCheck, OutData);
-}
-
 DEFINE_FUNCTION(UVoxelParameterFunctionLibrary::execK2_GetVoxelParameter)
 {
 	P_GET_OBJECT(UVoxelParameterContainer, ParameterContainer);
@@ -71,39 +27,80 @@ DEFINE_FUNCTION(UVoxelParameterFunctionLibrary::execK2_GetVoxelParameter)
 	P_NATIVE_END
 }
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void UVoxelParameterFunctionLibrary::K2_SetVoxelParameter(
-	UVoxelParameterContainer* ParameterContainer,
-	FName Name,
-	const int32& Value,
-	int32& OutValue)
-{
-	check(false);
-}
-
-void UVoxelParameterFunctionLibrary::SetVoxelParameterImpl(
+void UVoxelParameterFunctionLibrary::GetVoxelParameterImpl(
 	UVoxelParameterContainer* ParameterContainer,
 	const FName Name,
-	const void* ValuePtr,
-	const FProperty* ValueProperty)
+	void* OutData,
+	const FProperty* PropertyForTypeCheck)
+{
+	const FVoxelPinValue Value = GetVoxelParameter(ParameterContainer, Name);
+	if (!Value.IsValid())
+	{
+		return;
+	}
+
+	const FVoxelPinType OutType = FVoxelPinType(*PropertyForTypeCheck);
+	if (!Value.GetType().CanBeCastedTo_K2(OutType))
+	{
+		VOXEL_MESSAGE(Error, "Invalid parameter type ({0}). Required type: {1}", OutType.ToString(), Value.GetType().ToString());
+		return;
+	}
+
+	Value.ExportToProperty(*PropertyForTypeCheck, OutData);
+}
+
+FVoxelPinValue UVoxelParameterFunctionLibrary::GetVoxelParameter(
+	UVoxelParameterContainer* ParameterContainer,
+	FName Name)
 {
 	if (!ParameterContainer)
 	{
 		VOXEL_MESSAGE(Error, "ParameterContainer is null");
-		return;
+		return {};
 	}
 
-	const FVoxelPinValue Value = FVoxelPinValue::MakeFromProperty(*ValueProperty, ValuePtr);
-
-	FString Error;
-	if (!ParameterContainer->Set(Name, Value, &Error))
+	const TSharedPtr<IVoxelParameterRootView> ParameterRootView = ParameterContainer->GetParameterView();
+	if (!ensure(ParameterRootView))
 	{
-		VOXEL_MESSAGE(Error, "{0}", Error);
+		return {};
 	}
+
+	const IVoxelParameterView* ParameterView = ParameterRootView->FindByName(Name);
+	if (!ParameterView)
+	{
+		VOXEL_MESSAGE(Error, "Failed to find specified parameter ({0}). Valid parameters: {1}", Name, ParameterRootView->GetValidParameters());
+		return {};
+	}
+
+	return ParameterView->GetValue();
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+bool UVoxelParameterFunctionLibrary::HasVoxelParameter(
+	UVoxelParameterContainer* ParameterContainer,
+	const FName Name)
+{
+	if (!ParameterContainer)
+	{
+		VOXEL_MESSAGE(Error, "ParameterContainer is null");
+		return {};
+	}
+
+	const TSharedPtr<IVoxelParameterRootView> ParameterRootView = ParameterContainer->GetParameterView();
+	if (!ensure(ParameterRootView))
+	{
+		return {};
+	}
+
+	return ParameterRootView->FindByName(Name) != nullptr;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 DEFINE_FUNCTION(UVoxelParameterFunctionLibrary::execK2_SetVoxelParameter)
 {
@@ -134,4 +131,25 @@ DEFINE_FUNCTION(UVoxelParameterFunctionLibrary::execK2_SetVoxelParameter)
 	P_NATIVE_BEGIN
 	P_THIS->SetVoxelParameterImpl(ParameterContainer, Name, PropertyAddress, Property);
 	P_NATIVE_END
+}
+
+void UVoxelParameterFunctionLibrary::SetVoxelParameterImpl(
+	UVoxelParameterContainer* ParameterContainer,
+	const FName Name,
+	const void* ValuePtr,
+	const FProperty* ValueProperty)
+{
+	if (!ParameterContainer)
+	{
+		VOXEL_MESSAGE(Error, "ParameterContainer is null");
+		return;
+	}
+
+	const FVoxelPinValue Value = FVoxelPinValue::MakeFromProperty(*ValueProperty, ValuePtr);
+
+	FString Error;
+	if (!ParameterContainer->Set(Name, Value, &Error))
+	{
+		VOXEL_MESSAGE(Error, "{0}", Error);
+	}
 }

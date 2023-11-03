@@ -1,7 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Templates/VoxelBoolNodes.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 
 FVoxelTemplateNode::FPin* FVoxelTemplateNode_EqualityBase::ExpandPins(FNode& Node, TArray<FPin*> Pins, const TArray<FPin*>& AllPins) const
 {
@@ -12,9 +12,18 @@ FVoxelTemplateNode::FPin* FVoxelTemplateNode_EqualityBase::ExpandPins(FNode& Nod
 	{
 		NodeStruct = GetBoolInnerNode();
 	}
+	else if (All(Pins, IsPinByte))
+	{
+		Pins = Apply(Pins, ConvertToByte);
+		NodeStruct = GetByteInnerNode();
+	}
 	else if (All(Pins, IsPinInt))
 	{
 		NodeStruct = GetInt32InnerNode();
+	}
+	else if (All(Pins, IsPinObject))
+	{
+		NodeStruct = GetObjectInnerNode();
 	}
 	else if (!Any(Pins, IsPinDouble))
 	{
@@ -58,6 +67,10 @@ FVoxelPinTypeSet FVoxelTemplateNode_EqualityBase::GetPromotionTypes(const FVoxel
 		OutTypes.Add<bool>();
 		OutTypes.Add<FVoxelBoolBuffer>();
 	}
+	if (GetByteInnerNode())
+	{
+		OutTypes.Add(GetByteTypes());
+	}
 	if (GetFloatInnerNode())
 	{
 		OutTypes.Add(GetFloatTypes());
@@ -70,6 +83,11 @@ FVoxelPinTypeSet FVoxelTemplateNode_EqualityBase::GetPromotionTypes(const FVoxel
 	{
 		OutTypes.Add(GetIntTypes());
 	}
+	if (GetObjectInnerNode())
+	{
+		OutTypes.Add(GetObjectTypes());
+	}
+
 	return OutTypes;
 }
 
@@ -83,18 +101,34 @@ void FVoxelTemplateNode_EqualityBase::PromotePin(FVoxelPin& Pin, const FVoxelPin
 
 	FixupWildcards(NewType);
 
-	if (IsBool(GetPin(APin).GetType()) != IsBool(NewType))
+	if (IsObject(NewType))
 	{
 		GetPin(APin).SetType(NewType);
-	}
-	if (IsBool(GetPin(BPin).GetType()) != IsBool(NewType))
-	{
 		GetPin(BPin).SetType(NewType);
 	}
-
-	if (!IsBool(NewType))
+	else
 	{
-		EnforceSameDimensions(Pin, NewType, { APin, BPin });
+		if (Pin.Name != ResultPin)
+		{
+			if (IsBool(GetPin(APin).GetType()) != IsBool(NewType) ||
+				IsByte(GetPin(APin).GetType()) != IsByte(NewType) ||
+				IsObject(GetPin(APin).GetType()) != IsObject(NewType))
+			{
+				GetPin(APin).SetType(NewType);
+			}
+			if (IsBool(GetPin(BPin).GetType()) != IsBool(NewType) ||
+				IsByte(GetPin(BPin).GetType()) != IsByte(NewType) ||
+				IsObject(GetPin(BPin).GetType()) != IsObject(NewType))
+			{
+				GetPin(BPin).SetType(NewType);
+			}
+
+			if (!IsBool(NewType) &&
+				!IsByte(NewType))
+			{
+				EnforceSameDimensions(Pin, NewType, { APin, BPin });
+			}
+		}
 	}
 
 	FixupBuffers(NewType, GetAllPins());

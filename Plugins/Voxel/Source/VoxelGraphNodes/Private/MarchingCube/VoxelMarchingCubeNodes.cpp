@@ -4,7 +4,6 @@
 #include "MarchingCube/VoxelMarchingCubeMesh.h"
 #include "MarchingCube/VoxelMarchingCubeProcessor.h"
 #include "VoxelGradientNodes.h"
-#include "VoxelBufferUtilities.h"
 #include "VoxelDetailTextureNodes.h"
 #include "VoxelDistanceFieldWrapper.h"
 #include "VoxelPositionQueryParameter.h"
@@ -60,14 +59,13 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_GenerateMarchingCubeSurface, Surface)
 			VOXEL_MESSAGE(Error, "{0}: Invalid chunk size", this);
 			return {};
 		}
-		if (!(4 <= ChunkSize && ChunkSize <= 128) ||
-			ChunkSize % 2 != 0)
+		if (!(4 <= ChunkSize && ChunkSize <= 128))
 		{
-			VOXEL_MESSAGE(Error, "{0}: Invalid chunk size {1}, needs to be between 4 and 128 and a multiple of 2", this, ChunkSize);
+			VOXEL_MESSAGE(Error, "{0}: Invalid chunk size {1}, needs to be between 4 and 128", this, ChunkSize);
 			return {};
 		}
 
-		const int32 DataSize = ChunkSize + 2;
+		const int32 DataSize = ChunkSize + 1;
 
 		const TValue<bool> ShouldSkip = INLINE_LAMBDA -> TValue<bool>
 		{
@@ -81,7 +79,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_GenerateMarchingCubeSurface, Surface)
 
 			const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
 			Parameters->Add<FVoxelGradientStepQueryParameter>().Step = ScaledVoxelSize;
-			Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid3D(FVector3f(Bounds.Min) + Size / 4.f, Size / 2.f, FIntVector(2));
+			Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid(FVector3f(Bounds.Min) + Size / 4.f, Size / 2.f, FIntVector(2));
 			Parameters->Add<FVoxelMinExactDistanceQueryParameter>().MinExactDistance = Size / 4.f * UE_SQRT_2;
 
 			const TValue<FVoxelFloatBuffer> Distances = Get(DistancePin, Query.MakeNewQuery(Parameters));
@@ -109,25 +107,19 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_GenerateMarchingCubeSurface, Surface)
 			{
 				if (GVoxelMarchingCubeShowSkippedChunks)
 				{
-					AsyncTask(ENamedThreads::GameThread, [=]
-					{
-						DrawDebugBox(GWorld, Bounds.GetCenter(), Bounds.Size() / 2.f, FColor::Green, false, 10.f);
-					});
+					FVoxelGameUtilities::DrawBox({}, Bounds, Query.GetQueryToWorld().Get_NoDependency(), FColor::Green);
 				}
 				return {};
 			}
 
 			if (GVoxelMarchingCubeShowComputedChunks)
 			{
-				AsyncTask(ENamedThreads::GameThread, [=]
-				{
-					DrawDebugBox(GWorld, Bounds.GetCenter(), Bounds.Size() / 2.f, FColor::Red, false, 10.f);
-				});
+				FVoxelGameUtilities::DrawBox({}, Bounds, Query.GetQueryToWorld().Get_NoDependency(), FColor::Red);
 			}
 
 			const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
 			Parameters->Add<FVoxelGradientStepQueryParameter>().Step = ScaledVoxelSize;
-			Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid3D(FVector3f(Bounds.Min), ScaledVoxelSize, FIntVector(DataSize));
+			Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid(FVector3f(Bounds.Min), ScaledVoxelSize, FIntVector(DataSize));
 
 			const TValue<FVoxelFloatBuffer> Distances = Get(DistancePin, Query.MakeNewQuery(Parameters));
 
@@ -184,10 +176,20 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_GenerateMarchingCubeSurface, Surface)
 					}
 				}
 
+				if (QueryX.Num() == 0 ||
+					QueryY.Num() == 0 ||
+					QueryZ.Num() == 0)
+				{
+					ensure(QueryX.Num() == 0);
+					ensure(QueryY.Num() == 0);
+					ensure(QueryZ.Num() == 0);
+					return Surface;
+				}
+
 				const TSharedRef<FVoxelQueryParameters> TransitionParameters = Query.CloneParameters();
 				TransitionParameters->Add<FVoxelLODQueryParameter>().LOD = LOD + 1;
 				TransitionParameters->Add<FVoxelGradientStepQueryParameter>().Step = ScaledVoxelSize * 2;
-				TransitionParameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(FVoxelVectorBuffer::Make(QueryX, QueryY, QueryZ));
+				TransitionParameters->Add<FVoxelPositionQueryParameter>().Initialize(FVoxelVectorBuffer::Make(QueryX, QueryY, QueryZ));
 
 				const TValue<FVoxelFloatBuffer> TransitionDistances = Get(DistancePin, Query.MakeNewQuery(TransitionParameters));
 
@@ -237,7 +239,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_CreateMarchingCubeCollider, Collider)
 		TValue<FVoxelPhysicalMaterialBuffer> Materials;
 		{
 			const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
-			Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse([Surface, NumTriangles]
+			Parameters->Add<FVoxelPositionQueryParameter>().Initialize([Surface, NumTriangles]
 			{
 				FVoxelFloatBufferStorage X; X.Allocate(NumTriangles);
 				FVoxelFloatBufferStorage Y; Y.Allocate(NumTriangles);
@@ -361,7 +363,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_CreateMarchingCubeMesh, Mesh)
 
 				const TSharedRef<FVoxelQueryParameters> VertexNormalParameters = Query.CloneParameters();
 				VertexNormalParameters->Add<FVoxelGradientStepQueryParameter>().Step = Surface->ScaledVoxelSize;
-				VertexNormalParameters->Add<FVoxelPositionQueryParameter>().InitializeSparse([this, Query, Surface, NumVertexNormals, Scale, Offset]
+				VertexNormalParameters->Add<FVoxelPositionQueryParameter>().Initialize([this, Query, Surface, NumVertexNormals, Scale, Offset]
 				{
 					const TVoxelArray<FVector3f>& Vertices = Surface->Vertices;
 
@@ -413,7 +415,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_CreateMarchingCubeMesh, Mesh)
 				const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
 				Parameters->Add<FVoxelGradientStepQueryParameter>().Step = TexelSize;
 
-				Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid3D(
+				Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid(
 					FVector3f(Surface->ChunkBounds.Min + QueryBounds.Min - TexelSize),
 					TexelSize,
 					FIntVector(DenseQuerySize));
@@ -505,14 +507,6 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_CreateMarchingCubeMesh, Mesh)
 
 					VOXEL_SCOPE_COUNTER("Distance Field");
 
-					TVoxelArray<float> UnpackedDistances;
-					FVoxelUtilities::SetNumFast(UnpackedDistances, FMath::Cube(DenseQuerySize));
-
-					FVoxelBufferUtilities::UnpackData(
-						Distances.GetStorage(),
-						UnpackedDistances,
-						FIntVector(DenseQuerySize));
-
 					FVoxelDistanceFieldWrapper Wrapper(QueryBounds.ToFBox());
 					Wrapper.SetSize(FIntVector(NumBricksPerChunk));
 
@@ -529,7 +523,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_CreateMarchingCubeMesh, Mesh)
 							// Shader samples between [0.5, 7.5] for good interpolation
 							const FIntVector DistancePosition = BrickPositionA * DistanceField::UniqueDataBrickSize + BrickPositionB;
 							const int32 DistanceIndex = FVoxelUtilities::Get3DIndex<int32>(DenseQuerySize, DistancePosition);
-							const float Distance = UnpackedDistances[DistanceIndex] + DistanceFieldBias;
+							const float Distance = Distances[DistanceIndex] + DistanceFieldBias;
 
 							const int32 BrickIndex = FVoxelUtilities::Get3DIndex<int32>(DistanceField::BrickSize, BrickPositionB);
 							Brick[BrickIndex] = Mip.QuantizeDistance(Distance);

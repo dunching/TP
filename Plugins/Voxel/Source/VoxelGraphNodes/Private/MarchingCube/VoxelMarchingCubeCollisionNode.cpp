@@ -25,18 +25,21 @@ FVoxelNodeAliases::TValue<FVoxelCollider> FVoxelMarchingCubeCollisionExecNode::C
 	checkVoxelSlow(FVoxelTaskReferencer::Get().IsReferenced(this));
 	const FVoxelQuery Query = InQuery.EnterScope(*this);
 
+	const TSharedRef<FVoxelQueryParameters> SurfaceParameters = Query.CloneParameters();
+	SurfaceParameters->Add<FVoxelQueryChannelBoundsQueryParameter>().Bounds = Bounds;
+	const TValue<FVoxelSurface> FutureSurface = GetNodeRuntime().Get(SurfacePin, Query.MakeNewQuery(SurfaceParameters));
+
 	return VOXEL_CALL_NODE(FVoxelNode_CreateMarchingCubeCollider, ColliderPin, Query)
 	{
-		VOXEL_CALL_NODE_BIND(SurfacePin, VoxelSize, ChunkSize, Bounds)
+		VOXEL_CALL_NODE_BIND(SurfacePin, VoxelSize, ChunkSize, Bounds, FutureSurface)
 		{
 			return VOXEL_CALL_NODE(FVoxelNode_GenerateMarchingCubeSurface, SurfacePin, Query)
 			{
-				VOXEL_CALL_NODE_BIND(DistancePin)
+				VOXEL_CALL_NODE_BIND(DistancePin, FutureSurface)
 				{
-					const TValue<FVoxelSurface> Surface = GetNodeRuntime().Get(SurfacePin, Query);
-					return VOXEL_ON_COMPLETE(Surface)
+					return VOXEL_ON_COMPLETE(FutureSurface)
 					{
-						return Surface->GetDistance(Query);
+						return FutureSurface->GetDistance(Query);
 					};
 				};
 				VOXEL_CALL_NODE_BIND(VoxelSizePin, VoxelSize)
@@ -90,60 +93,99 @@ void FVoxelMarchingCubeCollisionExecNodeRuntime::Create()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	PinValuesProvider.Compute(this, [this](const FPinValues& PinValues)
+	if (!IsGameWorld() &&
+		!GVoxelCollisionEnableInEditor)
 	{
-		FVoxelUtilities::RunOnGameThread(MakeWeakPtrLambda(this, [=]
-		{
-			InvokerChannel_GameThread = PinValues.InvokerChannel;
-			BodyInstance_GameThread = PinValues.BodyInstance;
-			bComputeCollision_GameThread = PinValues.ComputeCollision;
-			bComputeNavmesh_GameThread = PinValues.ComputeNavmesh;
+		return;
+	}
 
+	BodyInstance = GetConstantPin(Node.BodyInstancePin);
+	bComputeCollision = GetConstantPin(Node.ComputeCollisionPin);
+	bComputeNavmesh = GetConstantPin(Node.ComputeNavmeshPin);
+
+	if (!bComputeCollision &&
+		!bComputeNavmesh)
+	{
+		return;
+	}
+
+	const FName InvokerChannel = GetConstantPin(Node.InvokerChannelPin);
+	const float VoxelSize = GetConstantPin(Node.VoxelSizePin);
+	const int32 ChunkSize = GetConstantPin(Node.ChunkSizePin);
+	const int32 FullChunkSize = FMath::CeilToInt(ChunkSize * VoxelSize);
+
+	InvokerView = FVoxelInvokerManager::Get(GetWorld())->MakeView(
+		InvokerChannel,
+		FullChunkSize,
+		0,
+		GetLocalToWorld());
+
+	InvokerView->Bind(
+		MakeWeakPtrDelegate(this, [=](const TVoxelAddOnlySet<FIntVector>& ChunksToAdd)
+		{
+			VOXEL_SCOPE_COUNTER("OnAddChunk");
 			VOXEL_SCOPE_LOCK(CriticalSection);
 
-			if (!Octree_RequiresLock ||
-				Octree_RequiresLock->VoxelSize != PinValues.VoxelSize ||
-				Octree_RequiresLock->ChunkSize != PinValues.ChunkSize)
+			for (const FIntVector& ChunkKey : ChunksToAdd)
 			{
-				Octree_RequiresLock = MakeVoxelShared<FOctree>(PinValues.VoxelSize, PinValues.ChunkSize);
-
-				const TSharedPtr<FVoxelRuntime> Runtime = GetRuntime();
-				for (const auto& It : Chunks_RequiresLock)
+				TSharedPtr<FChunk>& Chunk = Chunks_RequiresLock.FindOrAdd(ChunkKey);
+				if (ensure(!Chunk))
 				{
-					FChunk& Chunk = *It.Value;
-					Chunk.Collider_RequiresLock = {};
-
-					if (Runtime)
-					{
-						Runtime->DestroyComponent(Chunk.CollisionComponent_GameThread);
-						Runtime->DestroyComponent(Chunk.NavigationComponent_GameThread);
-					}
-					else
-					{
-						Chunk.CollisionComponent_GameThread.Reset();
-						Chunk.NavigationComponent_GameThread.Reset();
-					}
+					Chunk = MakeVoxelShared<FChunk>();
 				}
-				Chunks_RequiresLock.Empty();
+
+				const FVoxelBox Bounds = FVoxelBox(FVector(ChunkKey) * FullChunkSize, FVector(ChunkKey + 1) * FullChunkSize);
+
+				TVoxelDynamicValueFactory<FVoxelCollider> Factory(STATIC_FNAME("Marching Cube Collision"), [
+					&Node = Node,
+					VoxelSize,
+					ChunkSize,
+					Bounds](const FVoxelQuery& Query)
+				{
+					return Node.CreateCollider(Query, VoxelSize, ChunkSize, Bounds);
+				});
+
+				const TSharedRef<FVoxelQueryParameters> Parameters = MakeVoxelShared<FVoxelQueryParameters>();
+				Parameters->Add<FVoxelLODQueryParameter>().LOD = 0;
+				Chunk->Collider_RequiresLock = Factory
+					.AddRef(NodeRef)
+					.Priority(FVoxelTaskPriority::MakeBounds(
+						Bounds,
+						GetConstantPin(Node.PriorityOffsetPin),
+						GetWorld(),
+						GetLocalToWorld()))
+					.Compute(GetContext(), Parameters);
+
+				Chunk->Collider_RequiresLock.OnChanged(MakeWeakPtrLambda(this, [this, WeakChunk = MakeWeakPtr(Chunk)](const TSharedRef<const FVoxelCollider>& Collider)
+				{
+					QueuedColliders.Enqueue({ WeakChunk, Collider });
+				}));
 			}
+		}),
+		MakeWeakPtrDelegate(this, [this](const TVoxelAddOnlySet<FIntVector>& ChunksToRemove)
+		{
+			VOXEL_SCOPE_COUNTER("OnRemoveChunk");
+			VOXEL_SCOPE_LOCK(CriticalSection);
 
-			if (BodyInstance_GameThread != PinValues.BodyInstance)
+			for (const FIntVector& ChunkKey : ChunksToRemove)
 			{
-				for (const auto& It : Chunks_RequiresLock)
+				TSharedPtr<FChunk> Chunk;
+				if (!ensure(Chunks_RequiresLock.RemoveAndCopyValue(ChunkKey, Chunk)))
 				{
-					if (UVoxelCollisionComponent* Component = It.Value->CollisionComponent_GameThread.Get())
-					{
-						Component->SetBodyInstance(*BodyInstance_GameThread);
-					}
+					return;
 				}
+
+				Chunk->Collider_RequiresLock = {};
+				ChunksToDestroy.Enqueue(Chunk);
 			}
 		}));
-	});
 }
 
 void FVoxelMarchingCubeCollisionExecNodeRuntime::Destroy()
 {
 	VOXEL_FUNCTION_COUNTER();
+
+	InvokerView = {};
 
 	ProcessChunksToDestroy();
 	{
@@ -176,23 +218,6 @@ void FVoxelMarchingCubeCollisionExecNodeRuntime::Tick(FVoxelRuntime& Runtime)
 	VOXEL_FUNCTION_COUNTER();
 	ensure(!IsDestroyed());
 
-	if (!IsGameWorld() &&
-		!GVoxelCollisionEnableInEditor)
-	{
-		return;
-	}
-
-	const TSharedRef<const FVoxelInvoker> Invoker = GVoxelInvokerManager->GetInvoker(Runtime.GetWorld(), InvokerChannel_GameThread);
-	if (LastInvoker_GameThread != Invoker)
-	{
-		LastInvoker_GameThread = Invoker;
-
-		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, MakeWeakPtrLambda(this, [=]
-		{
-			Update_AnyThread(Invoker);
-		}));
-	}
-
 	ProcessChunksToDestroy();
 	ProcessQueuedColliders(Runtime);
 }
@@ -200,86 +225,6 @@ void FVoxelMarchingCubeCollisionExecNodeRuntime::Tick(FVoxelRuntime& Runtime)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
-
-void FVoxelMarchingCubeCollisionExecNodeRuntime::Update_AnyThread(const TSharedRef<const FVoxelInvoker>& Invoker)
-{
-	VOXEL_FUNCTION_COUNTER();
-	VOXEL_SCOPE_LOCK(CriticalSection);
-
-	if (IsDestroyed() ||
-		!ensure(Octree_RequiresLock))
-	{
-		return;
-	}
-
-	Octree_RequiresLock->Update(
-		[&](const FOctree::FNodeRef TreeNodeRef)
-		{
-			const FVoxelBox NodeBounds = TreeNodeRef.GetBounds().ToVoxelBox().Scale(
-				Octree_RequiresLock->VoxelSize *
-				Octree_RequiresLock->ChunkSize);
-			return Invoker->Intersect(NodeBounds);
-		},
-		[&](const FOctree::FNodeRef TreeNodeRef)
-		{
-			if (TreeNodeRef.GetHeight() > 0)
-			{
-				return;
-			}
-
-			TSharedPtr<FChunk>& Chunk = Chunks_RequiresLock.FindOrAdd(TreeNodeRef.GetMin());
-			if (ensure(!Chunk))
-			{
-				Chunk = MakeVoxelShared<FChunk>();
-			}
-
-			const FVoxelIntBox KeyBounds = TreeNodeRef.GetBounds();
-			const FVoxelBox Bounds = KeyBounds.ToVoxelBox().Scale(
-				Octree_RequiresLock->VoxelSize *
-				Octree_RequiresLock->ChunkSize);
-
-			TVoxelDynamicValueFactory<FVoxelCollider> Factory(STATIC_FNAME("Marching Cube Collision"), [
-				&Node = Node,
-				VoxelSize = Octree_RequiresLock->VoxelSize,
-				ChunkSize = Octree_RequiresLock->ChunkSize,
-				Bounds](const FVoxelQuery& Query)
-			{
-				return Node.CreateCollider(Query, VoxelSize, ChunkSize, Bounds);
-			});
-
-			const TSharedRef<FVoxelQueryParameters> Parameters = MakeVoxelShared<FVoxelQueryParameters>();
-			Parameters->Add<FVoxelLODQueryParameter>().LOD = 0;
-			Chunk->Collider_RequiresLock = Factory
-				.AddRef(NodeRef)
-				.Priority(FVoxelTaskPriority::MakeBounds(
-					Bounds,
-					0,
-					GetWorld(),
-					GetLocalToWorld()))
-				.Compute(GetContext(), Parameters);
-
-			Chunk->Collider_RequiresLock.OnChanged(MakeWeakPtrLambda(this, [this, WeakChunk = MakeWeakPtr(Chunk)](const TSharedRef<const FVoxelCollider>& Collider)
-			{
-				QueuedColliders.Enqueue({ WeakChunk, Collider });
-			}));
-		},
-		[&](const FOctree::FNodeRef TreeNodeRef)
-		{
-			if (TreeNodeRef.GetHeight() > 0)
-			{
-				return;
-			}
-
-			TSharedPtr<FChunk> Chunk;
-			if (!ensure(Chunks_RequiresLock.RemoveAndCopyValue(TreeNodeRef.GetMin(), Chunk)))
-			{
-				return;
-			}
-
-			Chunk->Collider_RequiresLock = {};
-			ChunksToDestroy.Enqueue(Chunk);
-		});
-}
 
 void FVoxelMarchingCubeCollisionExecNodeRuntime::ProcessChunksToDestroy()
 {
@@ -326,39 +271,44 @@ void FVoxelMarchingCubeCollisionExecNodeRuntime::ProcessQueuedColliders(FVoxelRu
 		}
 
 		const TSharedRef<const FVoxelCollider> Collider = QueuedCollider.Collider.ToSharedRef();
-
-		if (Collider->GetStruct() == FVoxelCollider::StaticStruct())
+		if (Collider->GetStruct() == StaticStructFast<FVoxelCollider>())
 		{
 			Runtime.DestroyComponent(Chunk->CollisionComponent_GameThread);
 			Runtime.DestroyComponent(Chunk->NavigationComponent_GameThread);
+			continue;
 		}
-		else
+		ensure(bComputeCollision || bComputeNavmesh);
+
+		if (bComputeCollision)
 		{
-			UVoxelCollisionComponent* CollisionComponent = Chunk->CollisionComponent_GameThread.Get();
-			if (!CollisionComponent)
+			UVoxelCollisionComponent* Component = Chunk->CollisionComponent_GameThread.Get();
+			if (!Component)
 			{
-				CollisionComponent = Runtime.CreateComponent<UVoxelCollisionComponent>();
-				Chunk->CollisionComponent_GameThread = CollisionComponent;
+				Component = Runtime.CreateComponent<UVoxelCollisionComponent>();
+				Chunk->CollisionComponent_GameThread = Component;
 			}
 
-			if (ensure(CollisionComponent))
+			if (ensure(Component))
 			{
-				CollisionComponent->SetRelativeLocation(Collider->GetOffset());
-				CollisionComponent->SetBodyInstance(*BodyInstance_GameThread);
-				CollisionComponent->SetCollider(Collider);
+				Component->SetRelativeLocation(Collider->GetOffset());
+				Component->SetBodyInstance(*BodyInstance);
+				Component->SetCollider(Collider);
+			}
+		}
+
+		if (bComputeNavmesh)
+		{
+			UVoxelNavigationComponent* Component = Chunk->NavigationComponent_GameThread.Get();
+			if (!Component)
+			{
+				Component = Runtime.CreateComponent<UVoxelNavigationComponent>();
+				Chunk->NavigationComponent_GameThread = Component;
 			}
 
-			UVoxelNavigationComponent* NavigationComponent = Chunk->NavigationComponent_GameThread.Get();
-			if (!NavigationComponent)
+			if (ensure(Component))
 			{
-				NavigationComponent = Runtime.CreateComponent<UVoxelNavigationComponent>();
-				Chunk->NavigationComponent_GameThread = NavigationComponent;
-			}
-
-			if (ensure(NavigationComponent))
-			{
-				NavigationComponent->SetRelativeLocation(Collider->GetOffset());
-				NavigationComponent->SetNavigationMesh(Collider->GetNavmesh());
+				Component->SetRelativeLocation(Collider->GetOffset());
+				Component->SetNavigationMesh(Collider->GetNavmesh());
 			}
 		}
 	}

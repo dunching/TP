@@ -4,7 +4,6 @@
 #include "VoxelFunctionNode.h"
 #include "VoxelBuffer.h"
 #include "VoxelSurface.h"
-#include "VoxelGraphNodeStatInterface.h"
 
 void UVoxelFunctionLibrary::RaiseQueryError(const FVoxelGraphNodeRef& Node, const UScriptStruct* QueryType)
 {
@@ -92,20 +91,28 @@ void UVoxelFunctionLibrary::Call(
 	{
 		if (CachedFunction.Struct)
 		{
-			ReturnMemory = FVoxelMemory::Malloc(CachedFunction.StructureSize);
-
-			if (CachedFunction.bStructHasZeroConstructor)
+			if (CachedFunction.Struct == StaticStructFast<FVoxelRuntimePinValue>())
 			{
-				FMemory::Memzero(ReturnMemory, CachedFunction.StructureSize);
+				checkVoxelSlow(Values.Last());
+				ReturnMemory = Values.Last();
 			}
 			else
 			{
-				CachedFunction.CppStructOps->Construct(ReturnMemory);
-			}
+				ReturnMemory = FVoxelMemory::Malloc(CachedFunction.StructureSize);
 
-			if (CachedFunction.Struct == StaticStructFast<FVoxelComplexTerminalBuffer>())
-			{
-				static_cast<FVoxelComplexTerminalBuffer*>(ReturnMemory)->Initialize(CachedFunction.ReturnPropertyType.GetInnerType());
+				if (CachedFunction.bStructHasZeroConstructor)
+				{
+					FMemory::Memzero(ReturnMemory, CachedFunction.StructureSize);
+				}
+				else
+				{
+					CachedFunction.CppStructOps->Construct(ReturnMemory);
+				}
+
+				if (CachedFunction.Struct == StaticStructFast<FVoxelComplexTerminalBuffer>())
+				{
+					static_cast<FVoxelComplexTerminalBuffer*>(ReturnMemory)->Initialize(CachedFunction.ReturnPropertyType.GetInnerType());
+				}
 			}
 		}
 		else
@@ -154,6 +161,12 @@ void UVoxelFunctionLibrary::Call(
 		return;
 	}
 
+	if (CachedFunction.Struct == StaticStructFast<FVoxelRuntimePinValue>())
+	{
+		checkVoxelSlow(ReturnMemory == Values.Last());
+		return;
+	}
+
 	checkVoxelSlow(Values.Last());
 
 	FVoxelRuntimePinValue& ReturnValue = *Values.Last();
@@ -161,16 +174,8 @@ void UVoxelFunctionLibrary::Call(
 
 	if (CachedFunction.Struct)
 	{
-		if (CachedFunction.Struct == StaticStructFast<FVoxelRuntimePinValue>())
-		{
-			ReturnValue = *static_cast<const FVoxelRuntimePinValue*>(ReturnMemory);
-			FVoxelMemory::Free(ReturnMemory);
-		}
-		else
-		{
-			ReturnValue.SharedStructType = CachedFunction.Struct;
-			ReturnValue.SharedStruct = MakeShareableStruct(CachedFunction.Struct, ReturnMemory);
-		}
+		ReturnValue.SharedStructType = CachedFunction.Struct;
+		ReturnValue.SharedStruct = MakeShareableStruct(CachedFunction.Struct, ReturnMemory);
 	}
 	else
 	{

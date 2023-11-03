@@ -39,12 +39,12 @@ FVoxelRuntimePinValue FVoxelRuntimePinValue::MakeStruct(const FConstVoxelStructV
 
 FVoxelRuntimePinValue FVoxelRuntimePinValue::Make(
 	const TSharedRef<const FVoxelBuffer>& Value,
-	const FVoxelPinType& Type)
+	const FVoxelPinType& BufferType)
 {
-	checkVoxelSlow(Type.IsBuffer());
+	checkVoxelSlow(BufferType.IsBuffer());
 
 	FVoxelRuntimePinValue Result;
-	Result.Type = Type;
+	Result.Type = BufferType;
 	Result.SharedStructType = Value->GetStruct();
 	Result.SharedStruct = ReinterpretCastRef<TSharedRef<const FVoxelSharedStructOpaque>>(Value);
 	return Result;
@@ -52,9 +52,9 @@ FVoxelRuntimePinValue FVoxelRuntimePinValue::Make(
 
 FVoxelRuntimePinValue FVoxelRuntimePinValue::Make(
 	const TSharedRef<FVoxelBuffer>& Value,
-	const FVoxelPinType& Type)
+	const FVoxelPinType& BufferType)
 {
-	return Make(StaticCastSharedRef<const FVoxelBuffer>(Value), Type);
+	return Make(StaticCastSharedRef<const FVoxelBuffer>(Value), BufferType);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

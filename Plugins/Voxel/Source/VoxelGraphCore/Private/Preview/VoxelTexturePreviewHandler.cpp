@@ -25,7 +25,7 @@ void FVoxelTexturePreviewHandler::Create(const FVoxelPinType& Type)
 		{
 			VOXEL_SCOPE_COUNTER("Write preview positions");
 
-			const FMatrix44f LocalToWorld = FMatrix44f(Query.GetInfo(EVoxelQueryInfo::Query).GetLocalToWorld().Get(Query));
+			const FMatrix44f LocalToWorld = FMatrix44f(Query.GetQueryToWorld().Get(Query));
 
 			FVoxelFloatBufferStorage PositionsX;
 			FVoxelFloatBufferStorage PositionsY;
@@ -48,8 +48,11 @@ void FVoxelTexturePreviewHandler::Create(const FVoxelPinType& Type)
 			});
 
 			const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
-			Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(
+
+			Parameters->Add<FVoxelPositionQueryParameter>().Initialize(
 				FVoxelVectorBuffer::Make(PositionsX, PositionsY, PositionsZ));
+
+			Parameters->Add<FVoxelGradientStepQueryParameter>().Step = LocalToWorld.GetScaleVector().GetAbsMax();
 
 			const FVoxelQuery NewQuery = Query.MakeNewQuery(Parameters);
 			const FVoxelFutureValue Value = (*Compute)(NewQuery);
@@ -104,7 +107,7 @@ void FVoxelTexturePreviewHandler::Create(const FVoxelPinType& Type)
 			});
 		}
 
-		AsyncTask(ENamedThreads::GameThread, MakeWeakPtrLambda(this, [=]
+		FVoxelUtilities::RunOnGameThread(MakeWeakPtrLambda(this, [=]
 		{
 			if (!Texture)
 			{

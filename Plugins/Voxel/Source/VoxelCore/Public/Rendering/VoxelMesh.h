@@ -113,7 +113,7 @@ TSharedRef<T> MakeVoxelMesh()
 			return;
 		}
 
-		ENQUEUE_RENDER_COMMAND(DeleteVoxelMesh)([=](FRHICommandListImmediate& RHICmdList)
+		VOXEL_ENQUEUE_RENDER_COMMAND(DeleteVoxelMesh)([=](FRHICommandListImmediate& RHICmdList)
 		{
 			if (Mesh->bIsInitialized_RenderThread &&
 				ensure(!Mesh->bIsDestroyed_RenderThread))
@@ -122,8 +122,7 @@ TSharedRef<T> MakeVoxelMesh()
 			}
 			Mesh->bIsDestroyed_RenderThread = true;
 
-			Mesh->~T();
-			FVoxelMemory::Free(Mesh);
+			FVoxelMemory::Delete(Mesh);
 		});
 	}).ToSharedRef();
 

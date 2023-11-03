@@ -14,76 +14,54 @@ struct VOXELGRAPHCORE_API FVoxelPositionQueryParameter : public FVoxelQueryParam
 	GENERATED_VOXEL_QUERY_PARAMETER_BODY()
 
 public:
-	struct FGrid2D
+	bool IsGradient() const
 	{
-		FVector2f Start = FVector2f::ZeroVector;
+		return bIsGradient;
+	}
+	bool IsGrid() const
+	{
+		return Grid.IsValid();
+	}
+
+	struct FGrid
+	{
+		FVector3f Start;
 		float Step = 0.f;
-		FIntPoint Size = FIntPoint::ZeroValue;
+		FIntVector Size;
 	};
-	struct FGrid3D
+	const FGrid& GetGrid() const
 	{
-		FVector3f Start = FVector3f::ZeroVector;
-		float Step = 0.f;
-		FIntVector Size = FIntVector::ZeroValue;
-	};
-	struct FSparse
-	{
-		bool bIsGradient = false;
-		TOptional<FVoxelBox> Bounds;
-		TVoxelUniqueFunction<FVoxelVectorBuffer()> Compute;
-	};
-
-	bool IsGrid2D() const
-	{
-		return Grid2D.IsValid();
-	}
-	bool IsGrid3D() const
-	{
-		return Grid3D.IsValid();
-	}
-	bool IsSparseGradient() const
-	{
-		return
-			Sparse.IsValid() &&
-			Sparse->bIsGradient;
+		return *Grid;
 	}
 
-	const FGrid2D& GetGrid2D() const
-	{
-		return *Grid2D;
-	}
-	const FGrid3D& GetGrid3D() const
-	{
-		return *Grid3D;
-	}
-
-public:
 	FVoxelBox GetBounds() const;
 	FVoxelVectorBuffer GetPositions() const;
 
-	void InitializeSparse(
-		const FVoxelVectorBuffer& Positions,
-		const TOptional<FVoxelBox>& Bounds = {});
-	void InitializeSparse(
-		TVoxelUniqueFunction<FVoxelVectorBuffer()>&& Compute,
-		const TOptional<FVoxelBox>& Bounds = {});
-	void InitializeSparseGradient(
-		const FVoxelVectorBuffer& Positions,
-		const TOptional<FVoxelBox>& Bounds = {});
+	void Initialize(
+		const FVoxelVectorBuffer& NewPositions,
+		const TOptional<FVoxelBox>& NewBounds = {});
+	void Initialize(
+		TVoxelUniqueFunction<FVoxelVectorBuffer()>&& NewCompute,
+		const TOptional<FVoxelBox>& NewBounds = {});
+	void InitializeGradient(
+		const FVoxelVectorBuffer& NewPositions,
+		const TOptional<FVoxelBox>& NewBounds = {});
 
-	void InitializeGrid2D(
-		const FVector2f& Start,
-		float Step,
-		const FIntPoint& Size);
-	void InitializeGrid3D(
+	void InitializeGrid(
 		const FVector3f& Start,
 		float Step,
 		const FIntVector& Size);
 
+public:
+	static FVoxelQuery TransformQuery(
+		const FVoxelQuery& Query,
+		const FMatrix& Transform);
+
 private:
-	TSharedPtr<FGrid2D> Grid2D;
-	TSharedPtr<FGrid3D> Grid3D;
-	TSharedPtr<FSparse> Sparse;
+	TSharedPtr<const FGrid> Grid;
+	bool bIsGradient = false;
+	TOptional<FVoxelBox> PrecomputedBounds;
+	TSharedPtr<const TVoxelUniqueFunction<FVoxelVectorBuffer()>> Compute;
 
 	mutable FVoxelFastCriticalSection CriticalSection;
 	mutable TOptional<FVoxelBox> CachedBounds_RequiresLock;

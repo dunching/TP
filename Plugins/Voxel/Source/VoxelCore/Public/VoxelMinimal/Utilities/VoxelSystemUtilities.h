@@ -3,21 +3,8 @@
 #pragma once
 
 #include "VoxelCoreMinimal.h"
-#include "Containers/Ticker.h"
 
 class IPlugin;
-
-class VOXELCORE_API FVoxelTicker : public FTSTickerObjectBase
-{
-public:
-	FVoxelTicker() = default;
-
-	//~ Begin FTickerObjectBase Interface
-	virtual bool Tick(float DeltaTime) final override;
-	//~ End FTickerObjectBase Interface
-
-	virtual void Tick() = 0;
-};
 
 struct VOXELCORE_API FVoxelSystemUtilities
 {

@@ -4,7 +4,8 @@
 
 #include "VoxelMinimal.h"
 
-BEGIN_VOXEL_NAMESPACE(Magica)
+namespace Voxel::Magica
+{
 
 struct FIntTransform
 {
@@ -206,4 +207,4 @@ struct FMagicaScene
 
 VOXELCORE_API bool ReadScene(const TVoxelArrayView<const uint8>& Data, FMagicaScene& OutScene);
 
-END_VOXEL_NAMESPACE(Magica)
+}

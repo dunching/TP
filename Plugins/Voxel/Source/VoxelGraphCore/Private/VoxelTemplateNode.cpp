@@ -3,7 +3,8 @@
 #include "VoxelTemplateNode.h"
 #include "VoxelMathNodes.h"
 #include "VoxelFunctionNode.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelObjectPinType.h"
+#include "VoxelCompiledGraph.h"
 #include "FunctionLibrary/VoxelMathFunctionLibrary.h"
 #include "FunctionLibrary/VoxelAutocastFunctionLibrary.h"
 
@@ -14,9 +15,27 @@ void FVoxelTemplateNodeUtilities::SetPinDimension(FVoxelPin& Pin, const int32 Di
 	Pin.SetType(GetVectorType(Pin.GetType(), Dimension));
 }
 
-const TVoxelArray<FVoxelPinType>& FVoxelTemplateNodeUtilities::GetFloatTypes()
+TConstVoxelArrayView<FVoxelPinType> FVoxelTemplateNodeUtilities::GetByteTypes()
 {
-	static const TVoxelArray<FVoxelPinType> Types =
+	static TArray<FVoxelPinType> Types;
+	if (Types.Num() == 0)
+	{
+		Types.Add(FVoxelPinType::Make<uint8>());
+		Types.Add(FVoxelPinType::Make<FVoxelByteBuffer>());
+
+		ForEachObjectOfClass<UEnum>([&](UEnum* Enum)
+		{
+			const FVoxelPinType Type = FVoxelPinType::MakeEnum(Enum);
+			Types.Add(Type);
+			Types.Add(Type.GetBufferType());
+		});
+	}
+	return Types;
+}
+
+TConstVoxelArrayView<FVoxelPinType> FVoxelTemplateNodeUtilities::GetFloatTypes()
+{
+	static const TArray<FVoxelPinType> Types =
 	{
 		FVoxelPinType::Make<float>(),
 		FVoxelPinType::Make<FVector2D>(),
@@ -31,9 +50,9 @@ const TVoxelArray<FVoxelPinType>& FVoxelTemplateNodeUtilities::GetFloatTypes()
 	return Types;
 }
 
-const TVoxelArray<FVoxelPinType>& FVoxelTemplateNodeUtilities::GetDoubleTypes()
+TConstVoxelArrayView<FVoxelPinType> FVoxelTemplateNodeUtilities::GetDoubleTypes()
 {
-	static const TVoxelArray<FVoxelPinType> Types =
+	static const TArray<FVoxelPinType> Types =
 	{
 		FVoxelPinType::Make<double>(),
 		FVoxelPinType::Make<FVoxelDoubleVector2D>(),
@@ -48,9 +67,9 @@ const TVoxelArray<FVoxelPinType>& FVoxelTemplateNodeUtilities::GetDoubleTypes()
 	return Types;
 }
 
-const TVoxelArray<FVoxelPinType>& FVoxelTemplateNodeUtilities::GetIntTypes()
+TConstVoxelArrayView<FVoxelPinType> FVoxelTemplateNodeUtilities::GetIntTypes()
 {
-	static const TVoxelArray<FVoxelPinType> Types =
+	static const TArray<FVoxelPinType> Types =
 	{
 		FVoxelPinType::Make<int32>(),
 		FVoxelPinType::Make<FIntPoint>(),
@@ -65,9 +84,34 @@ const TVoxelArray<FVoxelPinType>& FVoxelTemplateNodeUtilities::GetIntTypes()
 	return Types;
 }
 
+TConstVoxelArrayView<FVoxelPinType> FVoxelTemplateNodeUtilities::GetObjectTypes()
+{
+	static TArray<FVoxelPinType> Types;
+	if (Types.Num() == 0)
+	{
+		for (const auto& It : FVoxelObjectPinType::StructToPinType())
+		{
+			FVoxelPinType Type = FVoxelPinType::MakeStruct(ConstCast(It.Key));
+			Types.Add(Type.GetInnerType());
+			Types.Add(Type.GetBufferType().WithBufferArray(false));
+		}
+	}
+	return Types;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
+
+bool FVoxelTemplateNodeUtilities::IsPinBool(const FPin* Pin)
+{
+	return IsBool(Pin->Type);
+}
+
+bool FVoxelTemplateNodeUtilities::IsPinByte(const FPin* Pin)
+{
+	return IsByte(Pin->Type);
+}
 
 bool FVoxelTemplateNodeUtilities::IsPinFloat(const FPin* Pin)
 {
@@ -84,9 +128,9 @@ bool FVoxelTemplateNodeUtilities::IsPinInt(const FPin* Pin)
 	return IsInt(Pin->Type);
 }
 
-bool FVoxelTemplateNodeUtilities::IsPinBool(const FPin* Pin)
+bool FVoxelTemplateNodeUtilities::IsPinObject(const FPin* Pin)
 {
-	return IsBool(Pin->Type);
+	return IsObject(Pin->Type);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -103,7 +147,8 @@ int32 FVoxelTemplateNodeUtilities::GetDimension(const FVoxelPinType& PinType)
 	if (PinType.Is<float>() ||
 		PinType.Is<double>() ||
 		PinType.Is<int32>() ||
-		PinType.Is<bool>())
+		PinType.Is<bool>() ||
+		PinType.Is<uint8>())
 	{
 		return 1;
 	}
@@ -127,6 +172,11 @@ int32 FVoxelTemplateNodeUtilities::GetDimension(const FVoxelPinType& PinType)
 		PinType.Is<FIntVector4>())
 	{
 		return 4;
+	}
+
+	if (PinType.GetInnerExposedType().IsObject())
+	{
+		return 1;
 	}
 
 	ensure(false);
@@ -501,8 +551,6 @@ TSharedPtr<FVoxelNode> FVoxelTemplateNodeUtilities::GetMakeNode(const FPin* Pin,
 
 int32 FVoxelTemplateNodeUtilities::GetMaxDimension(const TArray<FPin*>& Pins)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	int32 HighestDimension = 0;
 	for (const FPin* Pin : Pins)
 	{
@@ -518,9 +566,37 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::GetLinkedPin(FPi
 	return &Pin->GetLinkedTo()[0];
 }
 
+FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToByte(FPin* Pin)
+{
+	ensure(IsPinByte(Pin));
+
+	if (!Pin->Type.GetInnerType().GetEnum())
+	{
+		return Pin;
+	}
+
+	FVoxelPinType OutputType = FVoxelPinType::Make<uint8>();
+	if (Pin->Type.IsBuffer())
+	{
+		OutputType = OutputType.GetBufferType();
+	}
+
+	FNode& Passthrough = Pin->Node.Graph.NewNode(ENodeType::Passthrough, GetNodeRef());
+	FPin& InputPin = Passthrough.NewInputPin("ConvertToByteIn", Pin->Type, FVoxelPinValue(Pin->Type));
+	FPin& OutputPin = Passthrough.NewOutputPin("ConvertToByteOut", OutputType);
+
+	Pin->MakeLinkTo(InputPin);
+
+	return &OutputPin;
+}
+
 FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToFloat(FPin* Pin)
 {
-	VOXEL_USE_NAMESPACE(Graph);
+
+	if (IsPinObject(Pin))
+	{
+		return Pin;
+	}
 
 	if (IsPinFloat(Pin))
 	{
@@ -544,7 +620,7 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToFloat(F
 		ResultType = ResultType.GetBufferType();
 	}
 
-	FNode& ConvNode = Pin->Node.Graph.NewNode(ENodeType::Struct, GetNodeRef());
+	FNode& ConvNode = Pin->Node.Graph.NewNode(GetNodeRef());
 	ConvNode.SetVoxelNode(VoxelNode.ToSharedRef());
 
 	FPin* ResultPin = nullptr;
@@ -566,8 +642,6 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToFloat(F
 
 FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToDouble(FPin* Pin)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (IsPinDouble(Pin))
 	{
 		return Pin;
@@ -590,7 +664,7 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToDouble(
 		ResultType = ResultType.GetBufferType();
 	}
 
-	FNode& ConvNode = Pin->Node.Graph.NewNode(ENodeType::Struct, GetNodeRef());
+	FNode& ConvNode = Pin->Node.Graph.NewNode(GetNodeRef());
 	ConvNode.SetVoxelNode(VoxelNode.ToSharedRef());
 
 	FPin* ResultPin = nullptr;
@@ -612,8 +686,6 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ConvertToDouble(
 
 FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ScalarToVector(FPin* Pin, const int32 HighestDimension)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (HighestDimension == 1 ||
 		GetDimension(Pin->Type) != 1)
 	{
@@ -639,8 +711,6 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ScalarToVector(F
 
 FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::ZeroExpandVector(FPin* Pin, const int32 HighestDimension)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	const int32 PinDimension = GetDimension(Pin->Type);
 
 	if (PinDimension == HighestDimension)
@@ -709,8 +779,6 @@ TArray<FVoxelTemplateNodeUtilities::FPin*> FVoxelTemplateNodeUtilities::BreakVec
 
 TArray<FVoxelTemplateNodeUtilities::FPin*> FVoxelTemplateNodeUtilities::BreakNode(FPin* Pin, const TSharedPtr<FVoxelNode>& BreakVoxelNode, int32 NumExpectedOutputPins)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (!ensure(BreakVoxelNode))
 	{
 		return {};
@@ -738,8 +806,6 @@ TArray<FVoxelTemplateNodeUtilities::FPin*> FVoxelTemplateNodeUtilities::BreakNod
 
 FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::MakeVector(TArray<FPin*> Pins)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (Pins.Num() == 1)
 	{
 		return Pins[0];
@@ -770,8 +836,6 @@ bool FVoxelTemplateNodeUtilities::IsPinOfName(const FPin* Pin, const TSet<FName>
 
 FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::MakeConstant(const FNode& Node, const FVoxelPinValue& Value)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	FNode& Passthrough = Node.Graph.NewNode(ENodeType::Passthrough, GetNodeRef());
 	Passthrough.NewInputPin("ConstantInput", Value.GetType(), Value);
 	return &Passthrough.NewOutputPin("ConstantOutput", Value.GetType());
@@ -783,11 +847,9 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::MakeConstant(con
 
 FVoxelTemplateNodeUtilities::FNode& FVoxelTemplateNodeUtilities::CreateNode(const FPin* Pin, const TSharedRef<FVoxelNode>& VoxelNode)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	const FNode& Node = Pin->Node;
 
-	FNode& StructNode = Node.Graph.NewNode(ENodeType::Struct, GetNodeRef());
+	FNode& StructNode = Node.Graph.NewNode(GetNodeRef());
 
 	for (FVoxelPin& StructPin : VoxelNode->GetPins())
 	{
@@ -881,8 +943,6 @@ FVoxelTemplateNodeUtilities::FPin* FVoxelTemplateNodeUtilities::Call_Single(
 	const TArray<FPin*>& Pins,
 	const TOptional<FVoxelPinType> OutputPinType)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (!ensure(Pins.Num() > 0))
 	{
 		return nullptr;
@@ -909,8 +969,6 @@ TArray<FVoxelTemplateNodeUtilities::FPin*> FVoxelTemplateNodeUtilities::Call_Mul
 	const TArray<TArray<FPin*>>& Pins,
 	const TOptional<FVoxelPinType> OutputPinType)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	int32 NumDimensions = -1;
 
 	const FNode* TargetNode = nullptr;
@@ -945,7 +1003,7 @@ TArray<FVoxelTemplateNodeUtilities::FPin*> FVoxelTemplateNodeUtilities::Call_Mul
 
 	for (int32 DimensionIndex = 0; DimensionIndex < NumDimensions; DimensionIndex++)
 	{
-		FNode& StructNode = TargetNode->Graph.NewNode(ENodeType::Struct, GetNodeRef());
+		FNode& StructNode = TargetNode->Graph.NewNode(GetNodeRef());
 		const TSharedRef<FVoxelNode> VoxelNode = MakeSharedStruct<FVoxelNode>(NodeStruct);
 
 		int32 PinIndex = 0;

@@ -1,7 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Templates/VoxelClampNodes.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 
 FVoxelTemplateNode::FPin* FVoxelTemplateNode_AbstractClampBase::ExpandPins(FNode& Node, TArray<FPin*> Pins, const TArray<FPin*>& AllPins) const
 {

@@ -41,7 +41,10 @@ public:
 	FVoxelPinType PinType;
 
 	UPROPERTY()
-	bool bDeclaration = false;
+	bool bInput_ExposeDefaultAsPin = false;
+
+	UPROPERTY()
+	bool bLocalVariable_IsDeclaration = false;
 
 	using FVoxelGraphSchemaAction::FVoxelGraphSchemaAction;
 	virtual UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2D Location, bool bSelectNewNode = true) override;
@@ -56,6 +59,9 @@ struct FVoxelGraphSchemaAction_NewParameter : public FVoxelGraphSchemaAction
 public:
 	UPROPERTY()
 	EVoxelGraphParameterType ParameterType = {};
+
+	TOptional<FVoxelPinType> PinType;
+	FName ParameterName;
 
 	UPROPERTY()
 	FString TargetCategory;
@@ -75,6 +81,8 @@ public:
 
 	UPROPERTY()
 	TObjectPtr<UVoxelGraph> NewMacro;
+
+	bool bOpenNewGraph = true;
 
 	using FVoxelGraphSchemaAction::FVoxelGraphSchemaAction;
 	virtual UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2D Location, bool bSelectNewNode = true) override;

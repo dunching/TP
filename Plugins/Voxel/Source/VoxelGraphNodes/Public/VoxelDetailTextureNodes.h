@@ -76,7 +76,7 @@ public:
 	template<typename T>
 	void SetGetBuffer(const TSharedRef<const TVoxelComputeValue<T>>& GetBufferTyped)
 	{
-		GetBuffer = ReinterpretCastRef<TSharedRef<const TVoxelComputeValue<FVoxelBuffer>>>(GetBufferTyped);
+		GetBuffer = ReinterpretCastSharedPtr<const TVoxelComputeValue<FVoxelBuffer>>(GetBufferTyped);
 	}
 
 	virtual TVoxelFutureValue<FVoxelComputedMaterialParameter> Compute(const FVoxelQuery& Query) const final override;

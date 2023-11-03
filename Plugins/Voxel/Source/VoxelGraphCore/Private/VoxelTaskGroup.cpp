@@ -2,37 +2,119 @@
 
 #include "VoxelTaskGroup.h"
 #include "VoxelTaskExecutor.h"
-#include "VoxelQuery.h"
+#include "VoxelNodeStats.h"
+#include "EdGraph/EdGraphNode.h"
+
+#if WITH_EDITOR
+class FVoxelExecNodeStatManager
+	: public FVoxelSingleton
+	, public IVoxelNodeStatProvider
+{
+public:
+	struct FQueuedStat
+	{
+		TSharedPtr<const FVoxelCallstack> Callstack;
+		double Time = 0.;
+	};
+	TQueue<FQueuedStat, EQueueMode::Mpsc> Queue;
+
+	TVoxelMap<TWeakObjectPtr<const UEdGraphNode>, double> NodeToTime;
+
+	//~ Begin FVoxelSingleton Interface
+	virtual void Initialize() override
+	{
+		GVoxelNodeStatProviders.Add(this);
+	}
+	virtual void Tick() override
+	{
+		VOXEL_FUNCTION_COUNTER();
+
+		FQueuedStat QueuedStat;
+		while (Queue.Dequeue(QueuedStat))
+		{
+			for (TSharedPtr<const FVoxelCallstack> Callstack = QueuedStat.Callstack; Callstack; Callstack = Callstack->Parent)
+			{
+				UEdGraphNode* GraphNode = Callstack->Node.GetGraphNode_EditorOnly();
+				if (!GraphNode)
+				{
+					continue;
+				}
+
+				NodeToTime.FindOrAdd(GraphNode) += QueuedStat.Time;
+			}
+		}
+	}
+	//~ End FVoxelSingleton Interface
+
+	//~ Begin IVoxelNodeStatProvider Interface
+	virtual void ClearStats() override
+	{
+		NodeToTime.Empty();
+	}
+	virtual FText GetToolTip(const UEdGraphNode& Node) override
+	{
+		const double* Time = NodeToTime.Find(&Node);
+		if (!Time)
+		{
+			return {};
+		}
+
+		return FText::Format(
+			INVTEXT("Total execution time of this node & all its downstream nodes: {0}"),
+			FVoxelUtilities::ConvertToTimeText(*Time, 9));
+	}
+	virtual FText GetText(const UEdGraphNode& Node) override
+	{
+		const double* Time = NodeToTime.Find(&Node);
+		if (!Time)
+		{
+			return {};
+		}
+
+		return FText::Format(
+			INVTEXT("Total Exec Time: {0}"),
+			FVoxelUtilities::ConvertToTimeText(*Time));
+	}
+	//~ End IVoxelNodeStatProvider Interface
+};
+FVoxelExecNodeStatManager* GVoxelExecNodeStatManager = MakeVoxelSingleton(FVoxelExecNodeStatManager);
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelTaskGroup);
 
 const uint32 GVoxelTaskGroupTLS = FPlatformTLS::AllocTlsSlot();
 
 TSharedRef<FVoxelTaskGroup> FVoxelTaskGroup::Create(
 	const FName Name,
 	const FVoxelTaskPriority& Priority,
-	const TSharedRef<FVoxelQueryContext>& Context,
-	const TSharedRef<FVoxelTaskReferencer>& Referencer)
+	const TSharedRef<FVoxelTaskReferencer>& Referencer,
+	const TSharedRef<const FVoxelQueryContext>& Context)
 {
 	const TSharedRef<FVoxelTaskGroup> Group = MakeVoxelShareable(new (GVoxelMemory) FVoxelTaskGroup(
 		Name,
 		false,
 		Priority,
-		Context,
-		Referencer));
+		Referencer,
+		Context));
 	GVoxelTaskExecutor->AddGroup(Group);
 	return Group;
 }
 
 TSharedRef<FVoxelTaskGroup> FVoxelTaskGroup::CreateSynchronous(
 	const FName Name,
-	const TSharedRef<FVoxelQueryContext>& Context,
-	const TSharedRef<FVoxelTaskReferencer>& Referencer)
+	const TSharedRef<FVoxelTaskReferencer>& Referencer,
+	const TSharedRef<const FVoxelQueryContext>& Context)
 {
 	return MakeVoxelShareable(new (GVoxelMemory) FVoxelTaskGroup(
 		Name,
 		true,
 		{},
-		Context,
-		Referencer));
+		Referencer,
+		Context));
 }
 
 TSharedRef<FVoxelTaskGroup> FVoxelTaskGroup::CreateSynchronous(
@@ -40,8 +122,8 @@ TSharedRef<FVoxelTaskGroup> FVoxelTaskGroup::CreateSynchronous(
 {
 	return CreateSynchronous(
 		STATIC_FNAME("Synchronous"),
-		Context,
-		MakeVoxelShared<FVoxelTaskReferencer>(STATIC_FNAME("Synchronous")));
+		MakeVoxelShared<FVoxelTaskReferencer>(STATIC_FNAME("Synchronous")),
+		Context);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -56,7 +138,17 @@ bool FVoxelTaskGroup::TryRunSynchronouslyGeneric(
 	VOXEL_FUNCTION_COUNTER();
 
 	const TSharedRef<FVoxelTaskGroup> Group = CreateSynchronous(Context);
-	FVoxelTaskGroupScope Scope(*Group);
+
+	FVoxelTaskGroupScope Scope;
+	if (!ensure(Scope.Initialize(*Group)))
+	{
+		// Exiting
+		if (OutError)
+		{
+			*OutError = "Runtime is being destroyed";
+		}
+		return false;
+	}
 
 	Lambda();
 
@@ -186,6 +278,46 @@ bool FVoxelTaskGroup::TryRunSynchronously_Ensure()
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+void FVoxelTaskGroup::StartAsyncTaskGeneric(
+	const FName Name,
+	const TSharedRef<FVoxelQueryContext>& Context,
+	const FVoxelPinType& Type,
+	TVoxelUniqueFunction<FVoxelFutureValue()> MakeFuture,
+	TFunction<void(const FVoxelRuntimePinValue&)> Callback)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	const TSharedRef<FVoxelTaskGroup> Group = Create(
+		Name,
+		FVoxelTaskPriority::MakeTop(),
+		MakeVoxelShared<FVoxelTaskReferencer>(Name),
+		Context);
+
+	FVoxelTaskGroupScope Scope;
+	if (!ensure(Scope.Initialize(*Group)))
+	{
+		return;
+	}
+
+	const FVoxelFutureValue Future =
+		MakeVoxelTask(STATIC_FNAME("StartAsyncTask"))
+		.Execute(Type, MoveTemp(MakeFuture));
+
+	MakeVoxelTask()
+	.Dependency(Future)
+	.Execute([=]
+	{
+		// Keep group alive
+		(void)Group;
+
+		Callback(Future.GetValue_CheckCompleted());
+	});
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void FVoxelTaskGroup::ProcessTask(TVoxelUniquePtr<FVoxelTask> TaskPtr)
 {
 	checkVoxelSlow(TaskPtr->NumDependencies.GetValue() == 0);
@@ -197,7 +329,13 @@ void FVoxelTaskGroup::ProcessTask(TVoxelUniquePtr<FVoxelTask> TaskPtr)
 	{
 		if (IsInGameThreadFast())
 		{
-			FVoxelTaskGroupScope Scope(*this);
+			FVoxelTaskGroupScope Scope;
+			if (!Scope.Initialize(*this))
+			{
+				// Exiting
+				return;
+			}
+
 			TaskPtr->Execute();
 		}
 		else
@@ -209,7 +347,7 @@ void FVoxelTaskGroup::ProcessTask(TVoxelUniquePtr<FVoxelTask> TaskPtr)
 	case EVoxelTaskThread::RenderThread:
 	{
 		// Enqueue to ensure commands enqueued before this will be run before it
-		ENQUEUE_RENDER_COMMAND(FVoxelTaskProcessor_ProcessTask)(
+		VOXEL_ENQUEUE_RENDER_COMMAND(FVoxelTaskProcessor_ProcessTask)(
 			MakeWeakPtrLambda(this, [this, TaskPtrPtr = MakeUniqueCopy(MoveTemp(TaskPtr))](FRHICommandList& RHICmdList)
 			{
 				RenderTasks.Enqueue(MoveTemp(*TaskPtrPtr));
@@ -304,6 +442,9 @@ void FVoxelTaskGroup::LogTasks() const
 void FVoxelTaskGroup::ProcessGameTasks()
 {
 	VOXEL_SCOPE_COUNTER_FNAME(Name);
+	VOXEL_SCOPE_COUNTER_FNAME(InstanceStatName);
+	VOXEL_SCOPE_COUNTER_FNAME(GraphStatName);
+	VOXEL_SCOPE_COUNTER_FNAME(CallstackStatName);
 	check(!bIsSynchronous);
 	check(&Get() == this);
 	const FVoxelQueryScope Scope(nullptr, &Context.Get());
@@ -320,6 +461,9 @@ void FVoxelTaskGroup::ProcessGameTasks()
 void FVoxelTaskGroup::ProcessRenderTasks(FRDGBuilder& GraphBuilder)
 {
 	VOXEL_SCOPE_COUNTER_FNAME(Name);
+	VOXEL_SCOPE_COUNTER_FNAME(InstanceStatName);
+	VOXEL_SCOPE_COUNTER_FNAME(GraphStatName);
+	VOXEL_SCOPE_COUNTER_FNAME(CallstackStatName);
 	check(!bIsSynchronous);
 	check(&Get() == this);
 	const FVoxelQueryScope Scope(nullptr, &Context.Get());
@@ -364,6 +508,9 @@ void FVoxelTaskGroup::ProcessRenderTasks(FRDGBuilder& GraphBuilder)
 void FVoxelTaskGroup::ProcessAsyncTasks()
 {
 	VOXEL_SCOPE_COUNTER_FNAME(Name);
+	VOXEL_SCOPE_COUNTER_FNAME(InstanceStatName);
+	VOXEL_SCOPE_COUNTER_FNAME(GraphStatName);
+	VOXEL_SCOPE_COUNTER_FNAME(CallstackStatName);
 	check(!bIsSynchronous);
 	check(AsyncProcessor.Load());
 	check(&Get() == this);
@@ -382,15 +529,71 @@ FVoxelTaskGroup::FVoxelTaskGroup(
 	const FName Name,
 	const bool bIsSynchronous,
 	const FVoxelTaskPriority& Priority,
-	const TSharedRef<FVoxelQueryContext>& Context,
-	const TSharedRef<FVoxelTaskReferencer>& Referencer)
+	const TSharedRef<FVoxelTaskReferencer>& Referencer,
+	const TSharedRef<const FVoxelQueryContext>& Context)
 	: Name(Name)
+	, InstanceStatName(Context->RuntimeInfo->GetInstanceName())
+	, GraphStatName(Context->RuntimeInfo->GetGraphPath())
+	, CallstackStatName(Context->Callstack->ToDebugString())
 	, bIsSynchronous(bIsSynchronous)
-	, bParallelTasks(Context->RuntimeInfo->ShouldRunTasksInParallel())
 	, Priority(Priority)
-	, Context(Context)
 	, Referencer(Referencer)
+	, RuntimeInfo(Context->RuntimeInfo)
+	, Context(Context)
 {
 	VOXEL_FUNCTION_COUNTER();
 	PendingTasks_RequiresLock.Reserve(512);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+FVoxelTaskGroupScope::~FVoxelTaskGroupScope()
+{
+	if (!Group)
+	{
+		return;
+	}
+
+	ensure(Group->RuntimeInfo->NumActiveTasks.Decrement() >= 0);
+
+	FPlatformTLS::SetTlsValue(GVoxelTaskGroupTLS, PreviousTLS);
+
+#if WITH_EDITOR
+	if (!GVoxelEnableNodeStats)
+	{
+		return;
+	}
+
+	const double Time = FPlatformTime::Seconds() - StartTime;
+	GVoxelExecNodeStatManager->Queue.Enqueue(
+	{
+		Group->Context->Callstack,
+		Time
+	});
+#endif
+}
+
+bool FVoxelTaskGroupScope::Initialize(FVoxelTaskGroup& NewGroup)
+{
+	if (NewGroup.RuntimeInfo->bDestroyStarted.Load())
+	{
+		return false;
+	}
+
+	NewGroup.RuntimeInfo->NumActiveTasks.Increment();
+
+	if (NewGroup.RuntimeInfo->bDestroyStarted.Load())
+	{
+		ensure(Group->RuntimeInfo->NumActiveTasks.Decrement() >= 0);
+		return false;
+	}
+
+	Group = NewGroup.AsShared();
+
+	PreviousTLS = FPlatformTLS::GetTlsValue(GVoxelTaskGroupTLS);
+	FPlatformTLS::SetTlsValue(GVoxelTaskGroupTLS, &NewGroup);
+
+	return true;
 }

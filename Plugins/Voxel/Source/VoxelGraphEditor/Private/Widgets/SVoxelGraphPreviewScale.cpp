@@ -2,9 +2,7 @@
 
 #include "SVoxelGraphPreviewScale.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SPreviewScale::Construct(const FArguments& InArgs)
+void SVoxelGraphPreviewScale::Construct(const FArguments& InArgs)
 {
 	Value = InArgs._Value;
 	Resolution = InArgs._Resolution;
@@ -148,5 +146,3 @@ void SPreviewScale::Construct(const FArguments& InArgs)
 		]
 	];
 }
-
-END_VOXEL_NAMESPACE(Graph)

@@ -30,13 +30,27 @@ void UK2Node_QueryVoxelChannelBase::GetNodeContextMenuActions(UToolMenu* Menu, U
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void UK2Node_QueryVoxelChannelBase::PinConnectionListChanged(UEdGraphPin* Pin)
+void UK2Node_QueryVoxelChannelBase::NotifyPinConnectionListChanged(UEdGraphPin* Pin)
 {
 	const FEdGraphPinType OldPinType = Pin->PinType;
 
-	Super::PinConnectionListChanged(Pin);
+	Super::NotifyPinConnectionListChanged(Pin);
 
 	if (!IsPinWildcard(*Pin))
+	{
+		return;
+	}
+
+	if (HasChannel() &&
+		Pin->PinType != GetValuePinType() &&
+		OldPinType == GetValuePinType())
+	{
+		Pin->PinType = GetValuePinType();
+		return;
+	}
+
+	if (HasChannel() ||
+		Pin->PinType.PinCategory != STATIC_FNAME("wildcard"))
 	{
 		return;
 	}
@@ -185,7 +199,7 @@ void UK2Node_QueryVoxelChannelBase::UpdateChannel()
 	SetType(ChannelDefinition->Type);
 
 	DelegateOwner = MakeVoxelShared<int32>();
-	GVoxelChannelManager->OnChannelDefinitionsChanged.Add(MakeWeakPtrDelegate(DelegateOwner, [this]
+	GVoxelChannelManager->OnChannelDefinitionsChanged_GameThread.Add(MakeWeakPtrDelegate(DelegateOwner, [this]
 	{
 		UpdateChannel();
 	}));

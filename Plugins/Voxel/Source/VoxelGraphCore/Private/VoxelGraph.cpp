@@ -2,13 +2,18 @@
 
 #include "VoxelGraph.h"
 #include "VoxelActor.h"
-#include "VoxelGraphExecutor.h"
+#include "VoxelRuntimeGraph.h"
 #include "VoxelParameterView.h"
+#if WITH_EDITOR
+#include "ObjectTools.h"
+#endif
 
 DEFINE_VOXEL_FACTORY(UVoxelGraph);
 
 UVoxelGraph::UVoxelGraph()
 {
+	RuntimeGraph = CreateDefaultSubobject<UVoxelRuntimeGraph>("RuntimeGraph");
+
 	for (const EVoxelGraphParameterType Type : TEnumRange<EVoxelGraphParameterType>())
 	{
 		ParametersCategories.Add(Type, {});
@@ -29,6 +34,20 @@ void UVoxelGraph::SetGraphName(const FString& NewName)
 {
 	bEnableNameOverride = true;
 	NameOverride = NewName;
+
+	if (NameOverride.IsEmpty())
+	{
+		NameOverride = "Graph";
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void UVoxelGraph::ForceRecompile()
+{
+	RuntimeGraph->ForceRecompile();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -37,6 +56,8 @@ void UVoxelGraph::SetGraphName(const FString& NewName)
 
 void UVoxelGraph::PostLoad()
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	Super::PostLoad();
 
 #if WITH_EDITOR
@@ -53,16 +74,9 @@ void UVoxelGraph::PostLoad()
 		StaticDuplicateObjectEx(DuplicationParameters);
 	}
 
-	for (auto& It : CompiledGraph.Nodes)
+	if (NameOverride.IsEmpty())
 	{
-		It.Value.Ref.Graph = this;
-
-#if WITH_EDITOR
-		if (It.Value.Ref.EdGraphNodeName_EditorOnly.IsNone())
-		{
-			It.Value.Ref.EdGraphNodeName_EditorOnly = It.Value.Ref.NodeId;
-		}
-#endif
+		NameOverride = "Graph";
 	}
 
 	FixupParameters();
@@ -80,7 +94,21 @@ void UVoxelGraph::PostCDOContruct()
 #if WITH_EDITOR
 void UVoxelGraph::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	if (PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive)
+	{
+		return;
+	}
+
+#if WITH_EDITOR
+	if (!bEnableThumbnail)
+	{
+		ThumbnailTools::CacheEmptyThumbnail(GetFullName(), GetOutermost());
+	}
+#endif
 
 	FixupParameters();
 	FixupInlineMacroCategories();
@@ -213,12 +241,6 @@ TSharedPtr<IVoxelParameterRootView> UVoxelGraph::GetParameterViewImpl(const FVox
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void UVoxelGraph::PostGraphCompiled() const
-{
-	OnGraphCompiled.Broadcast();
-	GVoxelGraphExecutorManager->OnGraphChanged_GameThread(*this);
-}
-
 void UVoxelGraph::FixupParameters()
 {
 	VOXEL_FUNCTION_COUNTER();
@@ -248,7 +270,7 @@ void UVoxelGraph::FixupParameters()
 		}
 
 		UVoxelGraph* NewParameterGraph = NewObject<UVoxelGraph>(this, NAME_None, RF_Transactional);
-		NewParameterGraph->bParameterGraph = true;
+		NewParameterGraph->bIsParameterGraph = true;
 
 		ParameterGraphs.Add(Parameter.Guid, NewParameterGraph);
 	}
@@ -267,11 +289,14 @@ void UVoxelGraph::FixupParameters()
 	FixupCategories();
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+#if WITH_EDITOR
 TArray<UVoxelGraph*> UVoxelGraph::GetAllGraphs()
 {
 	TArray<UVoxelGraph*> Graphs;
-	Graphs.Reserve(InlineMacros.Num() + 1);
-
 	Graphs.Add(this);
 
 	for (UVoxelGraph* InlineMacro : InlineMacros)
@@ -284,15 +309,7 @@ TArray<UVoxelGraph*> UVoxelGraph::GetAllGraphs()
 		Graphs.Add(InlineMacro);
 	}
 
-	return Graphs;
-}
-
-#if WITH_EDITOR
-TArray<UVoxelGraph*> UVoxelGraph::GetAllParameterGraphs()
-{
-	TArray<UVoxelGraph*> Graphs;
-
-	for (auto& It : ParameterGraphs)
+	for (const auto& It : ParameterGraphs)
 	{
 		if (!ensure(It.Value))
 		{
@@ -314,23 +331,13 @@ UVoxelGraph* UVoxelGraph::FindGraph(const UEdGraph* EdGraph)
 			return Graph;
 		}
 	}
-
-	for (const auto& It : ParameterGraphs)
-	{
-		if (!It.Value)
-		{
-			continue;
-		}
-
-		if (It.Value->MainEdGraph == EdGraph)
-		{
-			return It.Value;
-		}
-	}
-
 	return nullptr;
 }
 #endif
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 void UVoxelGraph::FixupCategories()
 {

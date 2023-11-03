@@ -22,9 +22,12 @@ extern VOXELGRAPHCORE_API FVoxelTemplateNodeContext* GVoxelTemplateNodeContext;
 
 struct VOXELGRAPHCORE_API FVoxelTemplateNodeUtilities
 {
-	VOXEL_USE_NAMESPACE_TYPES(Graph, FGraph, FNode, FPin);
-
 public:
+	using FPin = Voxel::Graph::FPin;
+	using FNode = Voxel::Graph::FNode;
+	using FGraph = Voxel::Graph::FGraph;
+	using ENodeType = Voxel::Graph::ENodeType;
+
 	static FVoxelGraphNodeRef GetNodeRef()
 	{
 		check(GVoxelTemplateNodeContext);
@@ -48,11 +51,21 @@ public:
 	static void SetPinDimension(FVoxelPin& Pin, int32 Dimension);
 
 public:
-	static const TVoxelArray<FVoxelPinType>& GetFloatTypes();
-	static const TVoxelArray<FVoxelPinType>& GetDoubleTypes();
-	static const TVoxelArray<FVoxelPinType>& GetIntTypes();
+	static TConstVoxelArrayView<FVoxelPinType> GetByteTypes();
+	static TConstVoxelArrayView<FVoxelPinType> GetFloatTypes();
+	static TConstVoxelArrayView<FVoxelPinType> GetDoubleTypes();
+	static TConstVoxelArrayView<FVoxelPinType> GetIntTypes();
+	static TConstVoxelArrayView<FVoxelPinType> GetObjectTypes();
 
 public:
+	static bool IsBool(const FVoxelPinType& PinType)
+	{
+		return PinType.GetInnerType().Is<bool>();
+	}
+	static bool IsByte(const FVoxelPinType& PinType)
+	{
+		return PinType.GetInnerType().Is<uint8>();
+	}
 	static bool IsFloat(const FVoxelPinType& PinType)
 	{
 		return GetFloatTypes().Contains(PinType);
@@ -65,15 +78,17 @@ public:
 	{
 		return GetIntTypes().Contains(PinType);
 	}
-	static bool IsBool(const FVoxelPinType& PinType)
+	static bool IsObject(const FVoxelPinType& PinType)
 	{
-		return PinType.GetInnerType().Is<bool>();
+		return GetObjectTypes().Contains(PinType);
 	}
 
+	static bool IsPinBool(const FPin* Pin);
+	static bool IsPinByte(const FPin* Pin);
 	static bool IsPinFloat(const FPin* Pin);
 	static bool IsPinDouble(const FPin* Pin);
 	static bool IsPinInt(const FPin* Pin);
-	static bool IsPinBool(const FPin* Pin);
+	static bool IsPinObject(const FPin* Pin);
 
 public:
 	static int32 GetDimension(const FVoxelPinType& PinType);
@@ -86,6 +101,7 @@ public:
 	static int32 GetMaxDimension(const TArray<FPin*>& Pins);
 	static FPin* GetLinkedPin(FPin* Pin);
 
+	static FPin* ConvertToByte(FPin* Pin);
 	static FPin* ConvertToFloat(FPin* Pin);
 	static FPin* ConvertToDouble(FPin* Pin);
 
@@ -190,8 +206,6 @@ struct VOXELGRAPHCORE_API FVoxelTemplateNode
 
 public:
 	FVoxelTemplateNode() = default;
-
-	VOXEL_USE_NAMESPACE_TYPES(Graph, FNode, FGraph);
 
 	virtual bool IsPureNode() const override
 	{

@@ -7,17 +7,14 @@
 #include "VoxelGraphNodeRef.h"
 
 class UVoxelGraph;
+class SVoxelGraphPreviewImage;
+class SVoxelGraphPreviewScale;
+class SVoxelGraphPreviewRuler;
+class SVoxelGraphPreviewStats;
+class SVoxelGraphPreviewDepthSlider;
 struct FVoxelPreviewHandler;
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SPreviewImage;
-class SPreviewScale;
-class SPreviewRuler;
-class SPreviewStats;
-class SDepthSlider;
-
-class SPreview : public SCompoundWidget
+class SVoxelGraphPreview : public SCompoundWidget
 {
 public:
 	TWeakObjectPtr<UVoxelGraph> WeakGraph;
@@ -69,10 +66,10 @@ private:
 
 	TSharedPtr<FVoxelPreviewHandler> PreviewHandler;
 
-	TSharedPtr<SPreviewStats> PreviewStats;
-	TSharedPtr<SPreviewImage> PreviewImage;
-	TSharedPtr<SPreviewRuler> PreviewRuler;
-	TSharedPtr<SDepthSlider> DepthSlider;
+	TSharedPtr<SVoxelGraphPreviewStats> PreviewStats;
+	TSharedPtr<SVoxelGraphPreviewImage> PreviewImage;
+	TSharedPtr<SVoxelGraphPreviewRuler> PreviewRuler;
+	TSharedPtr<SVoxelGraphPreviewDepthSlider> DepthSlider;
 
 	FVector2D MousePosition = FVector2D::ZeroVector;
 
@@ -84,5 +81,3 @@ private:
 	void UpdateStats();
 	FMatrix GetPixelToWorld() const;
 };
-
-END_VOXEL_NAMESPACE(Graph)

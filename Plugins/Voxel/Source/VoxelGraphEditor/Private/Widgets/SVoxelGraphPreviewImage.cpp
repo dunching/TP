@@ -7,9 +7,7 @@ VOXEL_INITIALIZE_STYLE(GraphPreviewImage)
 	Set("Graph.Preview.PositionMarker", new IMAGE_BRUSH("Graphs/Preview_PositionMarker", CoreStyleConstants::Icon16x16));
 }
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SPreviewImage::Construct(const FArguments& Args)
+void SVoxelGraphPreviewImage::Construct(const FArguments& Args)
 {
 	PositionMarkerHalfSize = Args._PositionMarkerSize / 2.f;
 
@@ -25,13 +23,13 @@ void SPreviewImage::Construct(const FArguments& Args)
 	];
 }
 
-void SPreviewImage::SetLockedPosition(const FVector& LockedPosition_World)
+void SVoxelGraphPreviewImage::SetLockedPosition(const FVector& LockedPosition_World)
 {
 	bHasLockedPosition = true;
 	Position_World = LockedPosition_World;
 }
 
-bool SPreviewImage::UpdateLockedPosition(const FMatrix& PixelToWorld, const FVector2D& Offset)
+bool SVoxelGraphPreviewImage::UpdateLockedPosition(const FMatrix& PixelToWorld, const FVector2D& Offset)
 {
 	FVector2D PixelPosition = FVector2D(PixelToWorld.InverseTransformPosition(Position_World));
 	PixelPosition.Y = Offset.Y - PixelPosition.Y;
@@ -49,12 +47,12 @@ bool SPreviewImage::UpdateLockedPosition(const FMatrix& PixelToWorld, const FVec
 	return false;
 }
 
-void SPreviewImage::ClearLockedPosition()
+void SVoxelGraphPreviewImage::ClearLockedPosition()
 {
 	bHasLockedPosition = false;
 }
 
-int32 SPreviewImage::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
+int32 SVoxelGraphPreviewImage::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
 {
 	LayerId = SCompoundWidget::OnPaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
 
@@ -74,5 +72,3 @@ int32 SPreviewImage::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGe
 
 	return LayerId;
 }
-
-END_VOXEL_NAMESPACE(Graph)

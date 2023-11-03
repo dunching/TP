@@ -35,9 +35,32 @@ struct FVoxelCurveData
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FVoxelCurveManager
+class FVoxelCurveManager : public FVoxelSingleton
 {
 public:
+	//~ Begin FVoxelSingleton Interface
+	virtual void Initialize() override
+	{
+#if WITH_EDITOR
+		FCoreUObjectDelegates::OnObjectPropertyChanged.AddLambda([this](UObject* Object, const FPropertyChangedEvent& PropertyChangedEvent)
+		{
+			if (PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive)
+			{
+				return;
+			}
+
+			const UCurveFloat* Curve = Cast<UCurveFloat>(Object);
+			if (!Curve)
+			{
+				return;
+			}
+
+			UpdateWrapper_GameThread(*Curve);
+		});
+#endif
+	}
+	//~ End FVoxelSingleton Interface
+
 	TSharedRef<FVoxelCurveDataWrapper> GetWrapper_GameThread(const UCurveFloat& Curve)
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -75,30 +98,7 @@ private:
 	TMap<TWeakObjectPtr<const UCurveFloat>, TSharedPtr<FVoxelCurveDataWrapper>> ObjectToWrapper;
 };
 
-FVoxelCurveManager* GVoxelCurveManager = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelCurveManager)
-{
-	GVoxelCurveManager = new FVoxelCurveManager();
-
-#if WITH_EDITOR
-	FCoreUObjectDelegates::OnObjectPropertyChanged.AddLambda([](UObject* Object, const FPropertyChangedEvent& PropertyChangedEvent)
-	{
-		if (PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive)
-		{
-			return;
-		}
-
-		const UCurveFloat* Curve = Cast<UCurveFloat>(Object);
-		if (!Curve)
-		{
-			return;
-		}
-
-		GVoxelCurveManager->UpdateWrapper_GameThread(*Curve);
-	});
-#endif
-}
+FVoxelCurveManager* GVoxelCurveManager = MakeVoxelSingleton(FVoxelCurveManager);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -238,12 +238,12 @@ void FVoxelCurveDataWrapper::Update(const FRichCurve& Curve)
 
 void FVoxelCurveRefPinType::Convert(
 	const bool bSetObject,
-	UCurveFloat*& Object,
+	TWeakObjectPtr<UCurveFloat>& Object,
 	FVoxelCurveRef& Struct) const
 {
 	if (bSetObject)
 	{
-		Object = Struct.Object.Get();
+		Object = Struct.Object;
 	}
 	else
 	{

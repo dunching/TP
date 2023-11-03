@@ -4,9 +4,7 @@
 
 #include "VoxelEditorMinimal.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SPreviewRuler : public SCompoundWidget
+class SVoxelGraphPreviewRuler : public SCompoundWidget
 {
 public:
 	VOXEL_SLATE_ARGS()
@@ -46,5 +44,3 @@ private:
 	TSharedPtr<SWidget> ImageBox;
 	TSharedPtr<SWidget> TextBox;
 };
-
-END_VOXEL_NAMESPACE(Graph)

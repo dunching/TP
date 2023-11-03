@@ -189,11 +189,11 @@ void UK2Node_VoxelGraphParameterBase::ExpandNode(FKismetCompilerContext& Compile
 	Super::ExpandNode(CompilerContext, SourceGraph);
 }
 
-void UK2Node_VoxelGraphParameterBase::PinConnectionListChanged(UEdGraphPin* Pin)
+void UK2Node_VoxelGraphParameterBase::NotifyPinConnectionListChanged(UEdGraphPin* Pin)
 {
 	FEdGraphPinType OldPinType = Pin->PinType;
 
-	Super::PinConnectionListChanged(Pin);
+	Super::NotifyPinConnectionListChanged(Pin);
 
 	if (Pin->PinName == ParameterPinName)
 	{
@@ -238,12 +238,17 @@ void UK2Node_VoxelGraphParameterBase::PinConnectionListChanged(UEdGraphPin* Pin)
 	const FVoxelPinType NewType = FVoxelPinType::MakeFromK2(TargetType);
 	if (!NewType.IsValid())
 	{
+		if (!CachedParameter.Guid.IsValid())
+		{
+			CachedParameter.Type = {};
+		}
 		return;
 	}
 
 	if (TargetType == OldPinType)
 	{
-		if (!ensure(CachedParameter.Type == NewType))
+		if (CachedParameter.Guid.IsValid() &&
+			!ensure(CachedParameter.Type == NewType))
 		{
 			return;
 		}

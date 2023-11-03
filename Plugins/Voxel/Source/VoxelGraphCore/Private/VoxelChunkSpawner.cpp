@@ -14,23 +14,15 @@ VOXEL_CONSOLE_VARIABLE(
 	"voxel.chunkspawner.CameraRefreshThreshold",
 	"");
 
-TSharedRef<FVoxelChunkRef> FVoxelChunkSpawnerImpl::CreateChunk(
+TSharedRef<FVoxelChunkRef> FVoxelChunkSpawner::CreateChunk(
 	const int32 LOD,
 	const int32 ChunkSize,
 	const FVoxelBox& Bounds) const
 {
-	if (!ensure(CreateChunkLambda))
-	{
-		return MakeVoxelShared<FVoxelChunkRef>(FVoxelChunkId(), MakeVoxelShared<FVoxelChunkActionQueue>());
-	}
-
-	TSharedPtr<FVoxelChunkRef> ChunkRef;
-	CreateChunkLambda(LOD, ChunkSize, Bounds, ChunkRef);
-
+	const TSharedPtr<FVoxelChunkRef> ChunkRef = PrivateCreateChunkLambda(LOD, ChunkSize, Bounds);
 	if (!ensure(ChunkRef))
 	{
 		return MakeVoxelShared<FVoxelChunkRef>(FVoxelChunkId(), MakeVoxelShared<FVoxelChunkActionQueue>());
 	}
-
 	return ChunkRef.ToSharedRef();
 }

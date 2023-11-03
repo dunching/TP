@@ -1,6 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelMemoryScope.h"
+#include "HAL/PlatformStackWalk.h"
 
 #if VOXEL_ALLOC_DEBUG
 extern bool GVoxelMallocDisableChecks;
@@ -110,17 +111,76 @@ void FVoxelMemoryScope::Clear()
 ///////////////////////////////////////////////////////////////////////////////
 
 #if VOXEL_DEBUG
+using FVoxelMemoryStackFrames = TVoxelStaticArray_ForceInit<void*, 14>;
 FVoxelFastCriticalSection GVoxelValidAllocationsCriticalSection;
-TSet<void*> GVoxelValidAllocations;
+TVoxelMap<void*, FVoxelMemoryStackFrames, FDefaultSetAllocator> GVoxelValidAllocations;
+bool GVoxelCheckValidAllocations = true;
+
+VOXEL_RUN_ON_STARTUP_GAME(InitializeCheckValidAllocations)
+{
+	if (FParse::Param(FCommandLine::Get(), TEXT("NoVoxelAllocCheck")))
+	{
+		GVoxelCheckValidAllocations = false;
+	}
+}
+
+thread_local int32 GVoxelAllowLeak = 0;
+
+void EnterVoxelAllowLeakScope()
+{
+	GVoxelAllowLeak++;
+}
+void ExitVoxelAllowLeakScope()
+{
+	ensure(GVoxelAllowLeak-- >= 0);
+}
+
+void UpdateVoxelAllocationStackFrames(void* Result, const bool bIsAdd)
+{
+	if (!GVoxelCheckValidAllocations)
+	{
+		return;
+	}
+
+	VOXEL_SCOPE_LOCK(GVoxelValidAllocationsCriticalSection);
+	FVoxelMemoryStackFrames& StackFrames =
+		bIsAdd
+		? GVoxelValidAllocations.Add_CheckNew(Result)
+		: GVoxelValidAllocations.FindChecked(Result);
+
+	constexpr int32 NumFramesToIgnore = 3;
+
+	TVoxelStaticArray<void*, FVoxelMemoryStackFrames::Num() + NumFramesToIgnore> TmpStackFrames(NoInit);
+	TmpStackFrames.Memzero();
+
+	FPlatformStackWalk::CaptureStackBackTrace(
+		ReinterpretCastPtr<uint64>(TmpStackFrames.GetData()),
+		TmpStackFrames.Num());
+
+	FVoxelUtilities::Memcpy(
+		MakeVoxelArrayView(StackFrames),
+		MakeVoxelArrayView(TmpStackFrames).RightChop(NumFramesToIgnore));
+}
+
+VOXEL_RUN_ON_STARTUP_GAME(CheckVoxelAllocations)
+{
+	GOnVoxelModuleUnloaded.AddLambda([]
+	{
+		VOXEL_SCOPE_LOCK(GVoxelValidAllocationsCriticalSection);
+		ensure(GVoxelValidAllocations.Num() == 0 || !GVoxelCheckValidAllocations);
+	});
+}
 #endif
 
 FORCEINLINE FVoxelMemoryScope::FBlock& FVoxelMemoryScope::GetBlock(void* Original)
 {
 #if VOXEL_DEBUG
-	if (GIsVoxelCoreModuleLoaded)
+	if (!GVoxelAllowLeak &&
+		GVoxelCheckValidAllocations)
 	{
-		VOXEL_SCOPE_LOCK(GVoxelValidAllocationsCriticalSection);
+		GVoxelValidAllocationsCriticalSection.Lock();
 		check(GVoxelValidAllocations.Contains(Original));
+		GVoxelValidAllocationsCriticalSection.Unlock();
 	}
 #endif
 
@@ -164,10 +224,9 @@ void* FVoxelMemoryScope::StaticMalloc(const uint64 Count, uint32 Alignment)
 	check(static_cast<uint8*>(Result) - static_cast<uint8*>(UnalignedPtr) <= Padding);
 
 #if VOXEL_DEBUG
+	if (!GVoxelAllowLeak)
 	{
-		VOXEL_SCOPE_LOCK(GVoxelValidAllocationsCriticalSection);
-		check(!GVoxelValidAllocations.Contains(Result));
-		GVoxelValidAllocations.Add(Result);
+		UpdateVoxelAllocationStackFrames(Result, true);
 	}
 #endif
 
@@ -212,10 +271,12 @@ void FVoxelMemoryScope::StaticFree(void* Original)
 	const uint64 AllocationSize = Block.Size;
 
 #if VOXEL_DEBUG
-	if (GIsVoxelCoreModuleLoaded)
+	if (!GVoxelAllowLeak &&
+		GVoxelCheckValidAllocations)
 	{
-		VOXEL_SCOPE_LOCK(GVoxelValidAllocationsCriticalSection);
+		GVoxelValidAllocationsCriticalSection.Lock();
 		verify(GVoxelValidAllocations.Remove(Original));
+		GVoxelValidAllocationsCriticalSection.Unlock();
 	}
 #endif
 
@@ -255,6 +316,7 @@ void* FVoxelMemoryScope::Malloc(const uint64 Count, const uint32 Alignment)
 			void* Result = Pool.Allocations.Pop(false);
 #if VOXEL_DEBUG
 			FMemory::Memset(Result, 0xDE, PoolSize);
+			UpdateVoxelAllocationStackFrames(Result, false);
 #endif
 			return Result;
 		}

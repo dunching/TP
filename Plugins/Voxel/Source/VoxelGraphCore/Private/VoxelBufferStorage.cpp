@@ -423,6 +423,46 @@ void FVoxelBufferStorage::Append(const FVoxelBufferStorage& BufferStorage, const
 	}
 }
 
+void FVoxelBufferStorage::CopyTo(const TVoxelArrayView<uint8> OtherData) const
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!ensure(OtherData.Num() % TypeSize == 0))
+	{
+		return;
+	}
+
+	if (IsConstant())
+	{
+		VOXEL_SWITCH_TERMINAL_TYPE_SIZE(TypeSize)
+		{
+			using Type = VOXEL_GET_TYPE(TypeInstance);
+
+			FVoxelUtilities::SetAll(
+				ReinterpretCastVoxelArrayView<Type>(OtherData),
+				this->As<Type>().GetConstant());
+		};
+		return;
+	}
+
+	if (!ensure(OtherData.Num() / TypeSize == Num()))
+	{
+		return;
+	}
+
+	ForeachVoxelBufferChunk(Num(), [&](const FVoxelBufferIterator& Iterator)
+	{
+		VOXEL_SWITCH_TERMINAL_TYPE_SIZE(TypeSize)
+		{
+			using Type = VOXEL_GET_TYPE(TypeInstance);
+
+			FVoxelUtilities::Memcpy(
+				ReinterpretCastVoxelArrayView<Type>(OtherData).Slice(Iterator.GetIndex(), Iterator.Num()),
+				this->As<Type>().GetRawView_NotConstant(Iterator));
+		};
+	});
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////

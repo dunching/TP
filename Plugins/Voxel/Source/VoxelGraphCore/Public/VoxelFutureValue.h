@@ -206,6 +206,7 @@ class TVoxelFutureValueImpl : public FVoxelFutureValue
 {
 public:
 	using Type = T;
+	checkStatic(TIsSafeVoxelPinValue<T>::Value);
 
 	TVoxelFutureValueImpl() = default;
 

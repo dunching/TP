@@ -6,21 +6,53 @@
 #include "LocalVertexFactory.h"
 #include "PhysicsEngine/BodySetup.h"
 
+namespace Chaos
+{
+	template <typename, typename>
+	struct FTriangleMeshSweepVisitorCCD;
+
+	template<>
+	struct FTriangleMeshSweepVisitorCCD<void, void>
+	{
+		static int64 GetAllocatedSize(const FTriangleMeshImplicitObject& TriangleMesh)
+		{
+			int64 AllocatedSize = sizeof(FTriangleMeshImplicitObject);
+			AllocatedSize += TriangleMesh.MParticles.GetAllocatedSize();
+
+			if (TriangleMesh.MElements.RequiresLargeIndices())
+			{
+				AllocatedSize += TriangleMesh.MElements.GetLargeIndexBuffer().GetAllocatedSize();
+			}
+			else
+			{
+				AllocatedSize += TriangleMesh.MElements.GetSmallIndexBuffer().GetAllocatedSize();
+			}
+
+			AllocatedSize += TriangleMesh.MaterialIndices.GetAllocatedSize();
+
+			if (TriangleMesh.ExternalFaceIndexMap)
+			{
+				AllocatedSize += TriangleMesh.ExternalFaceIndexMap->GetAllocatedSize();
+			}
+			if (TriangleMesh.ExternalVertexIndexMap)
+			{
+				AllocatedSize += TriangleMesh.ExternalVertexIndexMap->GetAllocatedSize();
+			}
+
+			AllocatedSize += TriangleMesh.FastBVH.Nodes.GetAllocatedSize();
+			AllocatedSize += TriangleMesh.FastBVH.FaceBounds.GetAllocatedSize();
+
+			return AllocatedSize;
+		}
+	};
+}
+
 int64 FVoxelTriangleMeshCollider::GetAllocatedSize() const
 {
 	int64 AllocatedSize = sizeof(*this);
 	if (TriangleMesh)
 	{
-		AllocatedSize += TriangleMesh->Particles().XArray().GetAllocatedSize();
-
-		if (TriangleMesh->Elements().RequiresLargeIndices())
-		{
-			AllocatedSize += TriangleMesh->Elements().GetLargeIndexBuffer().GetAllocatedSize();
-		}
-		else
-		{
-			AllocatedSize += TriangleMesh->Elements().GetSmallIndexBuffer().GetAllocatedSize();
-		}
+		AllocatedSize += Chaos::FTriangleMeshSweepVisitorCCD<void, void>::GetAllocatedSize(*TriangleMesh);
 	}
 	AllocatedSize += PhysicalMaterials.GetAllocatedSize();
 	return AllocatedSize;
@@ -170,7 +202,7 @@ void FVoxelTriangleMeshCollider::BulkRaycast(
 
 	if (bDebug)
 	{
-		AsyncTask(ENamedThreads::GameThread, [Offset = Offset, LocalBounds = LocalBounds, DebugTraces]
+		FVoxelUtilities::RunOnGameThread([Offset = Offset, LocalBounds = LocalBounds, DebugTraces]
 		{
 			for (const FTrace& Trace : DebugTraces)
 			{

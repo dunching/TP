@@ -19,6 +19,10 @@ public:
 	virtual UVoxelGraph* GetGraph() const VOXEL_PURE_VIRTUAL({});
 	virtual FString GetGraphName() const;
 
+	//~ Begin UObject Interface
+	virtual void PostLoad() override;
+	//~ End UObject Interface
+
 private:
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()

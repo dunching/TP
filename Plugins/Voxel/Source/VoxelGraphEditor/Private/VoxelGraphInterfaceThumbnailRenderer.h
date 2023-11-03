@@ -26,6 +26,7 @@ class VOXELGRAPHEDITOR_API UVoxelGraphInterfaceThumbnailRenderer : public UDefau
 public:
 	//~ Begin UDefaultSizedThumbnailRenderer Interface
 	virtual void BeginDestroy() override;
+	virtual bool CanVisualizeAsset(UObject* Object) override;
 
 	virtual void Draw(
 		UObject* Object,

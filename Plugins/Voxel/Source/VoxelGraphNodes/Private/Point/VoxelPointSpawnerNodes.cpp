@@ -152,11 +152,26 @@ TSharedPtr<const FVoxelPointSet> FVoxelRadialPointSpawner::GeneratePoints(const 
 	const TSharedRef<FVoxelPointSet> Result = MakeVoxelShared<FVoxelPointSet>();
 	Result->SetNum(TotalNum);
 
+	TVoxelMap<FName, TSharedPtr<const FVoxelBuffer>> NewBuffers;
+	NewBuffers.Reserve(Points.GetAttributes().Num());
+
 	for (const auto& It : Points.GetAttributes())
 	{
 		const TSharedRef<const FVoxelBuffer> Buffer = FVoxelBufferUtilities::Replicate(*It.Value, AllNumChildren, TotalNum);
-		Result->Add(It.Key, Buffer);
-		Result->Add(FVoxelPointAttributes::MakeParent(It.Key), Buffer);
+		NewBuffers.Add(It.Key, Buffer);
+	}
+
+	// First add all existing buffers
+	for (const auto& It : NewBuffers)
+	{
+		Result->Add(It.Key, It.Value.ToSharedRef());
+	}
+
+	// Then add parents, potentially overriding existing buffers
+	// eg, we might have a new Parent Position replacing the previous one
+	for (const auto& It : NewBuffers)
+	{
+		Result->Add(FVoxelPointAttributes::MakeParent(It.Key), It.Value.ToSharedRef());
 	}
 
 	Result->Add(FVoxelPointAttributes::Id, FVoxelPointIdBuffer::Make(Id));

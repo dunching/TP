@@ -4,211 +4,60 @@
 #include "VoxelInvoker.h"
 #include "VoxelRuntime.h"
 
-BEGIN_VOXEL_NAMESPACE(InvokerChunkSpawner)
-
-DEFINE_UNIQUE_VOXEL_ID(FChunkId);
-
-END_VOXEL_NAMESPACE(InvokerChunkSpawner)
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void FVoxelInvokerChunkSpawnerImpl::Tick(FVoxelRuntime& Runtime)
+void FVoxelInvokerChunkSpawner::Tick(FVoxelRuntime& Runtime)
 {
 	VOXEL_FUNCTION_COUNTER();
+	check(IsInGameThread());
 
-	if (bTaskInProgress)
+	const int32 FullChunkSize = FMath::CeilToInt(GetVoxelSize() * ChunkSize);
+
+	if (InvokerView_GameThread &&
+		InvokerView_GameThread->ChunkSize == FullChunkSize)
 	{
 		return;
 	}
 
-	ON_SCOPE_EXIT
-	{
-		if (bUpdateQueued)
+	VOXEL_SCOPE_LOCK(CriticalSection);
+
+	ChunkRefs_RequiresLock.Empty();
+
+	InvokerView_GameThread = FVoxelInvokerManager::Get(Runtime.GetWorld())->MakeView(
+		InvokerChannel,
+		FullChunkSize,
+		0,
+		Runtime.GetLocalToWorld());
+
+	InvokerViewBindRef_GameThread = MakeSharedVoid();
+
+	InvokerView_GameThread->Bind_Async(
+		MakeWeakPtrDelegate(InvokerViewBindRef_GameThread, MakeWeakPtrLambda(this, [=](const TVoxelAddOnlySet<FIntVector>& ChunksToAdd)
 		{
-			UpdateTree();
-		}
-	};
+			VOXEL_SCOPE_COUNTER("OnAddChunk");
+			VOXEL_SCOPE_LOCK(CriticalSection);
 
-	const FMatrix LocalToWorld = Runtime.GetLocalToWorld().Get_NoDependency();
-	const TSharedRef<const FVoxelInvoker> Invoker = GVoxelInvokerManager->GetInvoker(Runtime.GetWorld(), InvokerChannel);
-
-	if (!LocalToWorld.Equals(LastLocalToWorld) ||
-		Invoker != LastInvoker)
-	{
-		LastLocalToWorld = LocalToWorld;
-		LastInvoker = Invoker;
-		bUpdateQueued = true;
-	}
-}
-
-void FVoxelInvokerChunkSpawnerImpl::Refresh()
-{
-	bUpdateQueued = true;
-}
-
-void FVoxelInvokerChunkSpawnerImpl::Recreate()
-{
-	bUpdateQueued = true;
-	bRecreateQueued = true;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void FVoxelInvokerChunkSpawnerImpl::UpdateTree()
-{
-	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(InvokerChunkSpawner);
-
-	const int64 SizeInChunks = FMath::Max<int64>(FMath::CeilToInt64(WorldSize / (VoxelSize * (ChunkSize << LOD))), 2);
-	const int32 OctreeDepth = FMath::Min<int32>(FMath::CeilLogTwo64(SizeInChunks), 29);
-
-	ensure(bUpdateQueued);
-	bUpdateQueued = false;
-
-	ensure(!bTaskInProgress);
-	bTaskInProgress = true;
-
-	if (bRecreateQueued)
-	{
-		Octree.Reset();
-		bRecreateQueued = false;
-
-		VOXEL_SCOPE_LOCK(CriticalSection);
-		ChunkRefs_RequiresLock.Empty();
-	}
-
-	AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, MakeWeakPtrLambda(this, [
-		this,
-		OctreeDepth,
-		OldTree = Octree,
-		LocalToWorld = LastLocalToWorld,
-		Invoker = LastInvoker.ToSharedRef()]
-	{
-		const TSharedRef<FOctree> NewTree = MakeVoxelShared<FOctree>(OctreeDepth, *this);
-
-		if (OldTree)
-		{
-			VOXEL_SCOPE_COUNTER("CopyFrom");
-			NewTree->CopyFrom(*OldTree);
-		}
-
-		TMap<FChunkId, FChunkInfo> ChunkInfos;
-		TSet<FChunkId> ChunksToAdd;
-		TSet<FChunkId> ChunksToRemove;
-		NewTree->Update(
-			LocalToWorld,
-			*Invoker,
-			ChunkInfos,
-			ChunksToAdd,
-			ChunksToRemove);
-
-		VOXEL_SCOPE_LOCK(CriticalSection);
-
-		for (const FChunkId ChunkId : ChunksToRemove)
-		{
-			ensure(ChunkRefs_RequiresLock.Remove(ChunkId));
-		}
-
-		for (const FChunkId ChunkId : ChunksToAdd)
-		{
-			const FChunkInfo ChunkInfo = ChunkInfos[ChunkId];
-
-			const TSharedRef<FVoxelChunkRef> ChunkRef = CreateChunk(
-				LOD,
-				ChunkSize,
-				ChunkInfo.ChunkBounds);
-			ChunkRef->Compute();
-
-			ensure(!ChunkRefs_RequiresLock.Contains(ChunkId));
-			ChunkRefs_RequiresLock.Add(ChunkId) = ChunkRef;
-		}
-
-		AsyncTask(ENamedThreads::GameThread, MakeWeakPtrLambda(this, [this, NewTree]
-		{
-			VOXEL_FUNCTION_COUNTER();
-			check(IsInGameThread());
-
-			ensure(bTaskInProgress);
-			bTaskInProgress = false;
-
-			if (NewTree->NumNodes() >= GVoxelChunkSpawnerMaxChunks)
+			for (const FIntVector& Chunk : ChunksToAdd)
 			{
-				VOXEL_MESSAGE(Error, "{0}: voxel.chunkspawner.MaxChunks reached", NodeRef);
+				const TSharedRef<FVoxelChunkRef> ChunkRef = CreateChunk(
+					LOD,
+					ChunkSize,
+					FVoxelBox(FVector(Chunk) * FullChunkSize, FVector(Chunk + 1) * FullChunkSize));
+				ChunkRef->Compute();
+
+				ensure(!ChunkRefs_RequiresLock.Contains(Chunk));
+				ChunkRefs_RequiresLock.Add(Chunk) = ChunkRef;
 			}
+		})),
+		MakeWeakPtrDelegate(InvokerViewBindRef_GameThread, MakeWeakPtrLambda(this, [this](const TVoxelAddOnlySet<FIntVector>& ChunksToRemove)
+		{
+			VOXEL_SCOPE_COUNTER("OnRemoveChunk");
+			VOXEL_SCOPE_LOCK(CriticalSection);
 
-			Octree = NewTree;
-		}));
-	}));
+			for (const FIntVector& Chunk : ChunksToRemove)
+			{
+				ensure(ChunkRefs_RequiresLock.Remove(Chunk));
+			}
+		})));
 }
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-BEGIN_VOXEL_NAMESPACE(InvokerChunkSpawner)
-
-void FOctree::Update(
-	const FMatrix& LocalToWorld,
-	const FVoxelInvoker& Invoker,
-	TMap<FChunkId, FChunkInfo>& ChunkInfos,
-	TSet<FChunkId>& ChunksToAdd,
-	TSet<FChunkId>& ChunksToRemove)
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	TVoxelFastOctree::Update(
-		[&](const FNodeRef NodeRef)
-		{
-			if (NumNodes() > GVoxelChunkSpawnerMaxChunks)
-			{
-				return false;
-			}
-
-			return Invoker.Intersect(GetChunkBounds(NodeRef).TransformBy(LocalToWorld));
-		},
-		[&](const FNodeRef NodeRef)
-		{
-			if (NodeRef.GetHeight() > 0)
-			{
-				return;
-			}
-
-			FChunkId& ChunkId = GetNode(NodeRef);
-
-			ensure(!ChunkId.IsValid());
-			ChunkId = FChunkId::New();
-
-			ChunkInfos.Add(ChunkId,
-			{
-				GetChunkBounds(NodeRef),
-				NodeRef.GetBounds()
-			});
-			ChunksToAdd.Add(ChunkId);
-		},
-		[&](const FNodeRef NodeRef)
-		{
-			if (NodeRef.GetHeight() > 0)
-			{
-				return;
-			}
-
-			const FChunkId ChunkId = GetNode(NodeRef);
-			ensure(ChunkId.IsValid());
-
-			ChunkInfos.Add(ChunkId,
-			{
-				GetChunkBounds(NodeRef),
-				NodeRef.GetBounds()
-			});
-			ChunksToRemove.Add(ChunkId);
-		});
-}
-
-END_VOXEL_NAMESPACE(InvokerChunkSpawner)
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -224,7 +73,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MakeInvokerChunkSpawner, Spawner)
 	return VOXEL_ON_COMPLETE(LOD, WorldSize, ChunkSize, InvokerChannel)
 	{
 		const TSharedRef<FVoxelInvokerChunkSpawner> Spawner = MakeVoxelShared<FVoxelInvokerChunkSpawner>();
-		Spawner->Node = GetNodeRef();
+		Spawner->NodeRef = GetNodeRef();
 		Spawner->LOD = FMath::Clamp(LOD, 0, 30);
 		Spawner->WorldSize = WorldSize;
 		Spawner->ChunkSize = FMath::Clamp(FMath::CeilToInt(ChunkSize / 2.f) * 2, 4, 128);

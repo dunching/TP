@@ -1,33 +1,29 @@
 ﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelGraphMembersMacroSchemaAction.h"
-
 #include "VoxelGraph.h"
 #include "VoxelEdGraph.h"
-#include "Widgets/SVoxelMembers.h"
 #include "VoxelGraphToolkit.h"
+#include "VoxelRuntimeGraph.h"
+#include "Widgets/SVoxelMembers.h"
 #include "Nodes/VoxelGraphMacroNode.h"
 #include "Widgets/SVoxelGraphMembersMacroPaletteItem.h"
 #include "DragDropActions/VoxelGraphMacroDragDropAction.h"
 
 TSharedRef<SWidget> FVoxelGraphMembersMacroSchemaAction::CreatePaletteWidget(FCreateWidgetForActionData* const InCreateData) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
-	return SNew(SMacroPaletteItem, InCreateData);
+	return SNew(SVoxelGraphMembersMacroPaletteItem, InCreateData);
 }
 
 FReply FVoxelGraphMembersMacroSchemaAction::OnDragged(UObject* Object, const TSharedPtr<FVoxelMembersBaseSchemaAction>& Action, const FPointerEvent& MouseEvent) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	UVoxelGraph* MacroGraph = WeakMacroGraph.Get();
 	if (!ensure(MacroGraph))
 	{
 		return FReply::Unhandled();
 	}
 
-	return FReply::Handled().BeginDragDrop(FMacroDragDropAction::New(Action, MacroGraph));
+	return FReply::Handled().BeginDragDrop(FVoxelGraphMacroDragDropAction::New(Action, MacroGraph));
 }
 
 void FVoxelGraphMembersMacroSchemaAction::OnActionDoubleClick() const
@@ -108,46 +104,7 @@ void FVoxelGraphMembersMacroSchemaAction::OnDelete() const
 
 void FVoxelGraphMembersMacroSchemaAction::OnDuplicate() const
 {
-	UVoxelGraph* Graph = WeakMainGraph.Get();
-	const UVoxelGraph* MacroGraph = WeakMacroGraph.Get();
-	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
-	if (!ensure(Graph) ||
-		!ensure(MacroGraph) ||
-		!ensure(Toolkit))
-	{
-		return;
-	}
-
-	FName NewMacroName = *MacroGraph->GetGraphName();
-
-	TSet<FName> UsedNames;
-	for (const UVoxelGraph* InlineMacro : Graph->InlineMacros)
-	{
-		UsedNames.Add(*InlineMacro->GetGraphName());
-	}
-
-	while (UsedNames.Contains(NewMacroName))
-	{
-		NewMacroName.SetNumber(NewMacroName.GetNumber() + 1);
-	}
-
-	UVoxelGraph* NewGraph;
-
-	{
-		const FVoxelTransaction Transaction(Graph, "Duplicate macro");
-
-		NewGraph = DuplicateObject<UVoxelGraph>(MacroGraph, Graph, NAME_None);
-		NewGraph->MainEdGraph = DuplicateObject<UVoxelEdGraph>(Cast<UVoxelEdGraph>(MacroGraph->MainEdGraph), NewGraph, NAME_None);
-		NewGraph->SetGraphName(NewMacroName.ToString());
-		NewGraph->OnParametersChanged.AddSP(Toolkit.Get(), &FVoxelGraphToolkit::FixupGraphParameters);
-		Cast<UVoxelEdGraph>(NewGraph->MainEdGraph)->WeakToolkit = Toolkit;
-
-		Graph->InlineMacros.Add(NewGraph);
-	}
-
-	Toolkit->UpdateDetailsView(NewGraph);
-	Toolkit->OpenGraphAndBringToFront(NewGraph->MainEdGraph, false);
-	Toolkit->SelectMember(NewGraph, true, true);
+	OnPaste(GetToolkit<FVoxelGraphToolkit>(), WeakMacroGraph.Get());
 }
 
 bool FVoxelGraphMembersMacroSchemaAction::OnCopy(FString& OutExportText) const
@@ -319,6 +276,54 @@ FEdGraphSchemaActionDefiningObject FVoxelGraphMembersMacroSchemaAction::GetPersi
 	}
 
 	return FEdGraphSchemaActionDefiningObject(Toolkit->Asset);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelGraphMembersMacroSchemaAction::OnPaste(const TSharedPtr<FVoxelGraphToolkit>& Toolkit, const UVoxelGraph* GraphToCopy)
+{
+	if (!ensure(Toolkit) ||
+		!ensure(GraphToCopy))
+	{
+		return;
+	}
+
+	UVoxelGraph* Owner = Toolkit->Asset;
+	FName NewMacroName = *GraphToCopy->GetGraphName();
+
+	TSet<FName> UsedNames;
+	for (const UVoxelGraph* InlineMacro : Owner->InlineMacros)
+	{
+		UsedNames.Add(*InlineMacro->GetGraphName());
+	}
+
+	while (UsedNames.Contains(NewMacroName))
+	{
+		NewMacroName.SetNumber(NewMacroName.GetNumber() + 1);
+	}
+
+	UVoxelGraph* NewGraph;
+	{
+		const FVoxelTransaction Transaction(Owner, "Paste macro");
+
+		NewGraph = DuplicateObject<UVoxelGraph>(GraphToCopy, Owner, {});
+		if (!ensure(NewGraph))
+		{
+			return;
+		}
+
+		NewGraph->MainEdGraph = DuplicateObject<UVoxelEdGraph>(CastChecked<UVoxelEdGraph>(GraphToCopy->MainEdGraph), NewGraph);
+		NewGraph->SetGraphName(NewMacroName.ToString());
+		Toolkit->FixupGraph(NewGraph);
+
+		Owner->InlineMacros.Add(NewGraph);
+	}
+
+	Toolkit->UpdateDetailsView(NewGraph);
+	Toolkit->OpenGraphAndBringToFront(NewGraph->MainEdGraph, false);
+	Toolkit->SelectMember(NewGraph, true, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

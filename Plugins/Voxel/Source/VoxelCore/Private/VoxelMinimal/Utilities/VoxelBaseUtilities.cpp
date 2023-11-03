@@ -63,7 +63,7 @@ float FVoxelUtilities::sRGBToLinearTable[256] =
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-FText FVoxelUtilities::ConvertToTimeText(double Value)
+FText FVoxelUtilities::ConvertToTimeText(double Value, const int32 NumExtraDigits)
 {
 	const TCHAR* Unit = TEXT("s");
 
@@ -97,13 +97,16 @@ FText FVoxelUtilities::ConvertToTimeText(double Value)
 	}
 
 	int32 NumDigits = 1;
-	while (Value * IntPow(10, NumDigits) < 1)
+	if (Value > 0)
 	{
-		NumDigits++;
+		while (Value * IntPow(10, NumDigits) < 1)
+		{
+			NumDigits++;
+		}
 	}
 
 	FNumberFormattingOptions Options;
-	Options.MaximumFractionalDigits = NumDigits;
+	Options.MaximumFractionalDigits = NumDigits + NumExtraDigits;
 	Options.MinimumFractionalDigits = NumDigits;
 
 	return FText::Format(INVTEXT("{0}{1}"), FText::AsNumber(Value, &Options), FText::FromString(Unit));
@@ -184,85 +187,12 @@ bool FVoxelUtilities::IsFloat(const FStringView& Text)
 	return true;
 }
 
-FName FVoxelUtilities::NamePrintf(const TCHAR* Format, ...)
-{
-	TCHAR ErrorText[2048];
-	GET_VARARGS(ErrorText, UE_ARRAY_COUNT(ErrorText), UE_ARRAY_COUNT(ErrorText) - 1, Format, Format);
-	return FName(ErrorText);
-}
-
 FName FVoxelUtilities::AppendName(const FStringView& Base, const FName Name)
 {
-	ensure(Base.Len() < 1024);
-	TVoxelStaticArray<TCHAR, 2048> Buffer{ NoInit };
-
-	Base.CopyString(Buffer.GetData(), Base.Len());
-
-	int32 Num = Base.Len();
-	const FNameEntry* NameEntry = Name.GetDisplayNameEntry();
-	if (NameEntry->IsWide())
-	{
-		WIDECHAR WideName[NAME_SIZE];
-		NameEntry->GetWideName(WideName);
-
-		for (int32 Index = 0; Index < NameEntry->GetNameLength() + 1; Index++)
-		{
-			Buffer[Num + Index] = WideName[Index];
-		}
-	}
-	else
-	{
-		ANSICHAR AnsiName[NAME_SIZE];
-		NameEntry->GetAnsiName(AnsiName);
-
-		for (int32 Index = 0; Index < NameEntry->GetNameLength() + 1; Index++)
-		{
-			Buffer[Num + Index] = AnsiName[Index];
-		}
-	}
-	Num += NameEntry->GetNameLength();
-
-	checkVoxelSlow(Buffer[Num] == TEXT('\0'));
-
-	if (Name.GetNumber() != 0)
-	{
-		Buffer[Num++] = TEXT('_');
-		AppendInt(Buffer.GetData(), NAME_INTERNAL_TO_EXTERNAL(Name.GetNumber()), Num);
-	}
-
-	Buffer[Num] = TEXT('\0');
-
-	VOXEL_ALLOW_MALLOC_SCOPE();
-	return FName(Num, Buffer.GetData());
-}
-
-void FVoxelUtilities::AppendInt(TCHAR* Buffer, const int32 Value, int32& Num)
-{
-	constexpr int32 LocalBufferSize = 16;
-
-	TVoxelStaticArray<TCHAR, LocalBufferSize> LocalBuffer{ NoInit };
-
-	int32 LocalIndex = LocalBufferSize;
-	do
-	{
-		constexpr int32 ZeroDigitIndex = 9;
-		const TCHAR* DigitToChar = TEXT("9876543210123456789");
-
-		LocalBuffer[--LocalIndex] = DigitToChar[ZeroDigitIndex + (Value % 10)];
-		Num /= 10;
-	} while (Num);
-
-	if (Value < 0)
-	{
-		LocalBuffer[--LocalIndex] = TEXT('-');
-	}
-
-	const int32 NumChars = LocalBufferSize - LocalIndex;
-	for (int32 Index = 0; Index < NumChars; Index++)
-	{
-		Buffer[Num + Index] = LocalBuffer[LocalIndex + Index];
-	}
-	Num += NumChars;
+	TStringBuilderWithBuffer<TCHAR, NAME_SIZE> String;
+	String.Append(Base);
+	Name.AppendString(String);
+	return FName(String);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

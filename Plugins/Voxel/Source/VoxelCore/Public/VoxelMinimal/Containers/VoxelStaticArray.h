@@ -4,18 +4,21 @@
 
 #include "VoxelCoreMinimal.h"
 
-template<typename T, int32 Size, int32 Alignment = alignof(T)>
+template<typename T, int32 Size, int32 Alignment = alignof(T), bool bForceInitToZero = false>
 class alignas(Alignment) TVoxelStaticArray
 {
 public:
 	using ElementType = T;
 
+	checkStatic(!bForceInitToZero || TIsTriviallyDestructible<T>::Value);
+	static constexpr bool bCanNoInit = TIsTriviallyDestructible<T>::Value && !bForceInitToZero;
+
 	// Default constructor, only valid for complex types
 	// For trivially destructible types you need to choose whether to init them (ForceInit) or not (NoInit)
-	INTELLISENSE_ONLY(template<typename = typename TEnableIf<!TIsTriviallyDestructible<T>::Value>::Type>)
+	INTELLISENSE_ONLY(template<typename = typename TEnableIf<!bCanNoInit>::Type>)
 	TVoxelStaticArray()
 	{
-		static_assert(!TIsTriviallyDestructible<T>::Value, "");
+		checkStatic(!bCanNoInit);
 
 		for (auto& Element : *this)
 		{
@@ -29,10 +32,10 @@ public:
 			new (&Element) T{};
 		}
 	}
-	INTELLISENSE_ONLY(template<typename = typename TEnableIf<TIsTriviallyDestructible<T>::Value>::Type>)
+	INTELLISENSE_ONLY(template<typename = typename TEnableIf<bCanNoInit>::Type>)
 	FORCEINLINE explicit TVoxelStaticArray(ENoInit)
 	{
-		static_assert(TIsTriviallyDestructible<T>::Value, "");
+		checkStatic(bCanNoInit);
 
 #if VOXEL_DEBUG
 		for (uint8& Byte : Data)
@@ -217,14 +220,17 @@ private:
 	uint8 Data[Size * sizeof(T)];
 };
 
-template<typename T, int32 Size, int32 Alignment>
-struct TIsContiguousContainer<TVoxelStaticArray<T, Size, Alignment>>
+template<typename T, int32 Size, int32 Alignment = alignof(T)>
+using TVoxelStaticArray_ForceInit = TVoxelStaticArray<T, Size, Alignment, true>;
+
+template<typename T, int32 Size, int32 Alignment, bool bForceInitToZero>
+struct TIsContiguousContainer<TVoxelStaticArray<T, Size, Alignment, bForceInitToZero>>
 {
 	enum { Value = true };
 };
 
-template<typename T, int32 Size, int32 Alignment>
-struct TIsTriviallyDestructible<TVoxelStaticArray<T, Size, Alignment>>
+template<typename T, int32 Size, int32 Alignment, bool bForceInitToZero>
+struct TIsTriviallyDestructible<TVoxelStaticArray<T, Size, Alignment, bForceInitToZero>>
 {
 	enum { Value = TIsTriviallyDestructible<T>::Value };
 };

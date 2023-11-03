@@ -5,15 +5,12 @@
 #include "VoxelEditorMinimal.h"
 #include "VoxelPinValue.h"
 #include "VoxelGraphNodeBase.h"
-#include "VoxelGraphNodeStatInterface.h"
 #include "VoxelGraphNode.generated.h"
 
 class IVoxelNodeDefinition;
 
 UCLASS(Abstract)
-class UVoxelGraphNode
-	: public UVoxelGraphNodeBase
-	, public IVoxelGraphNodeStatInterface
+class UVoxelGraphNode : public UVoxelGraphNodeBase
 {
 	GENERATED_BODY()
 
@@ -35,4 +32,5 @@ public:
 	virtual bool TryMigratePin(UEdGraphPin* OldPin, UEdGraphPin* NewPin) const override;
 	virtual void TryMigrateDefaultValue(const UEdGraphPin* OldPin, UEdGraphPin* NewPin) const override;
 	virtual void PostReconstructNode() override;
+	virtual bool CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const override;
 };

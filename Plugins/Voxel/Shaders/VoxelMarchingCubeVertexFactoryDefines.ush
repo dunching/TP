@@ -329,13 +329,40 @@ void SampleVoxelMaterialIdImpl(
 	float Alpha1 = (Packed[1] >> 12) / 100000.f;
 	float Alpha2 = (Packed[2] >> 12) / 100000.f;
 
+#define SWAP(A, B) \
+	{ \
+		const float Tmp = A; \
+		A = B; \
+		B = Tmp; \
+	}
+
+	if (Layer0 > Layer1)
+	{
+		SWAP(Layer0, Layer1);
+		SWAP(Alpha0, Alpha1);
+	}
+	if (Layer0 > Layer2)
+	{
+		SWAP(Layer0, Layer2);
+		SWAP(Alpha0, Alpha2);
+	}
+	if (Layer1 > Layer2)
+	{
+		SWAP(Layer1, Layer2);
+		SWAP(Alpha1, Alpha2);
+	}
+
+#undef SWAP
+
 	const float Sum = Alpha0 + Alpha1 + Alpha2;
 
 	Alpha0 /= Sum;
 	Alpha1 /= Sum;
 	Alpha2 /= Sum;
 
-	LerpAlphaA = Alpha1 / (Alpha0 + Alpha1);
+	const float Alpha01 = Alpha0 + Alpha1;
+
+	LerpAlphaA = Alpha01 != 0 ? Alpha1 / Alpha01 : 0;
 	LerpAlphaB = Alpha2;
 }
 

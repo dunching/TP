@@ -5,8 +5,6 @@
 
 void SVoxelGraphNodeVariable::Construct(const FArguments& InArgs, UVoxelGraphNode* InNode)
 {
-	VOXEL_FUNCTION_COUNTER();
-
 	GraphNode = InNode;
 	NodeDefinition = GetVoxelNode().GetNodeDefinition();
 
@@ -17,8 +15,6 @@ void SVoxelGraphNodeVariable::Construct(const FArguments& InArgs, UVoxelGraphNod
 
 void SVoxelGraphNodeVariable::UpdateGraphNode()
 {
-	VOXEL_FUNCTION_COUNTER();
-
 	InputPins.Empty();
 	OutputPins.Empty();
 

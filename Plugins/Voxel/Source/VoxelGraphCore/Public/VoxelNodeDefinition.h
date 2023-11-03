@@ -6,7 +6,7 @@
 #include "VoxelPinValue.h"
 
 #if WITH_EDITOR
-class VOXELGRAPHCORE_API IVoxelNodeDefinition
+class VOXELGRAPHCORE_API IVoxelNodeDefinition : public TSharedFromThis<IVoxelNodeDefinition>
 {
 public:
 	enum class ENodeState

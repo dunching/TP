@@ -20,37 +20,18 @@
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
-bool FVoxelTicker::Tick(float DeltaTime)
-{
-	VOXEL_LLM_SCOPE();
-
-	Tick();
-	return true;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
 void FVoxelSystemUtilities::DelayedCall(TFunction<void()> Call, float Delay)
 {
-	if (!IsInGameThread())
+	// Delay will be inaccurate if not on game thread but that's fine
+	FVoxelUtilities::RunOnGameThread([=]
 	{
-		// Delay will be inaccurate but w/e
-		AsyncTask(ENamedThreads::GameThread, [=]
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([=](float)
 		{
-			DelayedCall(Call, Delay);
-		});
-		return;
-	}
-	check(IsInGameThread());
-
-	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([=](float)
-	{
-		VOXEL_LLM_SCOPE();
-		Call();
-		return false;
-	}), Delay);
+			VOXEL_FUNCTION_COUNTER();
+			Call();
+			return false;
+		}), Delay);
+	});
 }
 
 IPlugin& FVoxelSystemUtilities::GetPlugin()

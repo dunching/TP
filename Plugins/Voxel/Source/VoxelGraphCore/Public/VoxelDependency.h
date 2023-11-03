@@ -104,7 +104,7 @@ public:
 	void AddObjectToKeepAlive(const TSharedPtr<T>& ObjectToKeepAlive)
 	{
 		VOXEL_SCOPE_LOCK(CriticalSection);
-		ObjectsToKeepAlive.Add(ReinterpretCastRef<TSharedPtr<void>>(ObjectToKeepAlive));
+		ObjectsToKeepAlive.Add(MakeSharedVoidPtr(ObjectToKeepAlive));
 	}
 
 private:
@@ -118,7 +118,7 @@ private:
 	TVoxelAtomic<bool> bIsInvalidated;
 	TVoxelUniqueFunction<void()> OnInvalidated;
 	TVoxelChunkedArray<FDependencyRef> DependencyRefs;
-	TVoxelArray<TSharedPtr<void>> ObjectsToKeepAlive;
+	TVoxelArray<FSharedVoidPtr> ObjectsToKeepAlive;
 	TVoxelSet<TWeakPtr<FVoxelDependency>> AddedDependencies;
 
 	explicit FVoxelDependencyTracker(const FName& Name);

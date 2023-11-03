@@ -143,9 +143,4 @@ public:
 	{
 		return Get().GetStyleSetName();
 	}
-
-private:
-	static TSharedPtr<FVoxelStyleSet> VoxelEditorStyle;
-
-	friend class FVoxelStyleSet;
 };

@@ -143,16 +143,17 @@ public:
 
 	static FVoxelRuntimePinValue Make(
 		const TSharedRef<const FVoxelBuffer>& Value,
-		const FVoxelPinType& Type);
+		const FVoxelPinType& BufferType);
 
 	static FVoxelRuntimePinValue Make(
 		const TSharedRef<FVoxelBuffer>& Value,
-		const FVoxelPinType& Type);
+		const FVoxelPinType& BufferType);
 
 public:
 	template<typename T>
 	FORCEINLINE TSharedRef<const T> GetSharedStruct() const
 	{
+		checkStatic(IsStructValue<T>);
 		checkVoxelSlow(CanBeCastedTo<T>());
 		checkVoxelSlow(Type.IsBuffer() || Type.IsStruct());
 		checkVoxelSlow(SharedStructType);
@@ -218,20 +219,19 @@ public:
 		!std::is_same_v<T, FVoxelNameWrapper> &&
 		std::is_same_v<FVoxelObjectUtilities::TPropertyType<T>, FStructProperty>;
 
-	template<typename T, typename = typename TEnableIf<IsStructValue<T>>::Type>
+	template<typename T, typename = typename TEnableIf<!std::is_same_v<T, FName>>::Type>
 	FORCEINLINE const T& Get() const
 	{
 		checkStatic(TIsSafeVoxelPinValue<T>::Value);
 		checkVoxelSlow(Type.CanBeCastedTo<T>());
-		checkVoxelSlow(SharedStruct.IsValid());
-		return reinterpret_cast<const T&>(*SharedStruct.Get());
-	}
-	template<typename T, typename = void, typename = typename TEnableIf<!IsStructValue<T>>::Type>
-	FORCEINLINE T Get() const
-	{
-		checkVoxelSlow(Type.CanBeCastedTo<T>());
 
-		if constexpr (std::is_same_v<T, bool>)
+		if constexpr (IsStructValue<T>)
+		{
+			checkVoxelSlow(SharedStructType);
+			checkVoxelSlow(SharedStruct.IsValid());
+			return reinterpret_cast<const T&>(*SharedStruct.Get());
+		}
+		else if constexpr (std::is_same_v<T, bool>)
 		{
 			return bBool;
 		}
@@ -251,9 +251,7 @@ public:
 		{
 			return Int64;
 		}
-		else if constexpr (
-			std::is_same_v<T, FName> ||
-			std::is_same_v<T, FVoxelNameWrapper>)
+		else if constexpr (std::is_same_v<T, FVoxelNameWrapper>)
 		{
 			return Name;
 		}
@@ -263,18 +261,24 @@ public:
 		}
 		else if constexpr (TIsEnum<T>::Value)
 		{
-			return T(Byte);
+			return ReinterpretCastRef<T>(Byte);
 		}
 		else if constexpr (TIsTSubclassOf<T>::Value)
 		{
-			return T(Class);
+			return ReinterpretCastRef<T>(Class);
 		}
 		else
 		{
 			checkStatic(std::is_same_v<T, void>);
 			check(false);
-			return 0;
+			static T* Value = new T();
+			return *Value;
 		}
+	}
+	template<typename T, typename = void, typename = typename TEnableIf<std::is_same_v<T, FName>>::Type>
+	FORCEINLINE const T Get() const
+	{
+		return Get<FVoxelNameWrapper>();
 	}
 
 	FORCEINLINE TConstVoxelArrayView<uint8> GetRawView() const

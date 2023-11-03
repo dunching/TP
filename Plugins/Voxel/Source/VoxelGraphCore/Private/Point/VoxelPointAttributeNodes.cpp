@@ -2,7 +2,7 @@
 
 #include "Point/VoxelPointAttributeNodes.h"
 #include "VoxelBufferUtilities.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_SetPointAttribute, Out)
 {

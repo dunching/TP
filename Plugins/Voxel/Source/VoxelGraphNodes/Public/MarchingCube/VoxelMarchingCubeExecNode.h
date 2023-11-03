@@ -37,9 +37,9 @@ struct VOXELGRAPHNODES_API FVoxelMarchingCubeExecNode : public FVoxelExecNode
 
 	// Defines where to spawn chunks & at what LOD
 	// If not set will default to a Screen Size Chunk Spawner
-	VOXEL_INPUT_PIN(FVoxelChunkSpawner, ChunkSpawner, nullptr, VirtualPin, OptionalPin);
+	VOXEL_INPUT_PIN(FVoxelChunkSpawner, ChunkSpawner, nullptr, ConstantPin, OptionalPin);
 	// The voxel size to use: distance in cm between 2 vertices when rendering
-	VOXEL_INPUT_PIN(float, VoxelSize, 100.f, VirtualPin);
+	VOXEL_INPUT_PIN(float, VoxelSize, 100.f, ConstantPin);
 
 	VOXEL_INPUT_PIN(FVoxelSurface, Surface, nullptr, VirtualPin);
 	VOXEL_INPUT_PIN(FVoxelMaterial, Material, nullptr, VirtualPin);
@@ -65,6 +65,9 @@ struct VOXELGRAPHNODES_API FVoxelMarchingCubeExecNode : public FVoxelExecNode
 	VOXEL_INPUT_PIN(bool, PerfectTransitions, false, VirtualPin, AdvancedDisplay);
 	VOXEL_INPUT_PIN(bool, GenerateDistanceFields, false, VirtualPin, AdvancedDisplay);
 	VOXEL_INPUT_PIN(float, DistanceFieldBias, 0.f, VirtualPin, AdvancedDisplay);
+	// Priority offset, added to the task distance from camera
+	// Closest tasks are computed first, so set this to a very low value (eg, -1000000) if you want it to be computed first
+	VOXEL_INPUT_PIN(double, PriorityOffset, 0, ConstantPin, AdvancedDisplay);
 
 	TValue<FVoxelMarchingCubeExecNodeMesh> CreateMesh(
 		const FVoxelQuery& InQuery,
@@ -88,11 +91,8 @@ public:
 private:
 	const TSharedRef<FVoxelChunkActionQueue> ChunkActionQueue = MakeVoxelShared<FVoxelChunkActionQueue>();
 
-	TSharedPtr<FVoxelChunkSpawnerImpl> ChunkSpawner;
-	TVoxelDynamicValue<FVoxelChunkSpawner> ChunkSpawnerValue;
-
+	TSharedPtr<FVoxelChunkSpawner> ChunkSpawner;
 	float VoxelSize = 0.f;
-	TVoxelDynamicValue<float> VoxelSizeValue;
 
 	struct FChunkInfo
 	{
@@ -127,7 +127,7 @@ private:
 		void FlushOnComplete();
 	};
 
-	FVoxelCriticalSection ChunkInfos_CriticalSection;
+	FVoxelFastCriticalSection ChunkInfos_CriticalSection;
 	TMap<FVoxelChunkId, TSharedPtr<FChunkInfo>> ChunkInfos;
 
 	struct FQueuedMesh

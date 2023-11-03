@@ -154,8 +154,8 @@ VOXEL_RUN_ON_STARTUP_GAME(VoxelNodeISPC)
 			checkf(bCanModify, TEXT("%s is out of date. There's no debugger attached so we won't generate it. Did you forget to check it in?"), *ISPCFilePath);
 
 			bModified = true;
-			IFileManager::Get().Delete(*ISPCFilePath);
-			FFileHelper::SaveStringToFile(ISPCFile, *ISPCFilePath);
+			IFileManager::Get().Delete(*ISPCFilePath, false, true);
+			ensure(FFileHelper::SaveStringToFile(ISPCFile, *ISPCFilePath));
 			LOG_VOXEL(Error, "%s written", *ISPCFilePath);
 		}
 		if (!ExistingCppFile.Equals(CppFile))
@@ -163,8 +163,8 @@ VOXEL_RUN_ON_STARTUP_GAME(VoxelNodeISPC)
 			checkf(bCanModify, TEXT("%s is out of date. There's no debugger attached so we won't generate it. Did you forget to check it in?"), *ISPCFilePath);
 
 			bModified = true;
-			IFileManager::Get().Delete(*CppFile);
-			FFileHelper::SaveStringToFile(CppFile, *CppFilePath);
+			IFileManager::Get().Delete(*CppFilePath, false, true);
+			ensure(FFileHelper::SaveStringToFile(CppFile, *CppFilePath));
 			LOG_VOXEL(Error, "%s written", *CppFilePath);
 		}
 	}

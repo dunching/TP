@@ -47,7 +47,8 @@ public:
 		checkVoxelSlow(Position.IsValid());
 
 		const double DistanceSquared = Bounds.ComputeSquaredDistanceFromBoxToPoint(*Position.Get());
-		return FMath::Max(0., DistanceSquared + Offset * Offset);
+		// Keep the sign of Offset
+		return DistanceSquared + Offset * FMath::Abs(Offset);
 	}
 
 private:
@@ -185,7 +186,13 @@ public:
 	template<typename T>
 	TVoxelFutureValue<T> Execute(TVoxelUniqueFunction<TVoxelFutureValue<T>()>&& Lambda)
 	{
-		return TVoxelFutureValue<T>(this->Execute(FVoxelPinType::Make<T>(), ReinterpretCastRef<TVoxelUniqueFunction<FVoxelFutureValue()>>(MoveTemp(Lambda))));
+		return this->Execute<T>(FVoxelPinType::Make<T>(), MoveTemp(Lambda));
+	}
+	template<typename T>
+	TVoxelFutureValue<T> Execute(const FVoxelPinType& Type, TVoxelUniqueFunction<TVoxelFutureValue<T>()>&& Lambda)
+	{
+		checkVoxelSlow(Type.CanBeCastedTo<T>());
+		return TVoxelFutureValue<T>(this->Execute(Type, ReinterpretCastRef<TVoxelUniqueFunction<FVoxelFutureValue()>>(MoveTemp(Lambda))));
 	}
 
 private:

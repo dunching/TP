@@ -139,6 +139,20 @@ public:
 		}
 		return INDEX_NONE;
 	}
+	template<typename ComparisonType>
+	FORCEINLINE bool Contains(const ComparisonType& Item) const
+	{
+		const ElementType* RESTRICT Start = GetData();
+		const ElementType* RESTRICT End = Start + ArrayNum;
+		for (const ElementType* RESTRICT Data = Start; Data != End; ++Data)
+		{
+			if (*Data == Item)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
 
 	FORCEINLINE SizeType AddUnique(const ElementType& Item)
 	{

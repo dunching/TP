@@ -42,7 +42,6 @@ public:
 	virtual void Tick(FVoxelRuntime& Runtime) override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 	virtual FVoxelOptionalBox GetBounds() const override;
-	virtual TValue<FVoxelSpawnable> GenerateSpawnable(const FVoxelMergeSpawnableRef& Ref) override;
 	//~ End FVoxelExecNodeRuntime Interface
 
 private:
@@ -78,7 +77,6 @@ public:
 	virtual void Tick(FVoxelRuntime& Runtime) override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 	virtual FVoxelOptionalBox GetBounds() const override;
-	virtual TVoxelFutureValue<FVoxelSpawnable> GenerateSpawnable(const FVoxelMergeSpawnableRef& Ref) override;
 	//~ End FVoxelExecNodeRuntime Interface
 };
 

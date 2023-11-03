@@ -82,7 +82,7 @@ struct FVoxelCreateDetailTextureHelper
 
 void FVoxelDetailTextureQueryHelperImpl::SetupQueryParameters(FVoxelQueryParameters& Parameters) const
 {
-	Parameters.Add<FVoxelPositionQueryParameter>().InitializeSparse(
+	Parameters.Add<FVoxelPositionQueryParameter>().Initialize(
 		QueryPositions,
 		// We trace against triangles of size 10
 		Surface->ChunkBounds.Extend(10 * /*UE_SQRT_3*/ 2.f * Surface->ScaledVoxelSize));
@@ -420,7 +420,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MakeNormalDetailTextureParameter, Parameter
 		}
 		Parameter.Node = GetNodeRef();
 		Parameter.Pool = Texture->WeakPool.Pin();
-		Parameter.SetGetBuffer(GetCompute(NormalPin));
+		Parameter.SetGetBuffer(GetCompute(NormalPin, Query.GetSharedContext()));
 		return Parameter;
 	};
 }
@@ -494,7 +494,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MakeFloatDetailTextureParameter, Parameter)
 		FVoxelFloatDetailTextureParameter Parameter;
 		Parameter.Node = GetNodeRef();
 		Parameter.Pool = Texture->WeakPool.Pin();
-		Parameter.SetGetBuffer(GetCompute(FloatPin));
+		Parameter.SetGetBuffer(GetCompute(FloatPin, Query.GetSharedContext()));
 		return Parameter;
 	};
 }
@@ -537,7 +537,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MakeColorDetailTextureParameter, Parameter)
 		FVoxelColorDetailTextureParameter Parameter;
 		Parameter.Node = GetNodeRef();
 		Parameter.Pool = Texture->WeakPool.Pin();
-		Parameter.SetGetBuffer(GetCompute(ColorPin));
+		Parameter.SetGetBuffer(GetCompute(ColorPin, Query.GetSharedContext()));
 		return Parameter;
 	};
 }
@@ -578,7 +578,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MakeMaterialIdDetailTextureParameter, Param
 
 	return VOXEL_ON_COMPLETE(Texture)
 	{
-		const TSharedRef<const TVoxelComputeValue<FVoxelSurface>> ComputeSurface = GetCompute(SurfacePin);
+		const TSharedRef<const TVoxelComputeValue<FVoxelSurface>> ComputeSurface = GetCompute(SurfacePin, Query.GetSharedContext());
 
 		TVoxelComputeValue<FVoxelBuffer> Compute = [ComputeSurface](const FVoxelQuery& InQuery) -> TValue<FVoxelBuffer>
 		{

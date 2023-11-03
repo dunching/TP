@@ -1,7 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Templates/VoxelInterpolationNodes.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphNode.h"
 

@@ -20,6 +20,7 @@ public class VoxelGraphEditor : ModuleRules_Voxel
                 "EditorWidgets",
                 "BlueprintGraph",
                 "ApplicationCore",
+                "SharedSettingsWidgets",
                 "InteractiveToolsFramework",
                 "EditorInteractiveToolsFramework",
 

@@ -1,7 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Templates/VoxelFilterBufferNodes.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 #include "VoxelBufferUtilities.h"
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_FilterBuffer, OutValue)

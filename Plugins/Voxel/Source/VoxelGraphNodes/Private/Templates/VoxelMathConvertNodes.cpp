@@ -1,7 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Templates/VoxelMathConvertNodes.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelCompiledGraph.h"
 
 FVoxelTemplateNode::FPin* FVoxelTemplateNode_AbstractMathConvert::ExpandPins(FNode& Node, TArray<FPin*> Pins, const TArray<FPin*>& AllPins) const
 {

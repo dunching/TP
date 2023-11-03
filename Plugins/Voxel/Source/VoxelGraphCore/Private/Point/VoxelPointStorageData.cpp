@@ -1,4 +1,4 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Point/VoxelPointStorageData.h"
 #include "VoxelDependency.h"
@@ -17,7 +17,7 @@ void FVoxelPointStorageData::ClearData()
 	VOXEL_FUNCTION_COUNTER();
 	{
 		VOXEL_SCOPE_LOCK(CriticalSection);
-		SpawnableRefToSpawnableData_RequiresLock.Empty();
+		ChunkRefToChunkData_RequiresLock.Empty();
 	}
 	Dependency->Invalidate();
 }
@@ -96,10 +96,20 @@ void FVoxelPointStorageData::Serialize(FArchive& Ar)
 	}
 }
 
-TSharedPtr<const FVoxelPointStorageSpawnableData> FVoxelPointStorageData::FindSpawnableData(const FVoxelSpawnableRef& SpawnableRef) const
+TSharedRef<FVoxelPointStorageChunkData> FVoxelPointStorageData::FindOrAddChunkData(const FVoxelPointChunkRef& ChunkRef)
 {
 	VOXEL_SCOPE_LOCK(CriticalSection);
-	return SpawnableRefToSpawnableData_RequiresLock.FindRef(SpawnableRef);
+
+	TSharedPtr<FVoxelPointStorageChunkData>& ChunkData = ChunkRefToChunkData_RequiresLock.FindOrAdd(ChunkRef);
+	if (!ChunkData)
+	{
+		ChunkData = MakeVoxelShared<FVoxelPointStorageChunkData>(FVoxelDependency::Create(
+			STATIC_FNAME("PointStorage.SpawnableData"),
+			FName(FString::Printf(TEXT("%s %s"),
+				*ChunkRef.ChunkProviderRef.NodePath.ToDebugString(),
+				*ChunkRef.ChunkMin.ToString()))));
+	}
+	return ChunkData.ToSharedRef();
 }
 
 bool FVoxelPointStorageData::SetPointAttribute(
@@ -148,26 +158,16 @@ bool FVoxelPointStorageData::SetPointAttribute(
 		return false;
 	}
 
-	TSharedPtr<FVoxelPointStorageSpawnableData> SpawnableData;
-	{
-		VOXEL_SCOPE_LOCK(CriticalSection);
-		TSharedPtr<FVoxelPointStorageSpawnableData>& SpawnableDataRef = SpawnableRefToSpawnableData_RequiresLock.FindOrAdd(Handle.SpawnableRef);
-		if (!SpawnableDataRef)
-		{
-			SpawnableDataRef = MakeVoxelShared<FVoxelPointStorageSpawnableData>(FVoxelDependency::Create(
-				STATIC_FNAME("PointStorage.SpawnableData"), AssetName));
-		}
-		SpawnableData = SpawnableDataRef;
-	}
+	const TSharedRef<FVoxelPointStorageChunkData> ChunkData = FindOrAddChunkData(Handle.ChunkRef);
 
-	VOXEL_SCOPE_LOCK(SpawnableData->CriticalSection);
+	VOXEL_SCOPE_LOCK(ChunkData->CriticalSection);
 
-	TSharedPtr<FVoxelPointStorageSpawnableData::FAttribute>& AttributeOverride = SpawnableData->NameToAttributeOverride.FindOrAdd(Name);
+	TSharedPtr<FVoxelPointStorageChunkData::FAttribute>& AttributeOverride = ChunkData->NameToAttributeOverride.FindOrAdd(Name);
 	if (!AttributeOverride)
 	{
 		Dependency->Invalidate();
 
-		AttributeOverride = MakeVoxelShared<FVoxelPointStorageSpawnableData::FAttribute>();
+		AttributeOverride = MakeVoxelShared<FVoxelPointStorageChunkData::FAttribute>();
 		AttributeOverride->Buffer = MakeVoxelShared<FVoxelBufferBuilder>(Type.GetInnerType());
 	}
 	else if (AttributeOverride->Buffer->InnerType != Type.GetInnerType())
@@ -209,7 +209,7 @@ bool FVoxelPointStorageData::SetPointAttribute(
 
 	if (bChanged)
 	{
-		SpawnableData->Dependency->Invalidate();
+		ChunkData->Dependency->Invalidate();
 	}
 
 	return true;

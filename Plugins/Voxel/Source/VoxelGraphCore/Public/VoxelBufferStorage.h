@@ -337,6 +337,7 @@ public:
 	int32 AddUninitialized(int32 NumToAdd);
 	void AddZeroed(int32 NumToAdd);
 	void Append(const FVoxelBufferStorage& BufferStorage, int32 BufferNum);
+	void CopyTo(const TVoxelArrayView<uint8> OtherData) const;
 
 	FORCEINLINE int32 GetTypeSize() const
 	{
@@ -410,9 +411,17 @@ public:
 	}
 
 public:
-	FORCEINLINE Type* GetData(const FVoxelBufferIterator& Iterator)
+	FORCEINLINE auto GetData(const FVoxelBufferIterator& Iterator) -> decltype(auto)
 	{
-		return reinterpret_cast<Type*>(GetByteData(Iterator));
+		if constexpr (std::is_same_v<Type, bool>)
+		{
+			// bool should be passed as uint8 to ISPC when writing, as we need to manually set them to 0 or 1
+			return GetByteData(Iterator);
+		}
+		else
+		{
+			return reinterpret_cast<Type*>(GetByteData(Iterator));
+		}
 	}
 	FORCEINLINE const Type* GetData(const FVoxelBufferIterator& Iterator) const
 	{
@@ -468,6 +477,11 @@ public:
 		{
 			FVoxelUtilities::SetAll(GetRawView_NotConstant(Iterator), Value);
 		}
+	}
+
+	FORCEINLINE void CopyTo(const TVoxelArrayView<Type> OtherData) const
+	{
+		FVoxelBufferStorage::CopyTo(MakeByteVoxelArrayView(OtherData));
 	}
 
 	FORCEINLINE Type& operator[](int32 Index)

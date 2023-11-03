@@ -29,7 +29,8 @@
 
 #include "VoxelMeshVoxelizer.h"
 
-BEGIN_VOXEL_NAMESPACE(MeshVoxelizer)
+namespace Voxel::MeshVoxelizer
+{
 
 // Calculate twice signed area of triangle (0,0)-(A.X,A.Y)-(B.X,B.Y)
 // Return an SOS-determined sign (-1, +1, or 0 only if it's a truly degenerate triangle)
@@ -303,4 +304,4 @@ void Voxelize(
 	}
 }
 
-END_VOXEL_NAMESPACE(MeshVoxelizer)
+}

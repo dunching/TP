@@ -1,9 +1,8 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelInstancedCollisionComponent.h"
-#include "VoxelInstancedCollisionComponentManager.h"
-#include "VoxelMeshDataBase.h"
-#include "Engine/Engine.h"
+#include "Point/VoxelPointOverrideManager.h"
+#include "SceneManagement.h"
 #include "Engine/StaticMesh.h"
 #include "PrimitiveSceneProxy.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -13,12 +12,46 @@ VOXEL_CONSOLE_VARIABLE(
 	"voxel.foliage.ShowInstancesCollisions",
 	"");
 
+DEFINE_VOXEL_COUNTER(STAT_VoxelNumCollisionInstances);
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+void FVoxelInstancedCollisionDataImpl::FlushInstanceBodiesToDelete()
+{
+	VOXEL_SCOPE_COUNTER_FORMAT("FlushInstanceBodiesToDelete Num=%d", InstanceBodiesToDelete.Num());
+
+	for (const TSharedPtr<FBodyInstance>& Body : InstanceBodiesToDelete)
+	{
+		if (ensure(Body))
+		{
+			Body->TermBody();
+		}
+	}
+	InstanceBodiesToDelete.Reset();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+UVoxelInstancedCollisionComponent::UVoxelInstancedCollisionComponent()
+{
+	SetGenerateOverlapEvents(false);
+
+	// Needed for ItemIndex to be set
+	bMultiBodyOverlap = true;
+}
+
 UBodySetup* UVoxelInstancedCollisionComponent::GetBodySetup()
 {
+	if (!Data)
+	{
+		return nullptr;
+	}
+
+	const UStaticMesh* StaticMesh = Data->Mesh.StaticMesh.Get();
 	if (!StaticMesh)
 	{
 		return nullptr;
@@ -36,229 +69,23 @@ FBoxSphereBounds UVoxelInstancedCollisionComponent::CalcBounds(const FTransform&
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	if (!StaticMesh ||
-		!MeshData ||
-		!ensure(MeshData->Num() > 0) ||
-		!ensure(MeshData->Bounds.IsValid()))
+	if (!Data)
 	{
-		return FBoxSphereBounds(LocalToWorld.GetLocation(), FVector::ZeroVector, 0.f);
+		return Super::CalcBounds(LocalToWorld);
 	}
 
-	return MeshData->Bounds->TransformBy(GetComponentToWorld()).ToFBox();
+	VOXEL_SCOPE_LOCK(Data->CriticalSection);
+	ensureVoxelSlow(Data->ChunkRef.IsValid());
+	return Data->ChunkRef.GetBounds().ToFBox();
 }
 
-void UVoxelInstancedCollisionComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
+void UVoxelInstancedCollisionComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	ResetCollision();
+	ReturnToPool();
 
 	Super::OnComponentDestroyed(bDestroyingHierarchy);
-}
-
-void UVoxelInstancedCollisionComponent::OnCreatePhysicsState()
-{
-	// We want to avoid PrimitiveComponent base body instance at component location
-	USceneComponent::OnCreatePhysicsState();
-}
-
-void UVoxelInstancedCollisionComponent::OnDestroyPhysicsState()
-{
-#if UE_ENABLE_DEBUG_DRAWING
-	SendRenderDebugPhysics();
-#endif
-
-	// We want to avoid PrimitiveComponent base body instance at component location
-	USceneComponent::OnDestroyPhysicsState();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-bool UVoxelInstancedCollisionComponent::TryGetPointHandle(
-	const int32 ItemIndex,
-	FVoxelPointHandle& OutHandle) const
-{
-	if (!ensure(MeshData))
-	{
-		return false;
-	}
-
-	if (!ensure(MeshData->PointIds.IsValidIndex(ItemIndex)))
-	{
-		return false;
-	}
-
-	OutHandle.SpawnableRef = MeshData->SpawnableRef;
-	OutHandle.PointId = MeshData->PointIds[ItemIndex];
-	return true;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void UVoxelInstancedCollisionComponent::SetStaticMesh(UStaticMesh* Mesh)
-{
-	ensure(IsRegistered());
-	StaticMesh = Mesh;
-
-	if (const UBodySetup* BodySetup = GetBodySetup())
-	{
-		if (!BodyInstance.GetOverrideWalkableSlopeOnInstance())
-		{
-			BodyInstance.SetWalkableSlopeOverride(BodySetup->WalkableSlopeOverride, false);
-		}
-	}
-}
-
-void UVoxelInstancedCollisionComponent::SetInvokerChannel(const FName NewInvokerChannel)
-{
-	InvokerChannel = NewInvokerChannel;
-	GVoxelInstancedCollisionComponentTicker->UpdateComponent(this);
-}
-
-void UVoxelInstancedCollisionComponent::SetMeshData(const TSharedRef<const FVoxelMeshDataBase>& NewMeshData)
-{
-	ensure(InstanceBodies.Num() == 0);
-	ensure(NewMeshData->Num() > 0);
-	MeshData = NewMeshData;
-
-	bAllInstancesEnabled = false;
-	EnabledInstances.Reset();
-}
-
-void UVoxelInstancedCollisionComponent::UpdateInstances(const TConstVoxelArrayView<int32> Indices)
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	// Not supported
-	ensure(InvokerChannel.IsNone());
-
-	UBodySetup* BodySetup = GetBodySetup();
-	FPhysScene* PhysicsScene = GetWorld()->GetPhysicsScene();
-	if (!ensure(StaticMesh) ||
-		!ensure(MeshData) ||
-		!ensure(BodySetup) ||
-		!ensure(PhysicsScene))
-	{
-		return;
-	}
-
-	ensure(InstanceBodies.Num() <= MeshData->Num());
-	InstanceBodies.SetNum(MeshData->Num());
-
-	TCompatibleVoxelArray<FBodyInstance*> ValidBodyInstances;
-	TCompatibleVoxelArray<FTransform> ValidTransforms;
-	ValidBodyInstances.Reserve(MeshData->Num());
-	ValidTransforms.Reserve(MeshData->Num());
-
-	for (const int32 Index : Indices)
-	{
-		if (!ensure(MeshData->Transforms.IsValidIndex(Index) ||
-			!ensure(InstanceBodies.IsValidIndex(Index))))
-		{
-			continue;
-		}
-
-		const FTransform InstanceTransform = FTransform(MeshData->Transforms[Index]) * GetComponentTransform();
-
-		TVoxelUniquePtr<FBodyInstance>& Body = InstanceBodies[Index];
-		if (Body)
-		{
-			Body->TermBody();
-		}
-		Body.Reset();
-
-		if (InstanceTransform.GetScale3D().IsNearlyZero())
-		{
-			continue;
-		}
-
-		Body = MakeBodyInstance(Index);
-
-		ValidBodyInstances.Add(Body.Get());
-		ValidTransforms.Add(InstanceTransform);
-	}
-	check(ValidBodyInstances.Num() == ValidTransforms.Num());
-
-	if (ValidBodyInstances.Num() == 0)
-	{
-		return;
-	}
-
-	FBodyInstance::InitStaticBodies(ValidBodyInstances, ValidTransforms, BodySetup, this, PhysicsScene);
-	MarkRenderStateDirty();
-}
-
-void UVoxelInstancedCollisionComponent::RemoveInstances(const TConstVoxelArrayView<int32> Indices)
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	// Not supported
-	ensure(InvokerChannel.IsNone());
-
-	if (!ensure(MeshData))
-	{
-		return;
-	}
-
-	for (const int32 Index : Indices)
-	{
-		if (!ensure(InstanceBodies.IsValidIndex(Index)))
-		{
-			continue;
-		}
-
-		TVoxelUniquePtr<FBodyInstance>& Body = InstanceBodies[Index];
-		if (!Body)
-		{
-			continue;
-		}
-
-		Body->TermBody();
-		Body.Reset();
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void UVoxelInstancedCollisionComponent::CreateCollision()
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	ensure(InstanceBodies.Num() == 0);
-	FVoxelUtilities::SetNum(InstanceBodies, MeshData->Num());
-
-	if (InvokerChannel.IsNone())
-	{
-		CreateAllBodies();
-	}
-}
-
-void UVoxelInstancedCollisionComponent::ResetCollision()
-{
-	VOXEL_SCOPE_COUNTER_FORMAT("UVoxelInstancedCollisionComponent::ResetCollision Num=%d", InstanceBodies.Num());
-
-	for (TVoxelUniquePtr<FBodyInstance>& Body : InstanceBodies)
-	{
-		if (Body)
-		{
-			Body->TermBody();
-		}
-	}
-
-	InvokerChannel = {};
-	MeshData.Reset();
-	InstanceBodies.Empty();
-
-	bAllInstancesEnabled = false;
-	EnabledInstances.Reset();
-
-	MarkRenderStateDirty();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -268,14 +95,14 @@ void UVoxelInstancedCollisionComponent::ResetCollision()
 class FVoxelInstancedCollisionSceneProxy : public FPrimitiveSceneProxy
 {
 	const UVoxelInstancedCollisionComponent& Component;
-	const TSharedRef<const FVoxelMeshDataBase> MeshData;
+	const TSharedRef<FVoxelInstancedCollisionData> Data;
 	const UBodySetup* BodySetup;
 
 public:
 	explicit FVoxelInstancedCollisionSceneProxy(UVoxelInstancedCollisionComponent& Component)
 		: FPrimitiveSceneProxy(&Component)
 		, Component(Component)
-		, MeshData(Component.MeshData.ToSharedRef())
+		, Data(Component.Data.ToSharedRef())
 		, BodySetup(Component.GetBodySetup())
 	{
 	}
@@ -287,11 +114,20 @@ public:
 		const uint32 VisibilityMap,
 		FMeshElementCollector& Collector) const override
 	{
-		VOXEL_FUNCTION_COUNTER_LLM();
+		VOXEL_FUNCTION_COUNTER();
 
 		if (!GVoxelFoliageShowInstancesCollisions)
 		{
 			return;
+		}
+
+		static int32 NumRendered = 0;
+		static uint64 NumRenderedFrame = 0;
+
+		if (NumRenderedFrame != GFrameCounterRenderThread)
+		{
+			NumRenderedFrame = GFrameCounterRenderThread;
+			NumRendered = 0;
 		}
 
 		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
@@ -310,17 +146,43 @@ public:
 				Collector,
 				FColor(157, 149, 223, 255));
 
-			const FTransform LocalToWorldTransform(GetLocalToWorld());
-			for (int32 Index = 0; Index < MeshData->Num(); Index++)
+			VOXEL_SCOPE_LOCK(Data->CriticalSection);
+			FVoxelInstancedCollisionDataImpl& DataImpl = Data->GetDataImpl_RequiresLock();
+
+			const FVector ViewOrigin = Views[ViewIndex]->ViewMatrices.GetViewOrigin();
+
+			VOXEL_SCOPE_LOCK(DataImpl.CriticalSection);
+			for (int32 Index = 0; Index < DataImpl.AllBodyInstances_RequiresLock.Num(); Index++)
 			{
-				if (!ensure(Component.InstanceBodies.IsValidIndex(Index)) ||
-					!Component.InstanceBodies[Index].IsValid())
+				const TSharedPtr<FBodyInstance> BodyInstance = DataImpl.AllBodyInstances_RequiresLock[Index].Pin();
+				if (!BodyInstance)
 				{
+					DataImpl.AllBodyInstances_RequiresLock.RemoveAtSwap(Index);
+					Index--;
+					continue;
+				}
+
+				if (NumRendered > 1000000)
+				{
+					VOXEL_MESSAGE(Error, "More than 1M foliage colliders being rendered in collision view, stopping");
+					break;
+				}
+				NumRendered++;
+
+				const FTransform Transform = BodyInstance->GetUnrealWorldTransform();
+
+				if (FVector::DistSquared(Transform.GetLocation(), ViewOrigin) > FMath::Square(5000.f))
+				{
+					Collector.GetPDI(ViewIndex)->DrawPoint(
+						Transform.GetLocation(),
+						FLinearColor::Blue,
+						5.f,
+						SDPG_World);
 					continue;
 				}
 
 				BodySetup->AggGeom.GetAggGeom(
-					FTransform(MeshData->Transforms[Index]) * LocalToWorldTransform,
+					Transform,
 					FColor(157, 149, 223, 255),
 					MaterialProxy,
 					false,
@@ -361,7 +223,7 @@ FPrimitiveSceneProxy* UVoxelInstancedCollisionComponent::CreateSceneProxy()
 {
 	if (!GIsEditor ||
 		!GVoxelFoliageShowInstancesCollisions ||
-		!MeshData)
+		!Data)
 	{
 		return nullptr;
 	}
@@ -373,74 +235,263 @@ FPrimitiveSceneProxy* UVoxelInstancedCollisionComponent::CreateSceneProxy()
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void UVoxelInstancedCollisionComponent::CreateAllBodies()
+void UVoxelInstancedCollisionComponent::OnCreatePhysicsState()
+{
+	// We want to avoid PrimitiveComponent base body instance at component location
+	USceneComponent::OnCreatePhysicsState();
+}
+
+void UVoxelInstancedCollisionComponent::OnDestroyPhysicsState()
+{
+#if UE_ENABLE_DEBUG_DRAWING
+	SendRenderDebugPhysics();
+#endif
+
+	// We want to avoid PrimitiveComponent base body instance at component location
+	USceneComponent::OnDestroyPhysicsState();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+bool UVoxelInstancedCollisionComponent::TryGetPointHandle(
+	const int32 ItemIndex,
+	FVoxelPointHandle& OutHandle) const
+{
+	if (!ensure(Data))
+	{
+		return false;
+	}
+
+	VOXEL_SCOPE_LOCK(Data->CriticalSection);
+	FVoxelInstancedCollisionDataImpl& DataImpl = Data->GetDataImpl_RequiresLock();
+
+	if (!ensure(DataImpl.PointIds.IsValidIndex(ItemIndex)) ||
+		// Will happen if the data was updated in-between us doing the trace & TryGetPointHandle being called
+		!DataImpl.PointIds[ItemIndex].IsValid())
+	{
+		return false;
+	}
+
+	OutHandle.ChunkRef = Data->ChunkRef;
+	OutHandle.PointId = DataImpl.PointIds[ItemIndex];
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void UVoxelInstancedCollisionComponent::SetData(const TSharedRef<FVoxelInstancedCollisionData>& NewData)
+{
+	ensure(!Data);
+	Data = NewData;
+
+	ensure(!OverrideChunk);
+	OverrideChunk = FVoxelPointOverrideManager::Get(GetWorld())->FindOrAddChunk(NewData->ChunkRef);
+
+	ensure(!OverrideChunkDelegatePtr);
+	OverrideChunkDelegatePtr = MakeSharedVoid();
+
+	{
+		VOXEL_SCOPE_LOCK(OverrideChunk->CriticalSection);
+
+		OverrideChunk->OnChanged_RequiresLock.Add(MakeWeakPtrDelegate(OverrideChunkDelegatePtr, [this](const TConstVoxelArrayView<FVoxelPointId> PointIds)
+		{
+			VOXEL_SCOPE_COUNTER("OnChanged");
+			check(IsInGameThread());
+
+			bool bShouldUpdate = false;
+			{
+				VOXEL_SCOPE_LOCK(Data->CriticalSection);
+				FVoxelInstancedCollisionDataImpl& DataImpl = Data->GetDataImpl_RequiresLock();
+
+				for (const FVoxelPointId& PointId : PointIds)
+				{
+					if (const int32* IndexPtr = DataImpl.PointIdToIndex.Find(PointId))
+					{
+						DataImpl.InstanceBodiesToUpdate.Add(*IndexPtr);
+						bShouldUpdate = true;
+					}
+				}
+			}
+
+			if (bShouldUpdate)
+			{
+				Update();
+			}
+		}));
+	}
+
+	if (const UBodySetup* BodySetup = GetBodySetup())
+	{
+		if (!BodyInstance.GetOverrideWalkableSlopeOnInstance())
+		{
+			BodyInstance.SetWalkableSlopeOverride(BodySetup->WalkableSlopeOverride, false);
+		}
+	}
+}
+
+void UVoxelInstancedCollisionComponent::ReturnToPool()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	if (bAllInstancesEnabled)
-	{
-		return;
-	}
-	bAllInstancesEnabled = true;
+	NumInstances = 0;
 
-	UBodySetup* BodySetup = GetBodySetup();
-	FPhysScene* PhysicsScene = GetWorld()->GetPhysicsScene();
-	if (!ensure(MeshData) ||
-		!ensure(BodySetup) ||
-		!ensure(PhysicsScene))
+	if (!Data)
 	{
 		return;
 	}
 
-	VOXEL_SCOPE_COUNTER_FORMAT("CreateAllBodies Num=%d", MeshData->Num());
-
-	TCompatibleVoxelArray<FBodyInstance*> ValidBodyInstances;
-	TCompatibleVoxelArray<FTransform> ValidTransforms;
-	ValidBodyInstances.Reserve(MeshData->Num());
-	ValidTransforms.Reserve(MeshData->Num());
-
-	for (int32 Index = 0; Index < MeshData->Num(); Index++)
 	{
-		TVoxelUniquePtr<FBodyInstance>& Body = InstanceBodies[Index];
+		VOXEL_SCOPE_LOCK(Data->CriticalSection);
+		FVoxelInstancedCollisionDataImpl& DataImpl = Data->GetDataImpl_RequiresLock();
+		VOXEL_SCOPE_COUNTER_FORMAT("Num=%d", DataImpl.InstanceBodies.Num());
 
-		const FTransform InstanceTransform = FTransform(MeshData->Transforms[Index]) * GetComponentTransform();
-		if (InstanceTransform.GetScale3D().IsNearlyZero())
+		for (const TSharedPtr<FBodyInstance>& Body : DataImpl.InstanceBodies)
 		{
 			if (Body)
 			{
 				Body->TermBody();
 			}
-			Body.Reset();
-			continue;
 		}
+		DataImpl.InstanceBodies.Empty();
 
-		if (Body)
+		DataImpl.FlushInstanceBodiesToDelete();
+
 		{
-			ensure(Body->InstanceBodyIndex == Index);
-			continue;
+			VOXEL_SCOPE_LOCK(DataImpl.CriticalSection);
+			for (const TWeakPtr<FBodyInstance>& WeakBodyInstance : DataImpl.AllBodyInstances_RequiresLock)
+			{
+				checkVoxelSlow(!WeakBodyInstance.IsValid());
+			}
 		}
 
-		Body = MakeBodyInstance(Index);
-
-		ValidBodyInstances.Add(Body.Get());
-		ValidTransforms.Add(InstanceTransform);
-
-		InstanceBodies[Index] = MoveTemp(Body);
+		DataImpl = {};
 	}
-	check(ValidBodyInstances.Num() == ValidTransforms.Num());
 
-	if (ValidBodyInstances.Num() == 0)
+	Data = {};
+	OverrideChunk = {};
+	OverrideChunkDelegatePtr = {};
+
+	MarkRenderStateDirty();
+}
+
+void UVoxelInstancedCollisionComponent::Update()
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!ensure(Data) ||
+		!ensure(OverrideChunk))
 	{
 		return;
 	}
 
-	FBodyInstance::InitStaticBodies(ValidBodyInstances, ValidTransforms, BodySetup, this, PhysicsScene);
+	VOXEL_SCOPE_LOCK(Data->CriticalSection);
+	FVoxelInstancedCollisionDataImpl& DataImpl = Data->GetDataImpl_RequiresLock();
+	ensure(DataImpl.PointIds.Num() == DataImpl.Transforms.Num());
+	ensure(DataImpl.PointIds.Num() == DataImpl.InstanceBodies.Num());
+
+	NumInstances = DataImpl.PointIdToIndex.Num();
+
+	if (DataImpl.InstanceBodiesToUpdate.Num() == 0 &&
+		DataImpl.InstanceBodiesToDelete.Num() == 0)
+	{
+		return;
+	}
+
+	UBodySetup* BodySetup = GetBodySetup();
+	FPhysScene* PhysicsScene = GetWorld()->GetPhysicsScene();
+	if (!ensure(BodySetup) ||
+		!ensure(PhysicsScene))
+	{
+		return;
+	}
+
+	{
+		VOXEL_SCOPE_COUNTER_FORMAT("InstanceBodiesToUpdate.Num=%d", DataImpl.InstanceBodiesToUpdate.Num());
+		VOXEL_SCOPE_LOCK(DataImpl.CriticalSection);
+		VOXEL_SCOPE_LOCK(OverrideChunk->CriticalSection);
+
+		TCompatibleVoxelArray<FBodyInstance*> ValidBodyInstances;
+		TCompatibleVoxelArray<FTransform> ValidTransforms;
+		ValidBodyInstances.Reserve(DataImpl.InstanceBodiesToUpdate.Num());
+		ValidTransforms.Reserve(DataImpl.InstanceBodiesToUpdate.Num());
+
+		for (const int32 Index : DataImpl.InstanceBodiesToUpdate)
+		{
+			const FVoxelPointId PointId = DataImpl.PointIds[Index];
+			const FTransform Transform(DataImpl.Transforms[Index]);
+			TSharedPtr<FBodyInstance>& Body = DataImpl.InstanceBodies[Index];
+
+			bool bShouldDelete = false;
+			if (Transform.GetScale3D().IsNearlyZero())
+			{
+				bShouldDelete = true;
+			}
+
+			if (OverrideChunk->PointIdsToHide_RequiresLock.Contains(PointId))
+			{
+				bShouldDelete = true;
+			}
+
+			if (bShouldDelete)
+			{
+				if (Body)
+				{
+					Body->TermBody();
+				}
+				Body.Reset();
+				continue;
+			}
+
+			if (Body)
+			{
+				ensure(Body->InstanceBodyIndex == Index);
+				Body->SetBodyTransform(
+					Transform,
+					ETeleportType::TeleportPhysics);
+				continue;
+			}
+
+			Body = MakeBodyInstance(Index);
+
+			checkVoxelSlow(DataImpl.CriticalSection.IsLocked());
+			DataImpl.AllBodyInstances_RequiresLock.Add(Body);
+
+			ValidBodyInstances.Add(Body.Get());
+			ValidTransforms.Add(Transform);
+
+		}
+		DataImpl.InstanceBodiesToUpdate.Reset();
+
+		check(ValidBodyInstances.Num() == ValidTransforms.Num());
+		if (ValidBodyInstances.Num() > 0)
+		{
+			FBodyInstance::InitStaticBodies(ValidBodyInstances, ValidTransforms, BodySetup, this, PhysicsScene);
+		}
+	}
+
+	DataImpl.FlushInstanceBodiesToDelete();
+
 	MarkRenderStateDirty();
 }
 
-TVoxelUniquePtr<FBodyInstance> UVoxelInstancedCollisionComponent::MakeBodyInstance(const int32 Index) const
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+TSharedRef<FBodyInstance> UVoxelInstancedCollisionComponent::MakeBodyInstance(const int32 Index) const
 {
-	TVoxelUniquePtr<FBodyInstance> Body = MakeVoxelUnique<FBodyInstance>();
+	const TSharedRef<FBodyInstance> Body = TSharedPtr<FBodyInstance>(
+		new (GVoxelMemory) FBodyInstance(),
+		[](const FBodyInstance* InBodyInstance)
+		{
+			check(!InBodyInstance || !InBodyInstance->IsValidBodyInstance());
+			FVoxelMemory::Delete(InBodyInstance);
+		}).ToSharedRef();
+
 	FVoxelGameUtilities::CopyBodyInstance(*Body, BodyInstance);
 	Body->bAutoWeld = false;
 	Body->bSimulatePhysics = false;

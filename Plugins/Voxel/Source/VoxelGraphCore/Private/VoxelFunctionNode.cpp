@@ -324,6 +324,8 @@ void FVoxelFunctionNode::PostSerialize()
 
 void FVoxelFunctionNode::FixupPins()
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	if (!ensureVoxelSlow(Function))
 	{
 		return;
@@ -427,7 +429,7 @@ void FVoxelFunctionNode::FixupPins()
 		if (IsFunctionInput(Property) &&
 			!Type.IsWildcard())
 		{
-			Metadata.DefaultValue = FVoxelSourceParser::Get().GetPropertyDefault(Function, Property.GetFName());
+			Metadata.DefaultValue = GVoxelSourceParser->GetPropertyDefault(Function, Property.GetFName());
 
 			if (!Metadata.DefaultValue.IsEmpty())
 			{

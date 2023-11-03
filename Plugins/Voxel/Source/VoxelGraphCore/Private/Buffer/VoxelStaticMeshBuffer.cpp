@@ -4,7 +4,7 @@
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 
 FVoxelFastCriticalSection GVoxelStaticMesh_CriticalSection;
-TVoxelMap<FObjectKey, FVoxelStaticMesh::FMeshInfo> GVoxelStaticMesh_MeshToMeshInfo;
+TMap<FObjectKey, FVoxelStaticMesh::FMeshInfo> GVoxelStaticMesh_MeshToMeshInfo;
 
 FVoxelStaticMesh::FMeshInfo FVoxelStaticMesh::GetMeshInfo() const
 {

@@ -4,6 +4,7 @@
 
 #include "VoxelMinimal.h"
 #include "VoxelISPCNode.h"
+#include "VoxelObjectNodes.h"
 #include "VoxelTemplateNode.h"
 #include "Buffer/VoxelBaseBuffers.h"
 #include "VoxelBoolNodes.generated.h"
@@ -27,9 +28,11 @@ public:
 #endif
 
 	virtual UScriptStruct* GetBoolInnerNode() const VOXEL_PURE_VIRTUAL({});
+	virtual UScriptStruct* GetByteInnerNode() const VOXEL_PURE_VIRTUAL({});
 	virtual UScriptStruct* GetFloatInnerNode() const VOXEL_PURE_VIRTUAL({});
 	virtual UScriptStruct* GetDoubleInnerNode() const VOXEL_PURE_VIRTUAL({});
 	virtual UScriptStruct* GetInt32InnerNode() const VOXEL_PURE_VIRTUAL({});
+	virtual UScriptStruct* GetObjectInnerNode() const VOXEL_PURE_VIRTUAL({});
 	virtual UScriptStruct* GetConnectionInnerNode() const VOXEL_PURE_VIRTUAL({});
 };
 
@@ -211,6 +214,22 @@ struct FVoxelNode_Equal_Bool : public FVoxelISPCNode
 };
 
 USTRUCT(meta = (Internal))
+struct FVoxelNode_Equal_Byte : public FVoxelISPCNode
+{
+	GENERATED_BODY()
+	GENERATED_VOXEL_NODE_BODY()
+
+	VOXEL_TEMPLATE_INPUT_PIN(uint8, A, nullptr);
+	VOXEL_TEMPLATE_INPUT_PIN(uint8, B, nullptr);
+	VOXEL_TEMPLATE_OUTPUT_PIN(bool, ReturnValue);
+
+	virtual FString GenerateCode(FCode& Code) const override
+	{
+		return "{ReturnValue} = {A} == {B}";
+	}
+};
+
+USTRUCT(meta = (Internal))
 struct FVoxelNode_Equal_Float : public FVoxelISPCNode
 {
 	GENERATED_BODY()
@@ -269,6 +288,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_Equal : public FVoxelTemplateNode_
 	{
 		return FVoxelNode_Equal_Bool::StaticStruct();
 	}
+	virtual UScriptStruct* GetByteInnerNode() const override
+	{
+		return FVoxelNode_Equal_Byte::StaticStruct();
+	}
 	virtual UScriptStruct* GetFloatInnerNode() const override
 	{
 		return FVoxelNode_Equal_Float::StaticStruct();
@@ -280,6 +303,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_Equal : public FVoxelTemplateNode_
 	virtual UScriptStruct* GetInt32InnerNode() const override
 	{
 		return FVoxelNode_Equal_Int::StaticStruct();
+	}
+	virtual UScriptStruct* GetObjectInnerNode() const override
+	{
+		return FVoxelNode_Equal_Object::StaticStruct();
 	}
 	virtual UScriptStruct* GetConnectionInnerNode() const override
 	{
@@ -367,6 +394,22 @@ struct FVoxelNode_NotEqual_Bool : public FVoxelISPCNode
 };
 
 USTRUCT(meta = (Internal))
+struct FVoxelNode_NotEqual_Byte : public FVoxelISPCNode
+{
+	GENERATED_BODY()
+	GENERATED_VOXEL_NODE_BODY()
+
+	VOXEL_TEMPLATE_INPUT_PIN(uint8, A, nullptr);
+	VOXEL_TEMPLATE_INPUT_PIN(uint8, B, nullptr);
+	VOXEL_TEMPLATE_OUTPUT_PIN(bool, ReturnValue);
+
+	virtual FString GenerateCode(FCode& Code) const override
+	{
+		return "{ReturnValue} = {A} != {B}";
+	}
+};
+
+USTRUCT(meta = (Internal))
 struct FVoxelNode_NotEqual_Float : public FVoxelISPCNode
 {
 	GENERATED_BODY()
@@ -425,6 +468,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_NotEqual : public FVoxelTemplateNo
 	{
 		return FVoxelNode_NotEqual_Bool::StaticStruct();
 	}
+	virtual UScriptStruct* GetByteInnerNode() const override
+	{
+		return FVoxelNode_NotEqual_Byte::StaticStruct();
+	}
 	virtual UScriptStruct* GetFloatInnerNode() const override
 	{
 		return FVoxelNode_NotEqual_Float::StaticStruct();
@@ -436,6 +483,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_NotEqual : public FVoxelTemplateNo
 	virtual UScriptStruct* GetInt32InnerNode() const override
 	{
 		return FVoxelNode_NotEqual_Int::StaticStruct();
+	}
+	virtual UScriptStruct* GetObjectInnerNode() const override
+	{
+		return FVoxelNode_NotEqual_Object::StaticStruct();
 	}
 	virtual UScriptStruct* GetConnectionInnerNode() const override
 	{
@@ -506,6 +557,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_Less : public FVoxelTemplateNode_E
 	{
 		return nullptr;
 	}
+	virtual UScriptStruct* GetByteInnerNode() const override
+	{
+		return nullptr;
+	}
 	virtual UScriptStruct* GetFloatInnerNode() const override
 	{
 		return FVoxelNode_Less_Float::StaticStruct();
@@ -517,6 +572,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_Less : public FVoxelTemplateNode_E
 	virtual UScriptStruct* GetInt32InnerNode() const override
 	{
 		return FVoxelNode_Less_Int::StaticStruct();
+	}
+	virtual UScriptStruct* GetObjectInnerNode() const override
+	{
+		return nullptr;
 	}
 	virtual UScriptStruct* GetConnectionInnerNode() const override
 	{
@@ -587,6 +646,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_Greater : public FVoxelTemplateNod
 	{
 		return nullptr;
 	}
+	virtual UScriptStruct* GetByteInnerNode() const override
+	{
+		return nullptr;
+	}
 	virtual UScriptStruct* GetFloatInnerNode() const override
 	{
 		return FVoxelNode_Greater_Float::StaticStruct();
@@ -598,6 +661,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_Greater : public FVoxelTemplateNod
 	virtual UScriptStruct* GetInt32InnerNode() const override
 	{
 		return FVoxelNode_Greater_Int::StaticStruct();
+	}
+	virtual UScriptStruct* GetObjectInnerNode() const override
+	{
+		return nullptr;
 	}
 	virtual UScriptStruct* GetConnectionInnerNode() const override
 	{
@@ -668,6 +735,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_LessEqual : public FVoxelTemplateN
 	{
 		return nullptr;
 	}
+	virtual UScriptStruct* GetByteInnerNode() const override
+	{
+		return nullptr;
+	}
 	virtual UScriptStruct* GetFloatInnerNode() const override
 	{
 		return FVoxelNode_LessEqual_Float::StaticStruct();
@@ -679,6 +750,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_LessEqual : public FVoxelTemplateN
 	virtual UScriptStruct* GetInt32InnerNode() const override
 	{
 		return FVoxelNode_LessEqual_Int::StaticStruct();
+	}
+	virtual UScriptStruct* GetObjectInnerNode() const override
+	{
+		return nullptr;
 	}
 	virtual UScriptStruct* GetConnectionInnerNode() const override
 	{
@@ -749,6 +824,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_GreaterEqual : public FVoxelTempla
 	{
 		return nullptr;
 	}
+	virtual UScriptStruct* GetByteInnerNode() const override
+	{
+		return nullptr;
+	}
 	virtual UScriptStruct* GetFloatInnerNode() const override
 	{
 		return FVoxelNode_GreaterEqual_Float::StaticStruct();
@@ -760,6 +839,10 @@ struct VOXELGRAPHNODES_API FVoxelTemplateNode_GreaterEqual : public FVoxelTempla
 	virtual UScriptStruct* GetInt32InnerNode() const override
 	{
 		return FVoxelNode_GreaterEqual_Int::StaticStruct();
+	}
+	virtual UScriptStruct* GetObjectInnerNode() const override
+	{
+		return nullptr;
 	}
 	virtual UScriptStruct* GetConnectionInnerNode() const override
 	{

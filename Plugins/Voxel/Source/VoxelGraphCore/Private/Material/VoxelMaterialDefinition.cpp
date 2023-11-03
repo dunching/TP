@@ -2,7 +2,7 @@
 
 #include "Material/VoxelMaterialDefinition.h"
 #include "Material/VoxelMaterialDefinitionInstance.h"
-#include "Material/MaterialExpressionGetVoxelMaterial.h"
+#include "Material/MaterialExpressionSampleVoxelParameter.h"
 #include "VoxelParameterView.h"
 
 DEFINE_VOXEL_FACTORY(UVoxelMaterialDefinition);
@@ -63,7 +63,7 @@ void UVoxelMaterialDefinition::PostEditChangeProperty(FPropertyChangedEvent& Pro
 		TSet<FGuid> ValidGuids;
 		for (const FVoxelParameter& Parameter : Parameters)
 		{
-			const UMaterialExpressionGetVoxelMaterial_Base* Template = UMaterialExpressionGetVoxelMaterial_Base::GetTemplate(Parameter.Type);
+			const UMaterialExpressionSampleVoxelParameter* Template = UMaterialExpressionSampleVoxelParameter::GetTemplate(Parameter.Type);
 			if (!Template)
 			{
 				continue;
@@ -213,11 +213,16 @@ void UVoxelMaterialDefinition::RebuildTextures()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	using FInstance = UMaterialExpressionGetVoxelMaterial_Base::FInstance;
+	if (!FApp::CanEverRender())
+	{
+		return;
+	}
+
+	using FInstance = UMaterialExpressionSampleVoxelParameter::FInstance;
 
 	struct FInstances
 	{
-		const UMaterialExpressionGetVoxelMaterial_Base* Template = nullptr;
+		const UMaterialExpressionSampleVoxelParameter* Template = nullptr;
 		FName DebugName;
 		TVoxelArray<FInstance> Instances;
 	};
@@ -231,7 +236,7 @@ void UVoxelMaterialDefinition::RebuildTextures()
 
 			for (const FVoxelParameter& Parameter : Parameters)
 			{
-				const UMaterialExpressionGetVoxelMaterial_Base* Template = UMaterialExpressionGetVoxelMaterial_Base::GetTemplate(Parameter.Type);
+				const UMaterialExpressionSampleVoxelParameter* Template = UMaterialExpressionSampleVoxelParameter::GetTemplate(Parameter.Type);
 				if (!Template)
 				{
 					continue;
@@ -269,7 +274,7 @@ void UVoxelMaterialDefinition::RebuildTextures()
 				FInstances* Instances = ParameterToInstances.Find(ParameterView->Path.Leaf());
 				if (!Instances)
 				{
-					checkVoxelSlow(!UMaterialExpressionGetVoxelMaterial_Base::GetTemplate(ParameterView->GetType()));
+					checkVoxelSlow(!UMaterialExpressionSampleVoxelParameter::GetTemplate(ParameterView->GetType()));
 					continue;
 				}
 

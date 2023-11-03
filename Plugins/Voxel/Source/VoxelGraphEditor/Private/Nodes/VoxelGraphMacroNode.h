@@ -5,21 +5,11 @@
 #include "VoxelEditorMinimal.h"
 #include "VoxelGraphNode.h"
 #include "VoxelNodeDefinition.h"
+#include "VoxelFunctionCallNode.h"
 #include "VoxelGraphMacroNode.generated.h"
 
 class UVoxelGraph;
 class UVoxelGraphInterface;
-
-UENUM()
-enum class EVoxelGraphMacroType : uint8
-{
-	// Regular macro
-	Macro,
-	// The graph being executed is exposed as a pin, letting you override it in instances
-	Template,
-	// Multiple graphs are executed sequentially, useful for clusters
-	RecursiveTemplate
-};
 
 UCLASS()
 class UVoxelGraphMacroNode : public UVoxelGraphNode
@@ -33,7 +23,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Config")
 	EVoxelGraphMacroType Type = EVoxelGraphMacroType::Macro;
 
-	TSet<UEdGraphPin*> CachedExposedPins;
+	TSet<UEdGraphPin*> CachedOptionalPins;
 
 	//~ Begin UVoxelGraphNode Interface
 	virtual void AllocateDefaultPins() override;
@@ -53,7 +43,6 @@ public:
 	virtual TSharedRef<IVoxelNodeDefinition> GetNodeDefinition() override;
 
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	virtual bool CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const override;
 	//~ End UVoxelGraphNode Interface
 
 private:

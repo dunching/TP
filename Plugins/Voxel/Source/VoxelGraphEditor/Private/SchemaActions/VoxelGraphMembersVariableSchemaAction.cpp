@@ -4,43 +4,30 @@
 #include "VoxelExposedSeed.h"
 #include "VoxelGraphToolkit.h"
 #include "Widgets/SVoxelGraphMembers.h"
-#include "Nodes/VoxelGraphParameterNodeBase.h"
 #include "Widgets/SVoxelGraphMembersVariablePaletteItem.h"
-#include "DragDropActions/VoxelGraphInputDragDropAction.h"
-#include "DragDropActions/VoxelGraphLocalVariableDragDropAction.h"
+#include "Nodes/VoxelGraphParameterNodeBase.h"
+#include "DragDropActions/VoxelMembersParameterDragDropAction.h"
 
 TSharedRef<SWidget> FVoxelGraphMembersVariableSchemaAction::CreatePaletteWidget(FCreateWidgetForActionData* const InCreateData) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	return
-		SNew(SVariablePaletteItem, InCreateData)
+		SNew(SVoxelGraphMembersVariablePaletteItem, InCreateData)
 		.MembersWidget(GetMembersWidget());
 }
 
 FReply FVoxelGraphMembersVariableSchemaAction::OnDragged(UObject* Object, const TSharedPtr<FVoxelMembersBaseSchemaAction>& Action, const FPointerEvent& MouseEvent) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	UVoxelGraph* Graph = Cast<UVoxelGraph>(Object);
 	if (!ensure(Graph))
 	{
 		return FReply::Handled();
 	}
 
-	if (GetSection(SectionID) == EMembersNodeSection::LocalVariables)
-	{
-		const TSharedRef<FLocalVariableDragDropAction> DragOperation = FLocalVariableDragDropAction::New(Action, ParameterGuid, Graph);
-
-		DragOperation->SetAltDrag(MouseEvent.IsAltDown());
-		DragOperation->SetCtrlDrag(
-			MouseEvent.IsLeftControlDown() ||
-			MouseEvent.IsRightControlDown());
-
-		return FReply::Handled().BeginDragDrop(DragOperation);
-	}
-
-	return FReply::Handled().BeginDragDrop(FInputDragDropAction::New(Action, ParameterGuid, Graph));
+	return FReply::Handled().BeginDragDrop(FVoxelMembersParameterDragDropAction::New(
+		Action,
+		Graph,
+		ParameterGuid,
+		MouseEvent));
 }
 
 void FVoxelGraphMembersVariableSchemaAction::OnActionDoubleClick() const
@@ -107,8 +94,6 @@ void FVoxelGraphMembersVariableSchemaAction::GetContextMenuActions(FMenuBuilder&
 
 void FVoxelGraphMembersVariableSchemaAction::OnDelete() const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	UVoxelGraph* Graph = WeakOwnerGraph.Get();
 	if (!ensure(Graph))
 	{
@@ -128,8 +113,8 @@ void FVoxelGraphMembersVariableSchemaAction::OnDelete() const
 	const FString& VariableTypeName = GetVariableTypeName();
 
 	bool bDeleteNodes = false;
-	if (GetSection(SectionID) != EMembersNodeSection::MacroInputs &&
-		GetSection(SectionID) != EMembersNodeSection::MacroOutputs &&
+	if (SVoxelGraphMembers::GetSection(SectionID) != SVoxelGraphMembers::ESection::MacroInputs &&
+		SVoxelGraphMembers::GetSection(SectionID) != SVoxelGraphMembers::ESection::MacroOutputs &&
 		IsParameterUsed())
 	{
 		if (!CreateDeletePopups(bDeleteNodes, "Delete " + VariableTypeName, Parameter.Name.ToString()))
@@ -262,8 +247,6 @@ FString FVoxelGraphMembersVariableSchemaAction::GetSearchString() const
 
 void FVoxelGraphMembersVariableSchemaAction::MovePersistentItemToCategory(const FText& NewCategoryName)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	FVoxelGraphParameter* Parameter = GetParameter();
 	UVoxelGraph* Graph = WeakOwnerGraph.Get();
 	if (!ensure(Parameter) ||
@@ -423,13 +406,11 @@ void FVoxelGraphMembersVariableSchemaAction::SetPinType(const FVoxelPinType& New
 
 FVoxelGraphParameter* FVoxelGraphMembersVariableSchemaAction::GetParameter() const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	ensure(
-		SectionID == GetSectionId(EMembersNodeSection::Parameters) ||
-		SectionID == GetSectionId(EMembersNodeSection::MacroInputs) ||
-		SectionID == GetSectionId(EMembersNodeSection::MacroOutputs) ||
-		SectionID == GetSectionId(EMembersNodeSection::LocalVariables));
+		SectionID == SVoxelGraphMembers::GetSectionId(SVoxelGraphMembers::ESection::Parameters) ||
+		SectionID == SVoxelGraphMembers::GetSectionId(SVoxelGraphMembers::ESection::MacroInputs) ||
+		SectionID == SVoxelGraphMembers::GetSectionId(SVoxelGraphMembers::ESection::MacroOutputs) ||
+		SectionID == SVoxelGraphMembers::GetSectionId(SVoxelGraphMembers::ESection::LocalVariables));
 
 	UVoxelGraph* Graph = WeakOwnerGraph.Get();
 	if (!ensure(Graph))

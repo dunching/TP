@@ -179,6 +179,14 @@
     </Expand>
   </Type>
 
+  <!-- FVoxelInt64Buffer visualizer -->
+  <Type Name="FVoxelInt64Buffer">
+    <DisplayString>{*(FVoxelInt64BufferStorage*)PrivateStorage.Object}</DisplayString>
+    <Expand>
+      <ExpandedItem>*(FVoxelInt64BufferStorage*)PrivateStorage.Object</ExpandedItem>
+    </Expand>
+  </Type>
+
   <!-- FVoxelStaticMeshBuffer visualizer -->
   <Type Name="FVoxelStaticMeshBuffer">
     <DisplayString>{*(FVoxelStaticMeshBufferStorage*)PrivateStorage.Object}</DisplayString>
@@ -206,12 +214,27 @@
     </Expand>
   </Type>
 
+  <!-- FVoxelRuntimeInfo visualizer -->
+  <Type Name="FVoxelRuntimeInfo">
+    <DisplayString>Label={WeakRootComponent->OwnerPrivate->ActorLabel,sb} Graph={GraphPath,sb}</DisplayString>
+  </Type>
+
+  <!-- FVoxelMaterialDefinitionRef visualizer -->
+  <Type Name="FVoxelMaterialDefinitionRef">
+    <DisplayString Condition="Index == 0">null ({Index})</DisplayString>
+    <DisplayString Condition="Index == 65535">Invalid ({Index})</DisplayString>
+    <DisplayString Condition="Index != 0 &amp;&amp; Index != 65535">{((UVoxelMaterialDefinitionInterface**)UnrealEditor-VoxelGraphCore-Win64-DebugGame.dll!GVoxelMaterialDefinitionManager->Materials.AllocatorInstance.Data)[Index]->NamePrivate,sb} Index={Index}</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="Index != 0 &amp;&amp; Index != 65535">*((UVoxelMaterialDefinitionInterface**)UnrealEditor-VoxelGraphCore-Win64-DebugGame.dll!GVoxelMaterialDefinitionManager->Materials.AllocatorInstance.Data)[Index]</ExpandedItem>
+    </Expand>
+  </Type>
+
   <!-- FVoxelTransformRef visualizer -->
   <Type Name="FVoxelTransformRef">
     <DisplayString Condition="!Impl.Object">Identity</DisplayString>
-    <DisplayString Condition="Impl.Object">{Impl.Object->Name,sb}</DisplayString>
+    <DisplayString Condition="Impl.Object">{((UnrealEditor-VoxelGraphCore-Win64-DebugGame.dll!FVoxelTransformRefImpl*)Impl.Object)->Name,sb}</DisplayString>
     <Expand>
-      <ExpandedItem Condition="Impl.Object">Impl.Object->Transform.M</ExpandedItem>
+      <ExpandedItem Condition="Impl.Object">((UnrealEditor-VoxelGraphCore-Win64-DebugGame.dll!FVoxelTransformRefImpl*)Impl.Object)->Transform.M</ExpandedItem>
     </Expand>
   </Type>
 
@@ -228,12 +251,12 @@
   </Type>
 
   <!-- TVoxelStaticArray visualizer -->
-  <Type Name="TVoxelStaticArray&lt;*,*,*&gt;">
+  <Type Name="TVoxelStaticArray&lt;*,*,*,*&gt;">
     <DisplayString>Num={$T2}</DisplayString>
     <Expand>
       <ArrayItems>
         <Size>$T2</Size>
-        <ValuePointer>(TVoxelStaticArray&lt;$T1,$T2,$T3&gt;::ElementType*)Data</ValuePointer>
+        <ValuePointer>(TVoxelStaticArray&lt;$T1,$T2,$T3,$T4&gt;::ElementType*)Data</ValuePointer>
       </ArrayItems>
     </Expand>
   </Type>

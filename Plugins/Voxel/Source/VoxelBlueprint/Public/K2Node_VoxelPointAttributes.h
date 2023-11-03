@@ -7,7 +7,7 @@
 #include "K2Node_VoxelBaseNode.h"
 #include "K2Node_VoxelPointAttributes.generated.h"
 
-UCLASS()
+UCLASS(Abstract)
 class VOXELBLUEPRINT_API UK2Node_VoxelPointAttributeBase : public UK2Node_VoxelBaseNode
 {
 	GENERATED_BODY()

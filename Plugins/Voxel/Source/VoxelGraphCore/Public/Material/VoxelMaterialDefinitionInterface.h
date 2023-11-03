@@ -5,15 +5,16 @@
 #include "VoxelMinimal.h"
 #include "VoxelBuffer.h"
 #include "VoxelObjectPinType.h"
+#include "VoxelObjectWithGuid.h"
 #include "VoxelParameterProvider.h"
 #include "VoxelMaterialDefinitionInterface.generated.h"
 
 class UVoxelMaterialDefinition;
 class UVoxelMaterialDefinitionInstance;
 
-UCLASS(Abstract, meta = (AssetColor = Red))
+UCLASS(Abstract, BlueprintType, meta = (AssetColor = Red))
 class VOXELGRAPHCORE_API UVoxelMaterialDefinitionInterface
-	: public UObject
+	: public UVoxelObjectWithGuid
 	, public IVoxelParameterProvider
 {
 	GENERATED_BODY()
@@ -94,9 +95,7 @@ struct FVoxelMaterialParameterData : public FVoxelVirtualStruct
 
 constexpr int32 GVoxelMaterialDefinitionMax = 1 << 12;
 
-class VOXELGRAPHCORE_API FVoxelMaterialDefinitionManager
-	: public FVoxelTicker
-	, public FGCObject
+class VOXELGRAPHCORE_API FVoxelMaterialDefinitionManager : public FVoxelSingleton
 {
 public:
 	const TSharedRef<FVoxelMaterialDefinitionDynamicMaterialParameter> DynamicParameter = MakeVoxelShared<FVoxelMaterialDefinitionDynamicMaterialParameter>();
@@ -105,21 +104,20 @@ public:
 
 	FVoxelMaterialDefinitionRef Register_GameThread(UVoxelMaterialDefinitionInterface& Material);
 	UVoxelMaterialDefinitionInterface* GetMaterial_GameThread(const FVoxelMaterialDefinitionRef& Ref);
+	TWeakObjectPtr<UVoxelMaterialDefinitionInterface> GetMaterial_AnyThread(const FVoxelMaterialDefinitionRef& Ref);
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelSingleton Interface
 	virtual void Tick() override;
-	//~ End FVoxelTicker Interface
-
-	//~ Begin FGCObject Interface
-	virtual FString GetReferencerName() const override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	//~ End FGCObject Interface
+	//~ End FVoxelSingleton Interface
 
 	void QueueMaterialRefresh();
 	void QueueRebuildTextures(UVoxelMaterialDefinition& Definition);
 
 	void CacheParameters();
 	void SetAllParameters(UMaterialInstanceDynamic& Instance);
+
+	void LogIds();
 
 private:
 	bool bMaterialRefreshQueued = false;
@@ -129,6 +127,9 @@ private:
 	TVoxelMap<UVoxelMaterialDefinitionInterface*, FVoxelMaterialDefinitionRef> MaterialRefs;
 
 	TUniquePtr<FVoxelMaterialParameterData::FCachedParameters> CachedParameters;
+
+	FVoxelFastCriticalSection CriticalSection;
+	TVoxelArray<TWeakObjectPtr<UVoxelMaterialDefinitionInterface>> WeakMaterials_RequiresLock;
 };
 
 extern VOXELGRAPHCORE_API FVoxelMaterialDefinitionManager* GVoxelMaterialDefinitionManager;
@@ -148,7 +149,7 @@ struct VOXELGRAPHCORE_API FVoxelMaterialDefinitionRefPinType : public FVoxelObje
 	{
 		if (bSetObject)
 		{
-			Object = GVoxelMaterialDefinitionManager->GetMaterial_GameThread(Struct);
+			Object = GVoxelMaterialDefinitionManager->GetMaterial_AnyThread(Struct);
 		}
 		else
 		{

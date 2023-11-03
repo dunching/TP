@@ -13,5 +13,10 @@ struct VOXELGRAPHCORE_API FVoxelChannelSubsystem : public FVoxelSubsystem
 	GENERATED_BODY()
 	GENERATED_VOXEL_SUBSYSTEM_BODY(FVoxelChannelSubsystem)
 
-	FVoxelRuntimeChannelCache Cache;
+	TSharedPtr<FVoxelRuntimeChannelCache> Cache;
+
+	virtual void Create() override
+	{
+		Cache = FVoxelRuntimeChannelCache::Create();
+	}
 };

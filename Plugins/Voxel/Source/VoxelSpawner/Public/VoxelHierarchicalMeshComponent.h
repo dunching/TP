@@ -7,10 +7,8 @@
 #include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "VoxelHierarchicalMeshComponent.generated.h"
 
-struct FVoxelInvoker;
-class UVoxelInstancedCollisionComponent;
-
 DECLARE_VOXEL_MEMORY_STAT(VOXELSPAWNER_API, STAT_VoxelHierarchicalMeshDataMemory, "Voxel Hierarchical Mesh Data Memory");
+DECLARE_VOXEL_MEMORY_STAT(VOXELSPAWNER_API, STAT_VoxelHierarchicalMeshMemory, "Voxel Hierarchical Mesh Memory");
 DECLARE_VOXEL_COUNTER(VOXELSPAWNER_API, STAT_VoxelHierarchicalMeshNumInstances, "Num Hierarchical Mesh Instances");
 
 struct VOXELSPAWNER_API FVoxelHierarchicalMeshBuiltData
@@ -33,6 +31,7 @@ struct VOXELSPAWNER_API FVoxelHierarchicalMeshData : public FVoxelMeshDataBase
 	VOXEL_ALLOCATED_SIZE_TRACKER(STAT_VoxelHierarchicalMeshDataMemory);
 
 	void Build();
+	int64 GetAllocatedSize() const;
 };
 
 UCLASS()
@@ -41,9 +40,6 @@ class VOXELSPAWNER_API UVoxelHierarchicalMeshComponent : public UHierarchicalIns
 	GENERATED_BODY()
 
 public:
-	UPROPERTY()
-	TObjectPtr<UVoxelInstancedCollisionComponent> CollisionComponent;
-
 	UVoxelHierarchicalMeshComponent();
 
 	TSharedPtr<const FVoxelHierarchicalMeshData> GetMeshData() const
@@ -51,18 +47,14 @@ public:
 		return MeshData;
 	}
 
-	//~ Begin UPrimitiveComponent Interface
-	virtual void OnRegister() override;
-	virtual void OnUnregister() override;
-	//~ End UPrimitiveComponent Interface
-
 	void SetMeshData(const TSharedRef<const FVoxelHierarchicalMeshData>& NewMeshData);
-	void UpdateCollision(
-		FName InvokerChannel,
-		const FBodyInstance& NewBodyInstance) const;
 	void RemoveInstancesFast(TConstVoxelArrayView<int32> Indices);
 	void ReturnToPool();
 
+	void HideInstances(TConstVoxelArrayView<int32> Indices);
+	void ShowInstances(TConstVoxelArrayView<int32> Indices);
+
+	int64 GetAllocatedSize() const;
 	void ReleasePerInstanceRenderData_Safe();
 
 	virtual void ClearInstances() override;
@@ -76,6 +68,7 @@ public:
 
 private:
 	VOXEL_COUNTER_HELPER(STAT_VoxelHierarchicalMeshNumInstances, NumInstances);
+	VOXEL_ALLOCATED_SIZE_TRACKER(STAT_VoxelHierarchicalMeshMemory);
 
 	TSharedPtr<const FVoxelHierarchicalMeshData> MeshData;
 

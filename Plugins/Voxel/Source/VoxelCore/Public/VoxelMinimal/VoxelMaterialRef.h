@@ -37,10 +37,18 @@ public:
 	virtual ~FVoxelMaterialRef() override;
 	UE_NONCOPYABLE(FVoxelMaterialRef);
 
+	VOXEL_COUNT_INSTANCES();
+
 	// Will be null if the asset is force deleted
 	FORCEINLINE UMaterialInterface* GetMaterial() const
 	{
+		checkVoxelSlow(Material == WeakMaterial || !WeakMaterial.IsValid());
 		return Material;
+	}
+	FORCEINLINE TWeakObjectPtr<UMaterialInterface> GetWeakMaterial() const
+	{
+		checkVoxelSlow(Material == WeakMaterial || !WeakMaterial.IsValid());
+		return WeakMaterial;
 	}
 	// If true, this a material instance the plugin created & we can set parameters on it
 	FORCEINLINE bool IsInstance() const
@@ -64,6 +72,7 @@ private:
 	FVoxelMaterialRef() = default;
 
 	UMaterialInterface* Material = nullptr;
+	TWeakObjectPtr<UMaterialInterface> WeakMaterial;
 	TSharedPtr<FVoxelInstanceRef> InstanceRef;
 
 	TVoxelMap<FName, float> ScalarParameters;

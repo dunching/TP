@@ -7,73 +7,17 @@
 #include "VoxelGraphExecutor.h"
 #include "VoxelParameterValues.h"
 
-void FVoxelNode_FunctionCall::Initialize(
-	const EMode NewMode,
-	const UVoxelGraphInterface& NewDefaultGraphInterface)
+void FVoxelNode_FunctionCall::PreCompile()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	Mode = NewMode;
-
-	ensure(!DefaultGraphInterface.IsValid());
-	DefaultGraphInterface = &NewDefaultGraphInterface;
-
-	if (Mode == EMode::Macro)
+	const UVoxelGraph* Graph = GetGraph();
+	if (!Graph)
 	{
-		// No additional pin
-	}
-	else if (Mode == EMode::Template)
-	{
-		CreateInputPin(
-			FVoxelPinType::Make<FVoxelInlineGraph>(),
-			FVoxelNodeNames::MacroTemplateInput);
-	}
-	else
-	{
-		ensure(Mode == EMode::RecursiveTemplate);
-
-		CreateInputPin(
-			FVoxelPinType::Make<FVoxelInlineGraph>().GetBufferType(),
-			FVoxelNodeNames::MacroRecursiveTemplateInput);
-	}
-
-	const UVoxelGraph* DefaultGraph = NewDefaultGraphInterface.GetGraph();
-	if (!DefaultGraph)
-	{
+		VOXEL_MESSAGE(Error, "{0}: Graph is null", this);
 		return;
 	}
 
-	for (const FVoxelGraphParameter& Parameter : DefaultGraph->Parameters)
-	{
-		const FName PinName(Parameter.Guid.ToString(EGuidFormats::Digits));
-
-		if (Parameter.ParameterType == EVoxelGraphParameterType::Input)
-		{
-			// VirtualPin: inputs are virtual as they are queried by node name below
-			// This avoid tricky lifetime management
-			CreateInputPin(
-				Parameter.Type,
-				PinName,
-				VOXEL_PIN_METADATA(void, Parameter.DefaultValue.ExportToString(), DisplayName(Parameter.Name.ToString()), VirtualPin));
-
-			ensure(!PinNameToInputParameter.Contains(PinName));
-			PinNameToInputParameter.Add(PinName, Parameter);
-		}
-		else if (Parameter.ParameterType == EVoxelGraphParameterType::Output)
-		{
-			CreateOutputPin(
-				Parameter.Type,
-				PinName,
-				VOXEL_PIN_METADATA(void, nullptr, DisplayName(Parameter.Name.ToString())));
-
-			ensure(!PinNameToOutputParameter.Contains(PinName));
-			PinNameToOutputParameter.Add(PinName, Parameter);
-		}
-	}
-}
-
-void FVoxelNode_FunctionCall::PreCompile()
-{
 	ComputeInputMap = MakeVoxelShared<FVoxelComputeInputMap>();
 
 	for (const FVoxelPin& Pin : GetPins())
@@ -84,12 +28,24 @@ void FVoxelNode_FunctionCall::PreCompile()
 		{
 			continue;
 		}
-		if (!ensure(PinNameToInputParameter.Contains(Pin.Name)))
+
+		const FVoxelParameter* InputParameter = nullptr;
+		for (const FVoxelGraphParameter& Parameter : Graph->Parameters)
+		{
+			if (Parameter.ParameterType != EVoxelGraphParameterType::Input ||
+				Pin.Name != FName(Parameter.Guid.ToString(EGuidFormats::Digits)))
+			{
+				continue;
+			}
+
+			ensure(!InputParameter);
+			InputParameter = &Parameter;
+		}
+
+		if (!ensure(InputParameter))
 		{
 			continue;
 		}
-
-		const FVoxelParameter InputParameter = PinNameToInputParameter.FindChecked(Pin.Name);
 
 		const FVoxelGraphPinRef PinRef
 		{
@@ -100,32 +56,47 @@ void FVoxelNode_FunctionCall::PreCompile()
 		FVoxelComputeInput Input;
 		Input.Compute = GVoxelGraphExecutorManager->MakeCompute_GameThread(Pin.GetType(), PinRef);
 		Input.Compute_Executor = GVoxelGraphExecutorManager->MakeCompute_GameThread(Pin.GetType(), PinRef, true);
-		ComputeInputMap->Add_CheckNew(InputParameter.Name, Input);
+		ComputeInputMap->Add_CheckNew(InputParameter->Name, Input);
 	}
 }
 
 FVoxelComputeValue FVoxelNode_FunctionCall::CompileCompute(const FName PinName) const
 {
-	if (!ensure(PinNameToOutputParameter.Contains(PinName)))
+	VOXEL_FUNCTION_COUNTER();
+
+	const UVoxelGraph* Graph = GetGraph();
+	if (!Graph)
+	{
+		VOXEL_MESSAGE(Error, "{0}: Graph is null", this);
+		return nullptr;
+	}
+
+	const FVoxelParameter* OutputParameter = nullptr;
+	for (const FVoxelGraphParameter& Parameter : Graph->Parameters)
+	{
+		if (Parameter.ParameterType != EVoxelGraphParameterType::Output ||
+			PinName != FName(Parameter.Guid.ToString(EGuidFormats::Digits)))
+		{
+			continue;
+		}
+
+		ensure(!OutputParameter);
+		OutputParameter = &Parameter;
+	}
+
+	if (!ensure(OutputParameter))
 	{
 		return nullptr;
 	}
 
-	const FVoxelParameter OutputParameter = PinNameToOutputParameter.FindChecked(PinName);
-
-	if (Mode == EMode::Macro)
+	if (Type == EVoxelGraphMacroType::Macro)
 	{
-		if (!ensure(DefaultGraphInterface.IsValid()))
-		{
-			return nullptr;
-		}
-
 		const TSharedRef<FVoxelInlineGraphData> Data = FVoxelInlineGraphData::Create(
-			ConstCast(DefaultGraphInterface.Get()),
+			GraphInterface,
 			{});
 
 		return [
-			OutputParameter,
+			OutputParameter = *OutputParameter,
 			Data,
 			Node = GetNodeRef(),
 			ComputeInputMap = ComputeInputMap.ToSharedRef()](const FVoxelQuery& Query) -> FVoxelFutureValue
@@ -164,10 +135,10 @@ FVoxelComputeValue FVoxelNode_FunctionCall::CompileCompute(const FName PinName) 
 			return (*Output)(Query.MakeNewQuery(Context));
 		};
 	}
-	else if (Mode == EMode::Template)
+	else if (Type == EVoxelGraphMacroType::Template)
 	{
 		return [
-			OutputParameter,
+			OutputParameter = *OutputParameter,
 			Node = GetNodeRef(),
 			ComputeInputMap = ComputeInputMap.ToSharedRef(),
 			WeakNodeRuntime = GetNodeRuntime().AsWeak()](const FVoxelQuery& Query) -> FVoxelFutureValue
@@ -229,10 +200,10 @@ FVoxelComputeValue FVoxelNode_FunctionCall::CompileCompute(const FName PinName) 
 	}
 	else
 	{
-		ensure(Mode == EMode::RecursiveTemplate);
+		ensure(Type == EVoxelGraphMacroType::RecursiveTemplate);
 
 		return [
-			OutputParameter,
+			OutputParameter = *OutputParameter,
 			Node = GetNodeRef(),
 			ComputeInputMap = ComputeInputMap.ToSharedRef(),
 			WeakNodeRuntime = GetNodeRuntime().AsWeak()](const FVoxelQuery& Query) -> FVoxelFutureValue
@@ -313,20 +284,106 @@ FVoxelComputeValue FVoxelNode_FunctionCall::CompileCompute(const FName PinName) 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+void FVoxelNode_FunctionCall::FixupPins()
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	for (const auto& It : MakeCopy(GetPinsMap()))
+	{
+		RemovePin(It.Key);
+	}
+
+	const UVoxelGraph* Graph = GetGraph();
+	if (!Graph)
+	{
+		return;
+	}
+	ensure(!Graph->HasAnyFlags(RF_NeedLoad));
+
+	if (Type == EVoxelGraphMacroType::Macro)
+	{
+		// No additional pin
+	}
+	else if (Type == EVoxelGraphMacroType::Template)
+	{
+		CreateInputPin(
+			FVoxelPinType::Make<FVoxelInlineGraph>(),
+			FVoxelNodeNames::MacroTemplateInput);
+	}
+	else
+	{
+		ensure(Type == EVoxelGraphMacroType::RecursiveTemplate);
+
+		CreateInputPin(
+			FVoxelPinType::Make<FVoxelInlineGraph>().GetBufferType(),
+			FVoxelNodeNames::MacroRecursiveTemplateInput);
+	}
+
+	for (const FVoxelGraphParameter& Parameter : Graph->Parameters)
+	{
+		const FName PinName(Parameter.Guid.ToString(EGuidFormats::Digits));
+
+		if (Parameter.ParameterType == EVoxelGraphParameterType::Input)
+		{
+			// VirtualPin: inputs are virtual as they are queried by node name below
+			// This avoid tricky lifetime management
+			CreateInputPin(
+				Parameter.Type,
+				PinName,
+				VOXEL_PIN_METADATA(void, nullptr, VirtualPin));
+		}
+		else if (Parameter.ParameterType == EVoxelGraphParameterType::Output)
+		{
+			CreateOutputPin(
+				Parameter.Type,
+				PinName);
+		}
+	}
+}
+
+UVoxelGraph* FVoxelNode_FunctionCall::GetGraph() const
+{
+	if (!GraphInterface)
+	{
+		return nullptr;
+	}
+
+	return GraphInterface->GetGraph();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelNode_FunctionCallInput_WithoutDefaultPin::PreCompile()
+{
+	ensure(DefaultValue.IsValid());
+
+	RuntimeDefaultValue = FVoxelPinType::MakeRuntimeValue(
+		GetPin(ValuePin).GetType(),
+		DefaultValue);
+
+	ensure(RuntimeDefaultValue.IsValid());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_FunctionCallInput_WithoutDefaultPin, Value)
 {
 	const TSharedPtr<const FVoxelComputeInputMap> ComputeInputMap = Query.GetContext().ComputeInputMap;
 	if (!ComputeInputMap)
 	{
 		// If we don't have input values use our default value
-		return DefaultValue;
+		return RuntimeDefaultValue;
 	}
 
 	const FVoxelComputeInput* Input = ComputeInputMap->Find(Name);
 	if (!Input)
 	{
 		// If we can't find a matching input this is likely a graph override
-		return DefaultValue;
+		return RuntimeDefaultValue;
 	}
 
 	const TSharedPtr<FVoxelQueryContext> Context = Query.GetContext().ComputeInputContext.Pin();

@@ -73,7 +73,7 @@ void FVoxelHeightmap::Initialize(
 
 void UVoxelHeightmap::Serialize(FArchive& Ar)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::Serialize(Ar);
 

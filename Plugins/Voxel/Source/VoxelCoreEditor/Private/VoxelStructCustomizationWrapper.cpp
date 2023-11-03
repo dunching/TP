@@ -4,12 +4,12 @@
 
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelStructCustomizationWrapper);
 
-class FVoxelStructCustomizationWrapperTicker : public FVoxelTicker
+class FVoxelStructCustomizationWrapperTicker : public FVoxelEditorSingleton
 {
 public:
 	TArray<TWeakPtr<FVoxelStructCustomizationWrapper>> WeakWrappers;
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelEditorSingleton Interface
 	virtual void Tick() override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -39,14 +39,9 @@ public:
 			Wrapper->SyncFromSource();
 		}
 	}
-	//~ End FVoxelTicker Interface
+	//~ End FVoxelEditorSingleton Interface
 };
-FVoxelStructCustomizationWrapperTicker* GVoxelStructCustomizationWrapperTicker = nullptr;
-
-VOXEL_RUN_ON_STARTUP_EDITOR(RegisterVoxelStructCustomizationWrapperTicker)
-{
-	GVoxelStructCustomizationWrapperTicker = new FVoxelStructCustomizationWrapperTicker();
-}
+FVoxelStructCustomizationWrapperTicker* GVoxelStructCustomizationWrapperTicker = MakeVoxelSingleton(FVoxelStructCustomizationWrapperTicker);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////

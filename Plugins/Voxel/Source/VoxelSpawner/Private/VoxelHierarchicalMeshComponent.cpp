@@ -1,16 +1,17 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelHierarchicalMeshComponent.h"
-#include "VoxelInstancedCollisionComponent.h"
+#include "VoxelInstancedMeshComponent.h"
+#include "Point/VoxelPointOverrideManager.h"
 #include "ShowFlags.h"
 #include "UnrealClient.h"
-#include "Engine/StaticMesh.h"
 #include "Engine/InstancedStaticMesh.h"
 #if WITH_EDITOR
 #include "EditorViewportClient.h"
 #endif
 
 DEFINE_VOXEL_MEMORY_STAT(STAT_VoxelHierarchicalMeshDataMemory);
+DEFINE_VOXEL_MEMORY_STAT(STAT_VoxelHierarchicalMeshMemory);
 DEFINE_VOXEL_COUNTER(STAT_VoxelHierarchicalMeshNumInstances);
 
 void FVoxelHierarchicalMeshData::Build()
@@ -18,6 +19,9 @@ void FVoxelHierarchicalMeshData::Build()
 	VOXEL_FUNCTION_COUNTER();
 	ensure(!BuiltData);
 	ensure(CustomDatas_Transient.Num() == NumCustomDatas);
+
+	ensure(PointIds_Transient.Num() == Transforms.Num());
+	PointIds_Transient.Empty();
 
 	const TSharedRef<FVoxelHierarchicalMeshBuiltData> NewBuiltData = MakeVoxelShared<FVoxelHierarchicalMeshBuiltData>();
 	UVoxelHierarchicalMeshComponent::AsyncTreeBuild(
@@ -40,6 +44,18 @@ void FVoxelHierarchicalMeshData::Build()
 	BuiltData = NewBuiltData;
 
 	UpdateStats();
+}
+
+int64 FVoxelHierarchicalMeshData::GetAllocatedSize() const
+{
+	int64 AllocatedSize = FVoxelMeshDataBase::GetAllocatedSize();
+	if (BuiltData)
+	{
+		AllocatedSize += BuiltData->InstanceDatas.GetAllocatedSize();
+		AllocatedSize += BuiltData->CustomDatas.GetAllocatedSize();
+		AllocatedSize += BuiltData->InstanceReorderTable.GetAllocatedSize();
+	}
+	return AllocatedSize;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -104,17 +120,30 @@ public:
 				Component->MarkRenderStateDirty();
 			}
 		});
+
+		ForEachObjectOfClass<UVoxelInstancedMeshComponent>([&](UVoxelInstancedMeshComponent* Component)
+		{
+			UWorld* World = Component->GetWorld();
+			if (!World)
+			{
+				return;
+			}
+
+			const bool bShouldBeVisible = !ShouldHide(World);
+
+			if (Component->GetVisibleFlag() != bShouldBeVisible)
+			{
+				Component->SetVisibleFlag(bShouldBeVisible);
+				Component->MarkRenderStateDirty();
+			}
+		});
 	}
 	//~ End FVoxelTicker Interface
 };
 
 VOXEL_RUN_ON_STARTUP_EDITOR(MakeVoxelHierarchicalMeshComponentTicker)
 {
-	if (!GIsEditor)
-	{
-		return;
-	}
-
+	check(GIsEditor);
 	new FVoxelHierarchicalMeshComponentTicker();
 }
 #endif
@@ -127,29 +156,15 @@ UVoxelHierarchicalMeshComponent::UVoxelHierarchicalMeshComponent()
 {
 	bDisableCollision = true;
 	BodyInstance.SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	CollisionComponent = CreateDefaultSubobject<UVoxelInstancedCollisionComponent>("Collision");
-}
-
-void UVoxelHierarchicalMeshComponent::OnRegister()
-{
-	Super::OnRegister();
-
-	CollisionComponent->RegisterComponent();
-}
-
-void UVoxelHierarchicalMeshComponent::OnUnregister()
-{
-	CollisionComponent->UnregisterComponent();
-
-	Super::OnUnregister();
 }
 
 void UVoxelHierarchicalMeshComponent::SetMeshData(const TSharedRef<const FVoxelHierarchicalMeshData>& NewMeshData)
 {
 	ClearInstances();
-	CollisionComponent->ResetCollision();
 
+	ensure(!MeshData);
 	MeshData = NewMeshData;
+
 	SetStaticMesh(NewMeshData->Mesh.StaticMesh.Get());
 
 	MeshData->UpdateStats();
@@ -166,47 +181,27 @@ void UVoxelHierarchicalMeshComponent::SetMeshData(const TSharedRef<const FVoxelH
 
 	MeshData->UpdateStats();
 	NumInstances = MeshData->Num();
-}
 
-void UVoxelHierarchicalMeshComponent::UpdateCollision(
-	const FName InvokerChannel,
-	const FBodyInstance& NewBodyInstance) const
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	CollisionComponent->ResetCollision();
-
-	if (!ensure(MeshData))
-	{
-		return;
-	}
-
-	UStaticMesh* Mesh = MeshData->Mesh.StaticMesh.Get();
-	if (!Mesh ||
-		NewBodyInstance.GetCollisionEnabled(false) == ECollisionEnabled::NoCollision)
-	{
-		return;
-	}
-
-	FVoxelGameUtilities::CopyBodyInstance(
-		CollisionComponent->BodyInstance,
-		NewBodyInstance);
-
-	CollisionComponent->SetStaticMesh(Mesh);
-	CollisionComponent->SetInvokerChannel(InvokerChannel);
-	CollisionComponent->SetMeshData(MeshData.ToSharedRef());
-	CollisionComponent->CreateCollision();
+	UpdateStats();
 }
 
 void UVoxelHierarchicalMeshComponent::RemoveInstancesFast(const TConstVoxelArrayView<int32> Indices)
 {
-	VOXEL_FUNCTION_COUNTER();
+	HideInstances(Indices);
+}
 
-	if (CollisionComponent->HasMeshData())
-	{
-		// Only remove if we have collision
-		CollisionComponent->RemoveInstances(Indices);
-	}
+void UVoxelHierarchicalMeshComponent::ReturnToPool()
+{
+	ClearInstances();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void UVoxelHierarchicalMeshComponent::HideInstances(const TConstVoxelArrayView<int32> Indices)
+{
+	VOXEL_FUNCTION_COUNTER();
 
 	if (!ensure(MeshData))
 	{
@@ -259,9 +254,80 @@ void UVoxelHierarchicalMeshComponent::RemoveInstancesFast(const TConstVoxelArray
 	MarkRenderStateDirty();
 }
 
-void UVoxelHierarchicalMeshComponent::ReturnToPool()
+void UVoxelHierarchicalMeshComponent::ShowInstances(const TConstVoxelArrayView<int32> Indices)
 {
-	ClearInstances();
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!ensure(MeshData))
+	{
+		return;
+	}
+
+	if (PerInstanceSMData.Num() > 0)
+	{
+		for (const int32 Index : Indices)
+		{
+			if (!ensure(PerInstanceSMData.IsValidIndex(Index)) ||
+				!ensure(MeshData->Transforms.IsValidIndex(Index)))
+			{
+				continue;
+			}
+
+			PerInstanceSMData[Index].Transform = FMatrix(MeshData->Transforms[Index].ToMatrixWithScale());
+		}
+	}
+
+	if (!ensure(PerInstanceRenderData))
+	{
+		return;
+	}
+
+	const TSharedPtr<FStaticMeshInstanceData> InstanceBuffer = PerInstanceRenderData->InstanceBuffer_GameThread;
+	if (!ensure(InstanceBuffer))
+	{
+		return;
+	}
+
+	for (const int32 Index : Indices)
+	{
+		if (!ensure(InstanceReorderTable.IsValidIndex(Index)) ||
+			!ensure(MeshData->Transforms.IsValidIndex(Index)))
+		{
+			continue;
+		}
+
+		const int32 BuiltIndex = InstanceReorderTable[Index];
+		if (!ensure(0 <= BuiltIndex && BuiltIndex < InstanceBuffer->GetNumInstances()))
+		{
+			continue;
+		}
+
+		InstanceBuffer->SetInstance(BuiltIndex, MeshData->Transforms[Index].ToMatrixWithScale(), 0);
+	}
+
+	MarkRenderStateDirty();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+int64 UVoxelHierarchicalMeshComponent::GetAllocatedSize() const
+{
+	int64 AllocatedSize = 0;
+	if (ClusterTreePtr)
+	{
+		AllocatedSize += ClusterTreePtr->GetAllocatedSize();
+	}
+	if (PerInstanceRenderData &&
+		PerInstanceRenderData->InstanceBuffer_GameThread)
+	{
+		AllocatedSize += PerInstanceRenderData->InstanceBuffer_GameThread->GetResourceSize();
+	}
+	AllocatedSize += PerInstanceSMData.GetAllocatedSize();
+	AllocatedSize += PerInstanceSMCustomData.GetAllocatedSize();
+	AllocatedSize += InstanceReorderTable.GetAllocatedSize();
+	return AllocatedSize;
 }
 
 void UVoxelHierarchicalMeshComponent::ReleasePerInstanceRenderData_Safe()
@@ -274,7 +340,7 @@ void UVoxelHierarchicalMeshComponent::ReleasePerInstanceRenderData_Safe()
 	}
 
 	// Ensure all UpdateBoundsTransforms_Concurrent tasks are completed
-	ENQUEUE_RENDER_COMMAND(FlushPerInstanceRenderDataBounds)([PerInstanceRenderData = PerInstanceRenderData](FRHICommandListImmediate& RHICmdList)
+	VOXEL_ENQUEUE_RENDER_COMMAND(FlushPerInstanceRenderDataBounds)([PerInstanceRenderData = PerInstanceRenderData](FRHICommandListImmediate& RHICmdList)
 	{
 		struct FPerInstanceRenderDataAlias
 		{
@@ -314,9 +380,7 @@ void UVoxelHierarchicalMeshComponent::ClearInstances()
 	InstanceStartCullDistance = GetDefault<UVoxelHierarchicalMeshComponent>()->InstanceStartCullDistance;
 	InstanceEndCullDistance = GetDefault<UVoxelHierarchicalMeshComponent>()->InstanceEndCullDistance;
 
-	CollisionComponent->ResetCollision();
-
-	AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [MeshDataPtr = MakeUniqueCopy(MeshData)]
+	AsyncVoxelTask([MeshDataPtr = MakeUniqueCopy(MeshData)]
 	{
 		VOXEL_SCOPE_COUNTER("Delete MeshData");
 		MeshDataPtr->Reset();
@@ -327,6 +391,8 @@ void UVoxelHierarchicalMeshComponent::ClearInstances()
 	ReleasePerInstanceRenderData_Safe();
 
 	Super::ClearInstances();
+
+	UpdateStats();
 }
 
 void UVoxelHierarchicalMeshComponent::DestroyComponent(const bool bPromoteChildren)
@@ -335,6 +401,7 @@ void UVoxelHierarchicalMeshComponent::DestroyComponent(const bool bPromoteChildr
 
 	MeshData.Reset();
 	NumInstances = 0;
+	UpdateStats();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

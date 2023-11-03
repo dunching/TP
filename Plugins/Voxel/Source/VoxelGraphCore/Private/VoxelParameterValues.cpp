@@ -10,9 +10,45 @@
 #include "VoxelParameterView.h"
 #include "VoxelParameterContainer.h"
 
-DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelParameterValues);
+class FVoxelParameterValuesManager : public FVoxelSingleton
+{
+public:
+	TQueue<TWeakPtr<FVoxelParameterValues>, EQueueMode::Mpsc> ParameterValuesToUpdateQueue;
 
-TMap<FVoxelParameterPath, FName> GVoxelParameterGuidToDebugName;
+	//~ Begin FVoxelSingleton Interface
+	virtual void Tick() override
+	{
+		VOXEL_FUNCTION_COUNTER();
+
+		TVoxelSet<TWeakPtr<FVoxelParameterValues>> ParameterValuesToUpdate;
+		{
+			TWeakPtr<FVoxelParameterValues> ParameterValues;
+			while (ParameterValuesToUpdateQueue.Dequeue(ParameterValues))
+			{
+				ParameterValuesToUpdate.Add(ParameterValues);
+			}
+		}
+
+		for (const TWeakPtr<FVoxelParameterValues>& WeakParameterValues : ParameterValuesToUpdate)
+		{
+			const TSharedPtr<FVoxelParameterValues> ParameterValues = WeakParameterValues.Pin();
+			if (!ParameterValues)
+			{
+				continue;
+			}
+
+			ParameterValues->Update_GameThread();
+		}
+	}
+	//~ End FVoxelSingleton Interface
+};
+FVoxelParameterValuesManager* GVoxelParameterValuesManager = MakeVoxelSingleton(FVoxelParameterValuesManager);
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelParameterValues);
 
 TSharedRef<FVoxelParameterValues> FVoxelParameterValues::Create(const TWeakInterfacePtr<IVoxelParameterProvider>& Provider)
 {
@@ -73,19 +109,6 @@ FVoxelFutureValue FVoxelParameterValues::FindParameter(
 		}));
 }
 
-void FVoxelParameterValues::Tick()
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	if (!bUpdateQueued)
-	{
-		return;
-	}
-	bUpdateQueued = false;
-
-	Update_GameThread();
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -105,7 +128,7 @@ void FVoxelParameterValues::BindOnChanged(const TWeakInterfacePtr<IVoxelParamete
 
 	Provider->AddOnChanged(MakeWeakPtrDelegate(this, [this]
 	{
-		bUpdateQueued = true;
+		GVoxelParameterValuesManager->ParameterValuesToUpdateQueue.Enqueue(AsWeak());
 	}));
 }
 
@@ -160,12 +183,6 @@ void FVoxelParameterValues::Update_GameThread_RequiresLock()
 
 		if (!ParameterValue.Dependency)
 		{
-			if (FPlatformMisc::IsDebuggerPresent())
-			{
-				const FName DebugName = ParameterView->GetName();
-				GVoxelParameterGuidToDebugName.Add(ParameterPath, DebugName);
-			}
-
 			ParameterValue.Dependency = FVoxelDependency::Create(
 				STATIC_FNAME("Parameter"),
 				FName(FString::Printf(TEXT("GUID=%s Name=%s Type=%s"),
@@ -226,6 +243,13 @@ FVoxelRuntimePinValue FVoxelParameterValues::FindParameter_GameThread(
 {
 	VOXEL_FUNCTION_COUNTER();
 	check(IsInGameThread());
+
+	if (Query.GetInfo(EVoxelQueryInfo::Local).IsDestroyed())
+	{
+		// This can happen if a brush runtime is destroyed without the query runtime being destroyed
+		// The task is owned by the query runtime & is still run
+		return FVoxelRuntimePinValue(Type);
+	}
 
 	// Group all the invalidate calls
 	const FVoxelDependencyInvalidationScope DependencyInvalidationScope;

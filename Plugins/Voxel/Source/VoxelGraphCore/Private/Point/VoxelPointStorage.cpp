@@ -3,9 +3,9 @@
 #include "Point/VoxelPointStorage.h"
 #include "Point/VoxelPointStorageData.h"
 
-void UVoxelPointStorageComponent::Serialize(FArchive& Ar)
+void UVoxelPointStorage::Serialize(FArchive& Ar)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::Serialize(Ar);
 
@@ -29,7 +29,7 @@ void UVoxelPointStorageComponent::Serialize(FArchive& Ar)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedRef<FVoxelPointStorageData> UVoxelPointStorageComponent::GetData()
+TSharedRef<FVoxelPointStorageData> UVoxelPointStorage::GetData()
 {
 	if (!Data)
 	{

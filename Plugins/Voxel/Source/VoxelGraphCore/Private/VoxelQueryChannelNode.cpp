@@ -2,7 +2,11 @@
 
 #include "VoxelQueryChannelNode.h"
 #include "VoxelChannelSubsystem.h"
+#include "VoxelGraph.h"
+#include "VoxelSurface.h"
+#include "Point/VoxelChunkedPointSet.h"
 #include "VoxelPositionQueryParameter.h"
+#include "EdGraph/EdGraphNode.h"
 
 void FVoxelBrushPriorityQueryParameter::AddMaxPriority(
 	FVoxelQueryParameters& Parameters,
@@ -31,7 +35,27 @@ void FVoxelBrushPriorityQueryParameter::AddMaxPriority(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+FVoxelNode_QueryChannel::FVoxelNode_QueryChannel()
+{
+	GetPin(ValuePin).SetType(FVoxelPinType::Make<FVoxelSurface>());
+}
+
 #if WITH_EDITOR
+void FVoxelNode_QueryChannel::FDefinition::Initialize(UEdGraphNode& EdGraphNode)
+{
+	GVoxelChannelManager->OnChannelDefinitionsChanged_GameThread.Add(MakeWeakPtrDelegate(this, [this, WeakNode = MakeWeakObjectPtr(&EdGraphNode)]
+	{
+		UEdGraphNode* GraphNode = WeakNode.Get();
+		if (!ensure(GraphNode))
+		{
+			return;
+		}
+
+		GraphNode->ReconstructNode();
+		GraphNode->GetTypedOuter<UVoxelGraph>()->ForceRecompile();
+	}));
+}
+
 bool FVoxelNode_QueryChannel::FDefinition::OnPinDefaultValueChanged(const FName PinName, const FVoxelPinValue& NewDefaultValue)
 {
 	if (PinName != Node.ChannelPin ||
@@ -57,7 +81,8 @@ bool FVoxelNode_QueryChannel::FDefinition::OnPinDefaultValueChanged(const FName 
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_QueryChannel, Value)
 {
-	if (!Query.GetParameters().Find<FVoxelSpawnableBoundsQueryParameter>())
+	if (!Query.GetParameters().Find<FVoxelQueryChannelBoundsQueryParameter>() &&
+		!Query.GetParameters().Find<FVoxelPointChunkRefQueryParameter>())
 	{
 		// Required by FVoxelRuntimeChannel::Get
 		FindVoxelQueryParameter(FVoxelPositionQueryParameter, PositionQueryParameter);
@@ -68,7 +93,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_QueryChannel, Value)
 
 	return VOXEL_ON_COMPLETE(ChannelName, MaxPriority)
 	{
-		const TSharedRef<FVoxelWorldChannelManager> ChannelManager = GVoxelChannelManager->GetWorldChannelManager(Query.GetInfo(EVoxelQueryInfo::Query).GetWorld());
+		const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(Query.GetInfo(EVoxelQueryInfo::Query).GetWorld());
 		const TSharedPtr<FVoxelWorldChannel> WorldChannel = ChannelManager->FindChannel(ChannelName.Name);
 		if (!WorldChannel)
 		{
@@ -96,8 +121,8 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_QueryChannel, Value)
 		}
 
 		const TSharedRef<FVoxelRuntimeChannel> RuntimeChannel = WorldChannel->GetRuntimeChannel(
-			Query.GetInfo(EVoxelQueryInfo::Query).GetLocalToWorld(),
-			ChannelSubsystem->Cache);
+			Query.GetQueryToWorld(),
+			*ChannelSubsystem->Cache);
 
 		const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
 		FVoxelBrushPriorityQueryParameter::AddMaxPriority(

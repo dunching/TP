@@ -589,6 +589,51 @@ uint32 FVoxelObjectUtilities::HashProperty(const FProperty& Property, const void
 	return CppStructOps->GetStructTypeHash(DataPtr);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+#if !UE_BUILD_SHIPPING
+TMap<const UScriptStruct*, UScriptStruct::ICppStructOps*> GVoxelCachedStructOps;
+
+VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelCachedStructOps)
+{
+	GVoxelCachedStructOps.Reserve(8192);
+
+	ForEachObjectOfClass<UScriptStruct>([&](const UScriptStruct* Struct)
+	{
+		GVoxelCachedStructOps.Add(Struct, Struct->GetCppStructOps());
+	});
+}
+#endif
+
+void FVoxelObjectUtilities::DestroyStruct_Safe(const UScriptStruct* Struct, void* StructMemory)
+{
+	check(Struct);
+	check(StructMemory);
+
+	if (UObjectInitialized())
+	{
+		Struct->DestroyStruct(StructMemory);
+	}
+	else
+	{
+#if !UE_BUILD_SHIPPING
+		// Always cleanly destroy structs so that leak detection works properly
+		UScriptStruct::ICppStructOps* CppStructOps = GVoxelCachedStructOps[Struct];
+		check(CppStructOps);
+		if (CppStructOps->HasDestructor())
+		{
+			CppStructOps->Destruct(StructMemory);
+		}
+#endif
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void FVoxelObjectUtilities::AddStructReferencedObjects(FReferenceCollector& Collector, const UScriptStruct* Struct, void* StructMemory)
 {
 	VOXEL_FUNCTION_COUNTER();
@@ -609,6 +654,10 @@ void FVoxelObjectUtilities::AddStructReferencedObjects(FReferenceCollector& Coll
 		Collector.AddReferencedObject(*ObjectPtr);
 	}
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 TUniquePtr<FBoolProperty> FVoxelObjectUtilities::MakeBoolProperty()
 {
@@ -681,7 +730,7 @@ TUniquePtr<FArrayProperty> FVoxelObjectUtilities::MakeArrayProperty(FProperty* I
 
 TArray<UScriptStruct*> GetDerivedStructs(const UScriptStruct* StructType, bool bIncludeBase)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	TArray<UScriptStruct*> Result;
 	ForEachObjectOfClass<UScriptStruct>([&](UScriptStruct* Struct)
@@ -702,6 +751,10 @@ TArray<UScriptStruct*> GetDerivedStructs(const UScriptStruct* StructType, bool b
 	return Result;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 bool IsFunctionInput(const FProperty& Property)
 {
 	ensure(Property.Owner.IsA(UFunction::StaticClass()));
@@ -710,6 +763,10 @@ bool IsFunctionInput(const FProperty& Property)
 		!Property.HasAnyPropertyFlags(CPF_ReturnParm) &&
 		(!Property.HasAnyPropertyFlags(CPF_OutParm) || Property.HasAnyPropertyFlags(CPF_ReferenceParm));
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 class FRestoreClassInfo
 {
@@ -754,11 +811,100 @@ FString GetStringMetaDataHierarchical(const UStruct* Struct, const FName Name)
 }
 #endif
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelNullCheckReferenceCollector::AddStableReference(UObject** Object)
+{
+	const bool bValid = *Object != nullptr;
+	ReferenceCollector.AddStableReference(Object);
+	ensure(bValid == (*Object != nullptr));
+}
+
+void FVoxelNullCheckReferenceCollector::AddStableReferenceArray(TArray<UObject*>* Objects)
+{
+	for (UObject*& Object : *Objects)
+	{
+		AddStableReference(&Object);
+	}
+}
+
+void FVoxelNullCheckReferenceCollector::AddStableReferenceSet(TSet<UObject*>* Objects)
+{
+	for (UObject*& Object : *Objects)
+	{
+		AddStableReference(&Object);
+	}
+}
+
+bool FVoxelNullCheckReferenceCollector::NeedsPropertyReferencer() const
+{
+	return ReferenceCollector.NeedsPropertyReferencer();
+}
+
+bool FVoxelNullCheckReferenceCollector::IsIgnoringArchetypeRef() const
+{
+	return ReferenceCollector.IsIgnoringArchetypeRef();
+}
+
+bool FVoxelNullCheckReferenceCollector::IsIgnoringTransient() const
+{
+	return ReferenceCollector.IsIgnoringTransient();
+}
+
+void FVoxelNullCheckReferenceCollector::AllowEliminatingReferences(const bool bAllow)
+{
+	ReferenceCollector.AllowEliminatingReferences(bAllow);
+}
+
+void FVoxelNullCheckReferenceCollector::SetSerializedProperty(FProperty* InProperty)
+{
+	ReferenceCollector.SetSerializedProperty(InProperty);
+}
+
+FProperty* FVoxelNullCheckReferenceCollector::GetSerializedProperty() const
+{
+	return ReferenceCollector.GetSerializedProperty();
+}
+
+bool FVoxelNullCheckReferenceCollector::MarkWeakObjectReferenceForClearing(UObject** WeakReference)
+{
+	return ReferenceCollector.MarkWeakObjectReferenceForClearing(WeakReference);
+}
+
+void FVoxelNullCheckReferenceCollector::SetIsProcessingNativeReferences(const bool bIsNative)
+{
+	ReferenceCollector.SetIsProcessingNativeReferences(bIsNative);
+}
+
+bool FVoxelNullCheckReferenceCollector::IsProcessingNativeReferences() const
+{
+	return ReferenceCollector.IsProcessingNativeReferences();
+}
+
+bool FVoxelNullCheckReferenceCollector::NeedsInitialReferences() const
+{
+	return ReferenceCollector.NeedsInitialReferences();
+}
+
+void FVoxelNullCheckReferenceCollector::HandleObjectReference(UObject*& InObject, const UObject* InReferencingObject, const FProperty* InReferencingProperty)
+{
+	const bool bValid = InObject != nullptr;
+	ReferenceCollector.AddReferencedObject(InObject, InReferencingObject, InReferencingProperty);
+	ensure(bValid == (InObject != nullptr));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 struct FVoxelSharedStructOpaque {};
 
 TSharedRef<FVoxelSharedStructOpaque> MakeSharedStruct(const UScriptStruct* Struct, const void* StructToCopyFrom)
 {
 	check(Struct);
+	checkVoxelSlow(UObjectInitialized());
 
 	void* Memory = FVoxelMemory::Malloc(FMath::Max(1, Struct->GetStructureSize()));
 	Struct->InitializeStruct(Memory);
@@ -782,12 +928,7 @@ TSharedRef<FVoxelSharedStructOpaque> MakeShareableStruct(const UScriptStruct* St
 
 	return TSharedPtr<FVoxelSharedStructOpaque>(static_cast<FVoxelSharedStructOpaque*>(StructMemory), [Struct](void* InMemory)
 	{
-		if (GExitPurge)
-		{
-			return;
-		}
-
-		Struct->DestroyStruct(InMemory);
+		FVoxelObjectUtilities::DestroyStruct_Safe(Struct, InMemory);
 		FVoxelMemory::Free(InMemory);
 	}).ToSharedRef();
 }

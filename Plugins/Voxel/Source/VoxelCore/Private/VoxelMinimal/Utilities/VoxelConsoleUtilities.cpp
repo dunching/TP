@@ -134,9 +134,5 @@ VOXEL_CONSOLE_COMMAND(
 
 	GCycleStatsShouldEmitNamedEvents--;
 	UE::Trace::ToggleChannel(TEXT("VoxelChannel"), false);
-
-#if PLATFORM_WINDOWS
-	FPlatformProcess::ExploreFolder(TEXT("%LocalAppData%/UnrealEngine/Common/UnrealTrace/Store/001"));
-#endif
 }
 #endif

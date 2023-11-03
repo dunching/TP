@@ -2,7 +2,6 @@
 
 #include "VoxelAdvancedNoiseNode.h"
 #include "VoxelAdvancedNoiseNodesImpl.ispc.generated.h"
-#include "VoxelGraphNodeStatInterface.h"
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_AdvancedNoise2D, Value)
 {

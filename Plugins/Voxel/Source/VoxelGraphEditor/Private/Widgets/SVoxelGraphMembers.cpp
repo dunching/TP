@@ -10,9 +10,7 @@
 #include "SchemaActions/VoxelGraphMembersVariableSchemaAction.h"
 #include "SchemaActions/VoxelGraphMembersMacroLibrarySchemaAction.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SMembers::Construct(const FArguments& Args)
+void SVoxelGraphMembers::Construct(const FArguments& Args)
 {
 	SVoxelMembers::Construct(
 		SVoxelMembers::FArguments()
@@ -31,12 +29,12 @@ void SMembers::Construct(const FArguments& Args)
 		return;
 	}
 
-	MainGraph->OnParametersChanged.AddSP(this, &SMembers::OnParametersChanged);
+	MainGraph->OnParametersChanged.AddSP(this, &SVoxelGraphMembers::OnParametersChanged);
 
 	UpdateActiveGraph(GetObject<UVoxelGraph>());
 }
 
-void SMembers::UpdateActiveGraph(const TWeakObjectPtr<UVoxelGraph>& NewActiveGraph)
+void SVoxelGraphMembers::UpdateActiveGraph(const TWeakObjectPtr<UVoxelGraph>& NewActiveGraph)
 {
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
 	if (!ensure(Toolkit))
@@ -67,24 +65,24 @@ void SMembers::UpdateActiveGraph(const TWeakObjectPtr<UVoxelGraph>& NewActiveGra
 		return;
 	}
 
-	OnMembersChangedHandle = ActiveGraph->OnParametersChanged.AddSP(this, &SMembers::OnParametersChanged);
+	OnMembersChangedHandle = ActiveGraph->OnParametersChanged.AddSP(this, &SVoxelGraphMembers::OnParametersChanged);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void SMembers::CollectStaticSections(TArray<int32>& StaticSectionIds)
+void SVoxelGraphMembers::CollectStaticSections(TArray<int32>& StaticSectionIds)
 {
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
 	if (Toolkit->bIsMacroLibrary)
 	{
-		StaticSectionIds.Add(GetSectionId(EMembersNodeSection::MacroLibraries));
+		StaticSectionIds.Add(GetSectionId(ESection::MacroLibraries));
 	}
 	else
 	{
-		StaticSectionIds.Add(GetSectionId(EMembersNodeSection::Graph));
-		StaticSectionIds.Add(GetSectionId(EMembersNodeSection::InlineMacros));
+		StaticSectionIds.Add(GetSectionId(ESection::Graph));
+		StaticSectionIds.Add(GetSectionId(ESection::InlineMacros));
 	}
 
 	const UVoxelGraph* Graph = GetObject<UVoxelGraph>();
@@ -93,18 +91,18 @@ void SMembers::CollectStaticSections(TArray<int32>& StaticSectionIds)
 		return;
 	}
 
-	StaticSectionIds.Add(GetSectionId(EMembersNodeSection::MacroInputs));
-	StaticSectionIds.Add(GetSectionId(EMembersNodeSection::MacroOutputs));
+	StaticSectionIds.Add(GetSectionId(ESection::MacroInputs));
+	StaticSectionIds.Add(GetSectionId(ESection::MacroOutputs));
 
 	if (!Toolkit->bIsMacroLibrary)
 	{
-		StaticSectionIds.Add(GetSectionId(EMembersNodeSection::Parameters));
+		StaticSectionIds.Add(GetSectionId(ESection::Parameters));
 	}
 
-	StaticSectionIds.Add(GetSectionId(EMembersNodeSection::LocalVariables));
+	StaticSectionIds.Add(GetSectionId(ESection::LocalVariables));
 }
 
-FText SMembers::OnGetSectionTitle(const int32 SectionId)
+FText SVoxelGraphMembers::OnGetSectionTitle(const int32 SectionId)
 {
 	static const TArray<FText> NodeSectionNames
 	{
@@ -126,22 +124,22 @@ FText SMembers::OnGetSectionTitle(const int32 SectionId)
 	return NodeSectionNames[SectionId];
 }
 
-TSharedRef<SWidget> SMembers::OnGetMenuSectionWidget(TSharedRef<SWidget> RowWidget, int32 SectionId)
+TSharedRef<SWidget> SVoxelGraphMembers::OnGetMenuSectionWidget(TSharedRef<SWidget> RowWidget, int32 SectionId)
 {
 	switch (GetSection(SectionId))
 	{
 	default: check(false);
-	case EMembersNodeSection::Graph: return SNullWidget::NullWidget;
-	case EMembersNodeSection::InlineMacros: return CreateAddButton(SectionId, INVTEXT("Macro"), "AddNewMacro");
-	case EMembersNodeSection::MacroLibraries: return CreateAddButton(SectionId, INVTEXT("Macro"), "AddNewMacro");
-	case EMembersNodeSection::Parameters: return CreateAddButton(SectionId, INVTEXT("Parameter"), "AddNewParameter");
-	case EMembersNodeSection::MacroInputs: return CreateAddButton(SectionId, INVTEXT("Input"), "AddNewInput");
-	case EMembersNodeSection::MacroOutputs: return CreateAddButton(SectionId, INVTEXT("Output"), "AddNewOutput");
-	case EMembersNodeSection::LocalVariables: return CreateAddButton(SectionId, INVTEXT("Local Variable"), "AddNewLocalVariable");
+	case ESection::Graph: return SNullWidget::NullWidget;
+	case ESection::InlineMacros: return CreateAddButton(SectionId, INVTEXT("Macro"), "AddNewMacro");
+	case ESection::MacroLibraries: return CreateAddButton(SectionId, INVTEXT("Macro"), "AddNewMacro");
+	case ESection::Parameters: return CreateAddButton(SectionId, INVTEXT("Parameter"), "AddNewParameter");
+	case ESection::MacroInputs: return CreateAddButton(SectionId, INVTEXT("Input"), "AddNewInput");
+	case ESection::MacroOutputs: return CreateAddButton(SectionId, INVTEXT("Output"), "AddNewOutput");
+	case ESection::LocalVariables: return CreateAddButton(SectionId, INVTEXT("Local Variable"), "AddNewLocalVariable");
 	}
 }
 
-void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsList)
+void SVoxelGraphMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsList)
 {
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
 	if (!ensure(Toolkit))
@@ -151,16 +149,16 @@ void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsLi
 
 	UVoxelGraph& MainGraph = *Toolkit->Asset;
 
-	OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::None), {});
+	OutActionsList.AddCategoriesSortList(GetSectionId(ESection::None), {});
 
 	if (Toolkit->bIsMacroLibrary)
 	{
-		OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::MacroLibraries), MainGraph.InlineMacroCategories.Categories);
+		OutActionsList.AddCategoriesSortList(GetSectionId(ESection::MacroLibraries), MainGraph.InlineMacroCategories.Categories);
 	}
 	else
 	{
-		OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::Graph), {});
-		OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::InlineMacros), MainGraph.InlineMacroCategories.Categories);
+		OutActionsList.AddCategoriesSortList(GetSectionId(ESection::Graph), {});
+		OutActionsList.AddCategoriesSortList(GetSectionId(ESection::InlineMacros), MainGraph.InlineMacroCategories.Categories);
 	}
 
 	INLINE_LAMBDA
@@ -175,7 +173,7 @@ void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsLi
 					FText::FromString(Macro->Description),
 					0,
 					INVTEXT("macro"),
-					GetSectionId(EMembersNodeSection::MacroLibraries));
+					GetSectionId(ESection::MacroLibraries));
 
 				NewMacroAction->WeakToolkit = Toolkit;
 				NewMacroAction->WeakMembersWidget = SharedThis(this);
@@ -194,7 +192,7 @@ void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsLi
 				INVTEXT(""),
 				2,
 				INVTEXT(""),
-				GetSectionId(EMembersNodeSection::Graph));
+				GetSectionId(ESection::Graph));
 
 			NewGraphAction->WeakToolkit = Toolkit;
 			NewGraphAction->WeakMembersWidget = SharedThis(this);
@@ -211,7 +209,7 @@ void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsLi
 				FText::FromString(InlineMacro->Description),
 				2,
 				INVTEXT("macro"),
-				GetSectionId(EMembersNodeSection::InlineMacros));
+				GetSectionId(ESection::InlineMacros));
 
 			NewMacroAction->WeakToolkit = Toolkit;
 			NewMacroAction->WeakMembersWidget = SharedThis(this);
@@ -228,15 +226,15 @@ void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsLi
 		return;
 	}
 
-	OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::MacroInputs), ActiveGraph->GetCategories(EVoxelGraphParameterType::Input));
-	OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::MacroOutputs), ActiveGraph->GetCategories(EVoxelGraphParameterType::Output));
+	OutActionsList.AddCategoriesSortList(GetSectionId(ESection::MacroInputs), ActiveGraph->GetCategories(EVoxelGraphParameterType::Input));
+	OutActionsList.AddCategoriesSortList(GetSectionId(ESection::MacroOutputs), ActiveGraph->GetCategories(EVoxelGraphParameterType::Output));
 
 	if (!Toolkit->bIsMacroLibrary)
 	{
-		OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::Parameters), ActiveGraph->GetCategories(EVoxelGraphParameterType::Parameter));
+		OutActionsList.AddCategoriesSortList(GetSectionId(ESection::Parameters), ActiveGraph->GetCategories(EVoxelGraphParameterType::Parameter));
 	}
 
-	OutActionsList.AddCategoriesSortList(GetSectionId(EMembersNodeSection::LocalVariables), ActiveGraph->GetCategories(EVoxelGraphParameterType::LocalVariable));
+	OutActionsList.AddCategoriesSortList(GetSectionId(ESection::LocalVariables), ActiveGraph->GetCategories(EVoxelGraphParameterType::LocalVariable));
 
 	for (const FVoxelGraphParameter& Parameter : ActiveGraph->Parameters)
 	{
@@ -257,7 +255,7 @@ void SMembers::CollectSortedActions(FVoxelMembersActionsSortHelper& OutActionsLi
 	}
 }
 
-void SMembers::SelectBaseObject()
+void SVoxelGraphMembers::SelectBaseObject()
 {
 	if (const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>())
 	{
@@ -266,7 +264,7 @@ void SMembers::SelectBaseObject()
 	}
 }
 
-void SMembers::GetContextMenuAddOptions(FMenuBuilder& MenuBuilder)
+void SVoxelGraphMembers::GetContextMenuAddOptions(FMenuBuilder& MenuBuilder)
 {
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
 	if (!ensure(Toolkit))
@@ -279,7 +277,7 @@ void SMembers::GetContextMenuAddOptions(FMenuBuilder& MenuBuilder)
 		FText(),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.AddNewMacroDeclaration"),
 		FUIAction{
-			FExecuteAction::CreateSP(this, &SMembers::OnAddNewMember, GetSectionId(Toolkit->bIsMacroLibrary ? EMembersNodeSection::MacroLibraries : EMembersNodeSection::InlineMacros))
+			FExecuteAction::CreateSP(this, &SVoxelGraphMembers::OnAddNewMember, GetSectionId(Toolkit->bIsMacroLibrary ? ESection::MacroLibraries : ESection::InlineMacros))
 		});
 
 	if (!GetObject<UVoxelGraph>())
@@ -292,14 +290,14 @@ void SMembers::GetContextMenuAddOptions(FMenuBuilder& MenuBuilder)
 		FText(),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.AddNewVariable"),
 		FUIAction{
-			FExecuteAction::CreateSP(this, &SMembers::OnAddNewMember, GetSectionId(EMembersNodeSection::MacroInputs))
+			FExecuteAction::CreateSP(this, &SVoxelGraphMembers::OnAddNewMember, GetSectionId(ESection::MacroInputs))
 		});
 	MenuBuilder.AddMenuEntry(
 		INVTEXT("Add new Output"),
 		FText(),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.AddNewVariable"),
 		FUIAction{
-			FExecuteAction::CreateSP(this, &SMembers::OnAddNewMember, GetSectionId(EMembersNodeSection::MacroOutputs))
+			FExecuteAction::CreateSP(this, &SVoxelGraphMembers::OnAddNewMember, GetSectionId(ESection::MacroOutputs))
 		});
 
 	MenuBuilder.AddMenuEntry(
@@ -307,7 +305,7 @@ void SMembers::GetContextMenuAddOptions(FMenuBuilder& MenuBuilder)
 		FText(),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.AddNewVariable"),
 		FUIAction{
-			FExecuteAction::CreateSP(this, &SMembers::OnAddNewMember, GetSectionId(EMembersNodeSection::Parameters))
+			FExecuteAction::CreateSP(this, &SVoxelGraphMembers::OnAddNewMember, GetSectionId(ESection::Parameters))
 		});
 
 	MenuBuilder.AddMenuEntry(
@@ -315,11 +313,11 @@ void SMembers::GetContextMenuAddOptions(FMenuBuilder& MenuBuilder)
 		FText(),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), "BlueprintEditor.AddNewLocalVariable"),
 		FUIAction{
-			FExecuteAction::CreateSP(this, &SMembers::OnAddNewMember, GetSectionId(EMembersNodeSection::LocalVariables))
+			FExecuteAction::CreateSP(this, &SVoxelGraphMembers::OnAddNewMember, GetSectionId(ESection::LocalVariables))
 		});
 }
 
-void SMembers::OnPasteItem(const FString& ImportText, int32 SectionId)
+void SVoxelGraphMembers::OnPasteItem(const FString& ImportText, int32 SectionId)
 {
 	UVoxelGraph* Graph = GetObject<UVoxelGraph>();
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
@@ -330,10 +328,10 @@ void SMembers::OnPasteItem(const FString& ImportText, int32 SectionId)
 	}
 
 	FStringOutputDevice Errors;
-	const EMembersNodeSection Section = GetSection(SectionId);
+	const ESection Section = GetSection(SectionId);
 
-	if (Section == EMembersNodeSection::InlineMacros ||
-		Section == EMembersNodeSection::MacroLibraries)
+	if (Section == ESection::InlineMacros ||
+		Section == ESection::MacroLibraries)
 	{
 		const UVoxelGraph* MacroGraph = FindObject<UVoxelGraph>(nullptr, *ImportText);
 		if (!MacroGraph)
@@ -341,44 +339,13 @@ void SMembers::OnPasteItem(const FString& ImportText, int32 SectionId)
 			return;
 		}
 
-		FName NewMacroName = *MacroGraph->GetGraphName();
-
-		UVoxelGraph* MainGraph = Toolkit->Asset;
-
-		TSet<FName> UsedNames;
-		for (const UVoxelGraph* InlineMacro : MainGraph->InlineMacros)
-		{
-			UsedNames.Add(*InlineMacro->GetGraphName());
-		}
-
-		while (UsedNames.Contains(NewMacroName))
-		{
-			NewMacroName.SetNumber(NewMacroName.GetNumber() + 1);
-		}
-
-		UVoxelGraph* NewGraph;
-
-		{
-			const FVoxelTransaction Transaction(MainGraph, "Paste macro");
-
-			NewGraph = DuplicateObject<UVoxelGraph>(MacroGraph, MainGraph, NAME_Name);
-			NewGraph->MainEdGraph = DuplicateObject<UVoxelEdGraph>(Cast<UVoxelEdGraph>(MacroGraph->MainEdGraph), NewGraph, NAME_None);
-			NewGraph->SetGraphName(NewMacroName.ToString());
-			NewGraph->OnParametersChanged.AddSP(Toolkit.Get(), &FVoxelGraphToolkit::FixupGraphParameters);
-			Cast<UVoxelEdGraph>(NewGraph->MainEdGraph)->WeakToolkit = Toolkit;
-
-			MainGraph->InlineMacros.Add(NewGraph);
-		}
-
-		Toolkit->UpdateDetailsView(NewGraph);
-		Toolkit->OpenGraphAndBringToFront(NewGraph->MainEdGraph, false);
-		Toolkit->SelectMember(NewGraph, true, true);
+		FVoxelGraphMembersMacroSchemaAction::OnPaste(Toolkit, MacroGraph);
 	}
 	else if (
-		Section == EMembersNodeSection::Parameters ||
-		Section == EMembersNodeSection::MacroInputs ||
-		Section == EMembersNodeSection::MacroOutputs ||
-		Section == EMembersNodeSection::LocalVariables)
+		Section == ESection::Parameters ||
+		Section == ESection::MacroInputs ||
+		Section == ESection::MacroOutputs ||
+		Section == ESection::LocalVariables)
 	{
 		FVoxelGraphParameter NewParameter;
 		FVoxelGraphParameter::StaticStruct()->ImportText(
@@ -406,21 +373,21 @@ void SMembers::OnPasteItem(const FString& ImportText, int32 SectionId)
 	}
 }
 
-bool SMembers::CanPasteItem(const FString& ImportText, int32 SectionId)
+bool SVoxelGraphMembers::CanPasteItem(const FString& ImportText, int32 SectionId)
 {
 	FStringOutputDevice Errors;
-	const EMembersNodeSection Section = GetSection(SectionId);
+	const ESection Section = GetSection(SectionId);
 
-	if (Section == EMembersNodeSection::InlineMacros ||
-		Section == EMembersNodeSection::MacroLibraries)
+	if (Section == ESection::InlineMacros ||
+		Section == ESection::MacroLibraries)
 	{
 		return FindObject<UVoxelGraph>(nullptr, *ImportText) != nullptr;
 	}
 	else if (
-		Section == EMembersNodeSection::Parameters ||
-		Section == EMembersNodeSection::MacroInputs ||
-		Section == EMembersNodeSection::MacroOutputs ||
-		Section == EMembersNodeSection::LocalVariables)
+		Section == ESection::Parameters ||
+		Section == ESection::MacroInputs ||
+		Section == ESection::MacroOutputs ||
+		Section == ESection::LocalVariables)
 	{
 		FVoxelGraphParameter Parameter;
 		FVoxelGraphParameter::StaticStruct()->ImportText(
@@ -439,7 +406,7 @@ bool SMembers::CanPasteItem(const FString& ImportText, int32 SectionId)
 	return Errors.IsEmpty();
 }
 
-void SMembers::OnAddNewMember(int32 SectionId)
+void SVoxelGraphMembers::OnAddNewMember(int32 SectionId)
 {
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit<FVoxelGraphToolkit>();
 	if (!ensure(Toolkit))
@@ -447,15 +414,15 @@ void SMembers::OnAddNewMember(int32 SectionId)
 		return;
 	}
 
-	const EMembersNodeSection Section = GetSection(SectionId);
-	if (!ensure(Section != EMembersNodeSection::None) ||
-		!ensure(Section != EMembersNodeSection::Graph))
+	const ESection Section = GetSection(SectionId);
+	if (!ensure(Section != ESection::None) ||
+		!ensure(Section != ESection::Graph))
 	{
 		return;
 	}
 
-	if (Section == EMembersNodeSection::InlineMacros ||
-		Section == EMembersNodeSection::MacroLibraries)
+	if (Section == ESection::InlineMacros ||
+		Section == ESection::MacroLibraries)
 	{
 		FVoxelGraphSchemaAction_NewInlineMacro Action;
 		Action.TargetCategory = GetPasteCategory();
@@ -475,7 +442,7 @@ void SMembers::OnAddNewMember(int32 SectionId)
 	Action.PerformAction(EdGraph, nullptr, Toolkit->FindLocationInGraph());
 }
 
-const TArray<FString>& SMembers::GetCopyPrefixes() const
+const TArray<FString>& SVoxelGraphMembers::GetCopyPrefixes() const
 {
 	static const TArray<FString> CopyPrefixes
 	{
@@ -492,11 +459,11 @@ const TArray<FString>& SMembers::GetCopyPrefixes() const
 	return CopyPrefixes;
 }
 
-TArray<FString>& SMembers::GetEditableCategories(const int32 SectionId)
+TArray<FString>& SVoxelGraphMembers::GetEditableCategories(const int32 SectionId)
 {
-	const EMembersNodeSection Section = GetSection(SectionId);
-	if (Section == EMembersNodeSection::InlineMacros ||
-		Section == EMembersNodeSection::MacroLibraries)
+	const ESection Section = GetSection(SectionId);
+	if (Section == ESection::InlineMacros ||
+		Section == ESection::MacroLibraries)
 	{
 		return GetToolkit<FVoxelGraphToolkit>()->Asset->InlineMacroCategories.Categories;
 	}
@@ -515,7 +482,7 @@ TArray<FString>& SMembers::GetEditableCategories(const int32 SectionId)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void SMembers::OnParametersChanged(const UVoxelGraph::EParameterChangeType ChangeType)
+void SVoxelGraphMembers::OnParametersChanged(const UVoxelGraph::EParameterChangeType ChangeType)
 {
 	switch (ChangeType)
 	{
@@ -524,5 +491,3 @@ void SMembers::OnParametersChanged(const UVoxelGraph::EParameterChangeType Chang
 	case UVoxelGraph::EParameterChangeType::DefaultValue: break;
 	}
 }
-
-END_VOXEL_NAMESPACE(Graph)

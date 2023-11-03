@@ -44,7 +44,7 @@ DEFINE_FUNCTION(UVoxelGraphFunctionLibrary::execK2_QueryVoxelChannel)
 
 	const FVoxelPinType ValueType = Value.GetType().GetExposedType();
 	const FVoxelPinType ExpectedType(*Property);
-	if (!ValueType.CanBeCastedTo(ExpectedType))
+	if (!ValueType.CanBeCastedTo_K2(ExpectedType))
 	{
 		VOXEL_MESSAGE(Error, "Channel returned a value with type {0}, but the blueprint Value pin has type {1}",
 			ValueType.ToString(),
@@ -113,8 +113,18 @@ DEFINE_FUNCTION(UVoxelGraphFunctionLibrary::execK2_MultiQueryVoxelChannel)
 		Value = Value.Get<FVoxelBuffer>().GetGenericConstant();
 	}
 
-	const FVoxelPinType ValueType = Value.GetType().GetExposedType();
-	if (!ValueType.CanBeCastedTo(ExpectedType))
+	FVoxelPinType ValueType;
+	if (ExpectedType.IsBufferArray() &&
+		Value.IsBuffer())
+	{
+		ValueType = Value.GetType().WithBufferArray(true).GetExposedType();
+	}
+	else
+	{
+		ValueType = Value.GetType().GetExposedType();
+	}
+
+	if (!ValueType.CanBeCastedTo_K2(ExpectedType))
 	{
 		VOXEL_MESSAGE(Error, "Channel returned a value with type {0}, but the blueprint Value pin has type {1}",
 			ValueType.ToString(),
@@ -139,7 +149,7 @@ FVoxelRuntimePinValue UVoxelGraphFunctionLibrary::QueryVoxelChannel(
 	const int32 LOD,
 	const float GradientStep)
 {
-	VOXEL_FUNCTION_COUNTER_LLM()
+	VOXEL_FUNCTION_COUNTER()
 	ensure(IsInGameThread());
 
 	if (!WorldContextObject)
@@ -155,7 +165,7 @@ FVoxelRuntimePinValue UVoxelGraphFunctionLibrary::QueryVoxelChannel(
 		return {};
 	}
 
-	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = GVoxelChannelManager->GetWorldChannelManager(World);
+	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(World);
 	const TSharedPtr<FVoxelWorldChannel> WorldChannel = ChannelManager->FindChannel(ChannelName);
 	if (!WorldChannel)
 	{
@@ -165,8 +175,8 @@ FVoxelRuntimePinValue UVoxelGraphFunctionLibrary::QueryVoxelChannel(
 		return {};
 	}
 
-	FVoxelRuntimeChannelCache Cache;
-	const TSharedRef<FVoxelRuntimeChannel> RuntimeChannel = WorldChannel->GetRuntimeChannel(FVoxelTransformRef::Identity(), Cache);
+	const TSharedRef<FVoxelRuntimeChannelCache> Cache = FVoxelRuntimeChannelCache::Create();
+	const TSharedRef<FVoxelRuntimeChannel> RuntimeChannel = WorldChannel->GetRuntimeChannel(FVoxelTransformRef::Identity(), *Cache);
 
 	FVoxelFloatBufferStorage X; X.Allocate(Positions.Num());
 	FVoxelFloatBufferStorage Y; Y.Allocate(Positions.Num());
@@ -193,7 +203,7 @@ FVoxelRuntimePinValue UVoxelGraphFunctionLibrary::QueryVoxelChannel(
 	const bool bSuccess = FVoxelTaskGroup::TryRunSynchronouslyGeneric(FVoxelQueryContext::Make(RuntimeInfo), [&]
 	{
 		const TSharedRef<FVoxelQueryParameters> Parameters = MakeVoxelShared<FVoxelQueryParameters>();
-		Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(FVoxelVectorBuffer::Make(X, Y, Z));
+		Parameters->Add<FVoxelPositionQueryParameter>().Initialize(FVoxelVectorBuffer::Make(X, Y, Z));
 		Parameters->Add<FVoxelLODQueryParameter>().LOD = LOD;
 		Parameters->Add<FVoxelGradientStepQueryParameter>().Step = GradientStep;
 
@@ -237,13 +247,49 @@ FVoxelRuntimePinValue UVoxelGraphFunctionLibrary::QueryVoxelChannel(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+TSharedPtr<FVoxelBrushRef> UVoxelGraphFunctionLibrary::RegisterBrush(
+	const UWorld* World,
+	const FName Channel,
+	const FName DebugName,
+	const FVoxelPinType& Type,
+	FVoxelComputeValue Compute,
+	const FVoxelBox& LocalBounds,
+	const FVoxelTransformRef& LocalToWorld,
+	const FVoxelBrushPriority& Priority)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(World);
+	const TSharedPtr<FVoxelWorldChannel> WorldChannel = ChannelManager->FindChannel(Channel);
+	if (!ensure(WorldChannel) ||
+		!ensure(WorldChannel->Definition.Type == Type))
+	{
+		return nullptr;
+	}
+
+	const TSharedRef<FVoxelBrush> Brush = MakeVoxelShared<FVoxelBrush>(
+		DebugName,
+		Priority,
+		LocalBounds,
+		LocalToWorld,
+		MoveTemp(Compute));
+
+	TSharedPtr<FVoxelBrushRef> BrushRef;
+	WorldChannel->AddBrush(Brush, BrushRef);
+	return BrushRef;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void UVoxelGraphFunctionLibrary::RegisterVoxelChannel(
 	const UObject* WorldContextObject,
 	const FName ChannelName,
 	const FVoxelPinType Type,
 	FVoxelPinValue DefaultValue)
 {
-	VOXEL_FUNCTION_COUNTER_LLM()
+	VOXEL_FUNCTION_COUNTER()
 	ensure(IsInGameThread());
 
 	if (!WorldContextObject)
@@ -282,7 +328,7 @@ void UVoxelGraphFunctionLibrary::RegisterVoxelChannel(
 		return;
 	}
 
-	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = GVoxelChannelManager->GetWorldChannelManager(World);
+	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(World);
 	if (ChannelManager->FindChannel(ChannelName))
 	{
 		VOXEL_MESSAGE(Error, "Channel {0} is already registered", ChannelName);

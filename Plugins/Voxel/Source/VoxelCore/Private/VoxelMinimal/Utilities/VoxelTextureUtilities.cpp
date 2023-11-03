@@ -21,7 +21,7 @@ UTexture2D* FVoxelTextureUtilities::GetDefaultTexture2D()
 
 UTexture2DArray* FVoxelTextureUtilities::GetDefaultTexture2DArray()
 {
-	UTexture2DArray* Texture = LoadObject<UTexture2DArray>(nullptr, TEXT("/Voxel/MaterialFunctions/DefaultTextureArray.DefaultTextureArray"));
+	UTexture2DArray* Texture = LoadObject<UTexture2DArray>(nullptr, TEXT("/Voxel/Default/DefaultTextureArray.DefaultTextureArray"));
 	ensure(Texture);
 	return Texture;
 }
@@ -55,7 +55,7 @@ UTexture2D* FVoxelTextureUtilities::CreateTexture2D(
 	const int32 NumBlocksY = SizeY / GPixelFormats[PixelFormat].BlockSizeY;
 
 	const int64 NumBytes = int64(NumBlocksX) * int64(NumBlocksY) * int64(GPixelFormats[PixelFormat].BlockBytes);
-	if (!ensure(NumBytes < MAX_uint32))
+	if (!ensure(NumBytes < MAX_int32))
 	{
 		return nullptr;
 	}
@@ -69,6 +69,8 @@ UTexture2D* FVoxelTextureUtilities::CreateTexture2D(
 
 	Texture->SRGB = bSRGB;
 	Texture->Filter = Filter;
+	// Not sure if needed
+	Texture->NeverStream = true;
 
 	FTexturePlatformData* PlatformData = new FTexturePlatformData();
 	PlatformData->SizeX = SizeX;
@@ -112,6 +114,40 @@ UTexture2D* FVoxelTextureUtilities::CreateTexture2D(
 	Texture->UpdateResource();
 
 	return Texture;
+}
+
+void FVoxelTextureUtilities::RemoveBulkData(UTexture2D* Texture)
+{
+	VOXEL_FUNCTION_COUNTER();
+	check(IsInGameThread());
+
+	if (!ensure(Texture))
+	{
+		return;
+	}
+
+	// Make sure texture is streamed in before clearing bulk data
+	VOXEL_ENQUEUE_RENDER_COMMAND(RemoveBulkData)([WeakTexture = MakeWeakObjectPtr(Texture)](FRHICommandListImmediate& RHICmdList)
+	{
+		FVoxelUtilities::RunOnGameThread([=]
+		{
+			UTexture2D* LocalTexture = WeakTexture.Get();
+			if (!ensure(LocalTexture))
+			{
+				return;
+			}
+
+			FTexturePlatformData* PlatformData = LocalTexture->GetPlatformData();
+			if (!ensure(PlatformData) ||
+				!ensure(PlatformData->Mips.Num() == 1))
+			{
+				return;
+			}
+
+			FTexture2DMipMap& Mip = PlatformData->Mips[0];
+			Mip.BulkData.RemoveBulkData();
+		});
+	});
 }
 
 UTexture2DArray* FVoxelTextureUtilities::CreateTextureArray(

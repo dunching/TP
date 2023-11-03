@@ -2,11 +2,10 @@
 
 #include "VoxelEditorMinimal.h"
 #include "VoxelGraph.h"
+#include "VoxelMacroLibrary.h"
 
 VOXEL_CUSTOMIZE_CLASS(UVoxelGraph)(IDetailLayoutBuilder& DetailLayout)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
-
 	const TSharedRef<IPropertyHandle> Parameters = DetailLayout.GetProperty(GET_MEMBER_NAME_STATIC(UVoxelGraph, Parameters));
 	Parameters->MarkHiddenByCustomization();
 
@@ -34,6 +33,12 @@ VOXEL_CUSTOMIZE_CLASS(UVoxelGraph)(IDetailLayoutBuilder& DetailLayout)
 
 	const TSharedRef<IPropertyHandle> CategoryHandle = DetailLayout.GetProperty(GET_MEMBER_NAME_STATIC(UVoxelGraph, Category), UVoxelGraph::StaticClass());
 	IDetailPropertyRow& CategoryRow = DetailLayout.AddPropertyToCategory(CategoryHandle);
+
+	const TSharedRef<IPropertyHandle> ExposeToLibraryHandle = DetailLayout.GetProperty(GET_MEMBER_NAME_STATIC(UVoxelGraph, bExposeToLibrary));
+	if (!Graph->GetTypedOuter<UVoxelMacroLibrary>())
+	{
+		ExposeToLibraryHandle->MarkHiddenByCustomization();
+	}
 
 	const UVoxelGraph* MainGraph = Graph->GetTypedOuter<UVoxelGraph>();
 	if (!MainGraph)

@@ -10,7 +10,7 @@
 #include "Editor/PropertyEditor/Private/DetailPropertyRow.h"
 #undef private
 
-TVoxelSet<TWeakPtr<IPropertyHandle>> GVoxelWeakPropertyHandles;
+TSet<TWeakPtr<IPropertyHandle>> GVoxelWeakPropertyHandles;
 
 VOXEL_RUN_ON_STARTUP_EDITOR(RegisterVoxelWeakPropertyHandles)
 {
@@ -28,12 +28,12 @@ VOXEL_RUN_ON_STARTUP_EDITOR(RegisterVoxelWeakPropertyHandles)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FVoxelRefreshDelegateTicker : public FVoxelTicker
+class FVoxelRefreshDelegateTicker : public FVoxelEditorSingleton
 {
 public:
 	TSet<TWeakPtr<IPropertyUtilities>> UtilitiesToRefresh;
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelEditorSingleton Interface
 	virtual void Tick() override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -53,15 +53,9 @@ public:
 			Pinned->ForceRefresh();
 		}
 	}
-	//~ End FVoxelTicker Interface
+	//~ End FVoxelEditorSingleton Interface
 };
-
-FVoxelRefreshDelegateTicker* GVoxelRefreshDelegateTicker = nullptr;
-
-VOXEL_RUN_ON_STARTUP_EDITOR(RegisterVoxelRefreshDelegateTicker)
-{
-	GVoxelRefreshDelegateTicker = new FVoxelRefreshDelegateTicker();
-}
+FVoxelRefreshDelegateTicker* GVoxelRefreshDelegateTicker = MakeVoxelSingleton(FVoxelRefreshDelegateTicker);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -389,24 +383,27 @@ bool FVoxelEditorUtilities::GetRayInfo(FEditorViewportClient* ViewportClient, FV
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+class FVoxelThumbnailTicker : public FVoxelEditorSingleton
+{
+public:
+	TSharedPtr<FAssetThumbnailPool> Pool;
+
+	//~ Begin FVoxelEditorSingleton Interface
+	virtual void Initialize() override
+	{
+		Pool = MakeVoxelShared<FAssetThumbnailPool>(48);
+	}
+	virtual void Tick() override
+	{
+		VOXEL_FUNCTION_COUNTER();
+
+		Pool->Tick(FApp::GetDeltaTime());
+	}
+	//~ End FVoxelEditorSingleton Interface
+};
+FVoxelThumbnailTicker* GVoxelThumbnailTicker = new FVoxelThumbnailTicker();
+
 TSharedRef<FAssetThumbnailPool> FVoxelEditorUtilities::GetThumbnailPool()
 {
-	class FVoxelThumbnailTicker : public FVoxelTicker
-	{
-	public:
-		const TSharedRef<FAssetThumbnailPool> Pool = MakeVoxelShared<FAssetThumbnailPool>(48);
-
-		//~ Begin FVoxelTicker Interface
-		virtual void Tick() override
-		{
-			VOXEL_FUNCTION_COUNTER();
-
-			Pool->Tick(FApp::GetDeltaTime());
-		}
-		//~ End FVoxelTicker Interface
-	};
-
-	static FVoxelThumbnailTicker* Ticker = new FVoxelThumbnailTicker();
-
-	return Ticker->Pool;
+	return GVoxelThumbnailTicker->Pool.ToSharedRef();
 }

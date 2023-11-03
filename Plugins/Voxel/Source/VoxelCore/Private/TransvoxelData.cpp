@@ -34,7 +34,8 @@
 //
 //================================================================================
 
-BEGIN_VOXEL_NAMESPACE(Transvoxel)
+namespace Voxel::Transvoxel
+{
 
 const TConstArray<FCellIndices, 16> CellClassToCellIndices =
 {
@@ -363,4 +364,4 @@ const TConstArray<FCellVertices, 256> CellCodeToCellVertices =
 	{}
 };
 
-END_VOXEL_NAMESPACE(Transvoxel)
+}

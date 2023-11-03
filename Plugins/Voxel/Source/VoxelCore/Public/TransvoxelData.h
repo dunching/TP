@@ -36,7 +36,8 @@
 //
 //================================================================================
 
-BEGIN_VOXEL_NAMESPACE(Transvoxel)
+namespace Voxel::Transvoxel
+{
 
 struct FCellIndices
 {
@@ -192,4 +193,4 @@ checkStatic(sizeof(CellCodeToPackedCellClass) == 128);
 checkStatic(sizeof(CellClassToCellIndices) == 128);
 checkStatic(sizeof(CellCodeToCellVertices) == 2048);
 
-END_VOXEL_NAMESPACE(Transvoxel)
+}

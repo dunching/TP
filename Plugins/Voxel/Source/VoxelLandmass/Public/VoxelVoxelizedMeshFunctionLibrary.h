@@ -41,7 +41,7 @@ struct VOXELLANDMASS_API FVoxelVoxelizedMeshPinType : public FVoxelObjectPinType
 	{
 		if (bSetObject)
 		{
-			Object = Struct.Asset.Get();
+			Object = Struct.Asset;
 		}
 		else
 		{
@@ -62,7 +62,7 @@ struct VOXELLANDMASS_API FVoxelVoxelizedMeshStaticMeshPinType : public FVoxelObj
 	{
 		if (bSetObject)
 		{
-			Object = Struct.StaticMesh.Get();
+			Object = Struct.StaticMesh;
 		}
 		else
 		{

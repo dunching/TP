@@ -7,11 +7,9 @@
 
 struct FVoxelGraphMembersMacroLibrarySchemaAction;
 
-BEGIN_VOXEL_NAMESPACE(Graph)
+class SVoxelGraphMembers;
 
-class SMembers;
-
-class SMacroLibraryPaletteItem : public SGraphPaletteItem
+class SVoxelGraphMembersMacroLibraryPaletteItem : public SGraphPaletteItem
 {
 public:
 	VOXEL_SLATE_ARGS()
@@ -31,5 +29,3 @@ private:
 	TSharedRef<SWidget> CreateVisibilityWidget() const;
 	TSharedPtr<FVoxelGraphMembersMacroLibrarySchemaAction> GetAction() const;
 };
-
-END_VOXEL_NAMESPACE(Graph)

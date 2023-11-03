@@ -72,6 +72,13 @@ private:
 		const FVoxelDetailCategoryInterface& DetailCategoryInterface,
 		const TSharedPtr<SBox>& ProviderDropdownContainer);
 
+	void AddParameters(
+		const FVoxelDetailInterface& DetailInterface,
+		FName FullCategoryPath,
+		const TArray<FString>& Categories,
+		const TVoxelArray<TVoxelArray<IVoxelParameterView*>>& AllChildParameterViews,
+		int32 CategoryIndex);
+
 	void AddProviderProperty(
 		const FVoxelDetailInterface& DetailInterface,
 		const TSharedPtr<SBox>& ProviderDropdownContainer);

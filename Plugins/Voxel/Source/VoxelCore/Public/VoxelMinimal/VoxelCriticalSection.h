@@ -230,52 +230,72 @@ private:
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FVoxelFastCriticalSection
+struct FVoxelCacheLinePadding
 {
 public:
-	FVoxelFastCriticalSection()
+	FORCEINLINE FVoxelCacheLinePadding()
 	{
 	}
-	// Allow copying for convenience
-	FVoxelFastCriticalSection(const FVoxelFastCriticalSection&)
+	FORCEINLINE FVoxelCacheLinePadding(const FVoxelCacheLinePadding&)
 	{
 	}
-	FVoxelFastCriticalSection& operator=(const FVoxelFastCriticalSection&)
+	FORCEINLINE FVoxelCacheLinePadding(FVoxelCacheLinePadding&&)
+	{
+	}
+	FORCEINLINE FVoxelCacheLinePadding& operator=(const FVoxelCacheLinePadding&)
+	{
+		return *this;
+	}
+	FORCEINLINE FVoxelCacheLinePadding& operator=(FVoxelCacheLinePadding&&)
 	{
 		return *this;
 	}
 
+private:
+	uint8 Padding[PLATFORM_CACHE_LINE_SIZE * 2];
+};
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+template<typename StorageType>
+class TVoxelFastCriticalSectionImpl
+{
+public:
+	TVoxelFastCriticalSectionImpl() = default;
+
 	FORCEINLINE void Lock()
 	{
-		checkVoxelSlow(LockerThreadId.Load() != FPlatformTLS::GetCurrentThreadId());
+		checkVoxelSlow(Storage.LockerThreadId.Load() != FPlatformTLS::GetCurrentThreadId());
 
 		while (true)
 		{
-			if (bIsLocked.Exchange(true, std::memory_order_acquire) == false)
+			if (Storage.bIsLocked.Exchange(true, std::memory_order_acquire) == false)
 			{
 				break;
 			}
 
-			while (bIsLocked.Load(std::memory_order_relaxed) == true)
+			while (Storage.bIsLocked.Load(std::memory_order_relaxed) == true)
 			{
 				FPlatformProcess::Yield();
 			}
 		}
 
-		checkVoxelSlow(LockerThreadId.Load() == 0);
-		VOXEL_DEBUG_ONLY(LockerThreadId.Store(FPlatformTLS::GetCurrentThreadId()));
+		checkVoxelSlow(Storage.LockerThreadId.Load() == 0);
+		VOXEL_DEBUG_ONLY(Storage.LockerThreadId.Store(FPlatformTLS::GetCurrentThreadId()));
 	}
 	FORCEINLINE void Unlock()
 	{
-		checkVoxelSlow(LockerThreadId.Load() == FPlatformTLS::GetCurrentThreadId());
-		VOXEL_DEBUG_ONLY(LockerThreadId.Store(0));
+		checkVoxelSlow(Storage.LockerThreadId.Load() == FPlatformTLS::GetCurrentThreadId());
+		VOXEL_DEBUG_ONLY(Storage.LockerThreadId.Store(0));
 
-		bIsLocked.Store(false, std::memory_order_release);
+		Storage.bIsLocked.Store(false, std::memory_order_release);
 	}
 
 	FORCEINLINE bool IsLocked() const
 	{
-		return bIsLocked.Load(std::memory_order_relaxed);
+		return Storage.bIsLocked.Load(std::memory_order_relaxed);
 	}
 	FORCEINLINE bool ShouldRecordStats() const
 	{
@@ -284,22 +304,37 @@ public:
 #if VOXEL_DEBUG
 	FORCEINLINE bool IsLockedByThisThread_Debug() const
 	{
-		return LockerThreadId.Load() == FPlatformTLS::GetCurrentThreadId();
+		return Storage.LockerThreadId.Load() == FPlatformTLS::GetCurrentThreadId();
 	}
 #endif
 
 private:
-	// Prevent false sharing
-	// We don't want to use alignment as it messes up with Unreal's allocator,
-	// instead just add 128B of padding before and after, ensuring the bool is
-	// alone on its cache line
-	uint8 PaddingA[PLATFORM_CACHE_LINE_SIZE * 2];
-	TVoxelAtomic<bool> bIsLocked = false;
-#if VOXEL_DEBUG
-	TVoxelAtomic<uint32> LockerThreadId = 0;
-#endif
-	uint8 PaddingB[PLATFORM_CACHE_LINE_SIZE * 2];
+	StorageType Storage;
 };
+
+namespace Impl
+{
+	struct FVoxelFastCriticalSectionStorage
+	{
+		FVoxelCacheLinePadding PaddingA;
+		TVoxelAtomic<bool> bIsLocked = false;
+#if VOXEL_DEBUG
+		TVoxelAtomic<uint32> LockerThreadId = 0;
+#endif
+		FVoxelCacheLinePadding PaddingB;
+	};
+
+	struct FVoxelFastCriticalSectionStorage_NoPadding
+	{
+		TVoxelAtomic<bool> bIsLocked = false;
+#if VOXEL_DEBUG
+		TVoxelAtomic<uint32> LockerThreadId = 0;
+#endif
+	};
+}
+
+using FVoxelFastCriticalSection = TVoxelFastCriticalSectionImpl<Impl::FVoxelFastCriticalSectionStorage>;
+using FVoxelFastCriticalSection_NoPadding = TVoxelFastCriticalSectionImpl<Impl::FVoxelFastCriticalSectionStorage_NoPadding>;
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////

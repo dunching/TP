@@ -478,7 +478,7 @@ struct VOXELGRAPHCORE_API FVoxelNode_Bitwise_Not : public FVoxelISPCNode
 	}
 };
 
-USTRUCT(Category = "Math|Rotation", meta = (ShowInShortList, NativeMakeFunc))
+USTRUCT(Category = "Math|Rotation", meta = (NativeMakeFunc))
 struct VOXELGRAPHCORE_API FVoxelNode_MakeQuaternion : public FVoxelISPCNode
 {
 	GENERATED_BODY()
@@ -495,7 +495,7 @@ struct VOXELGRAPHCORE_API FVoxelNode_MakeQuaternion : public FVoxelISPCNode
 	}
 };
 
-USTRUCT(Category = "Math|Rotation", meta = (ShowInShortList, NativeBreakFunc))
+USTRUCT(Category = "Math|Rotation", meta = (NativeBreakFunc))
 struct VOXELGRAPHCORE_API FVoxelNode_BreakQuaternion : public FVoxelISPCNode
 {
 	GENERATED_BODY()

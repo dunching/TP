@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "VoxelCoreMinimal.h"
+#include "VoxelMinimal.h"
 #include "Misc/Guid.h"
 
 struct VOXELSPAWNER_API FVoxelFoliageObjectVersion

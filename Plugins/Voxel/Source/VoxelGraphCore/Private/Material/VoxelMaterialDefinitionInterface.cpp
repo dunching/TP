@@ -7,12 +7,15 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
-FVoxelMaterialDefinitionManager* GVoxelMaterialDefinitionManager = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelMaterialDefinitionManager)
+VOXEL_CONSOLE_COMMAND(
+	LogVoxelMaterialDefinitionIds,
+	"voxel.material.LogIds",
+	"")
 {
-	GVoxelMaterialDefinitionManager = new FVoxelMaterialDefinitionManager();
+	GVoxelMaterialDefinitionManager->LogIds();
 }
+
+FVoxelMaterialDefinitionManager* GVoxelMaterialDefinitionManager = MakeVoxelSingleton(FVoxelMaterialDefinitionManager);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -64,6 +67,7 @@ void FVoxelMaterialDefinitionDynamicMaterialParameter::AddOnChanged(const FSimpl
 FVoxelMaterialDefinitionManager::FVoxelMaterialDefinitionManager()
 {
 	Materials.Add(nullptr);
+	WeakMaterials_RequiresLock.Add(nullptr);
 }
 
 FVoxelMaterialDefinitionRef FVoxelMaterialDefinitionManager::Register_GameThread(UVoxelMaterialDefinitionInterface& Material)
@@ -87,6 +91,9 @@ FVoxelMaterialDefinitionRef FVoxelMaterialDefinitionManager::Register_GameThread
 	{
 		ensure(Materials.Num() < GVoxelMaterialDefinitionMax);
 		Materials.Add(&Material);
+
+		VOXEL_SCOPE_LOCK(CriticalSection);
+		WeakMaterials_RequiresLock.Add(&Material);
 	}
 
 	MaterialRefs.Add(&Material, MaterialRef);
@@ -109,7 +116,6 @@ FVoxelMaterialDefinitionRef FVoxelMaterialDefinitionManager::Register_GameThread
 
 UVoxelMaterialDefinitionInterface* FVoxelMaterialDefinitionManager::GetMaterial_GameThread(const FVoxelMaterialDefinitionRef& Ref)
 {
-	VOXEL_FUNCTION_COUNTER();
 	check(IsInGameThread());
 
 	if (!Materials.IsValidIndex(Ref.Index))
@@ -118,6 +124,21 @@ UVoxelMaterialDefinitionInterface* FVoxelMaterialDefinitionManager::GetMaterial_
 	}
 
 	return Materials[Ref.Index];
+}
+
+TWeakObjectPtr<UVoxelMaterialDefinitionInterface> FVoxelMaterialDefinitionManager::GetMaterial_AnyThread(const FVoxelMaterialDefinitionRef& Ref)
+{
+	VOXEL_SCOPE_LOCK(CriticalSection);
+
+	checkVoxelSlow(Materials.Num() == WeakMaterials_RequiresLock.Num());
+	if (!WeakMaterials_RequiresLock.IsValidIndex(Ref.Index))
+	{
+		return nullptr;
+	}
+
+	const TWeakObjectPtr<UVoxelMaterialDefinitionInterface> Result = WeakMaterials_RequiresLock[Ref.Index];
+	checkVoxelSlow(!Result.IsValid() || Result == Materials[Ref.Index]);
+	return Result;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -152,11 +173,6 @@ void FVoxelMaterialDefinitionManager::Tick()
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
-
-FString FVoxelMaterialDefinitionManager::GetReferencerName() const
-{
-	return "FVoxelMaterialDefinitionManager";
-}
 
 void FVoxelMaterialDefinitionManager::AddReferencedObjects(FReferenceCollector& Collector)
 {
@@ -194,6 +210,10 @@ void FVoxelMaterialDefinitionManager::QueueRebuildTextures(UVoxelMaterialDefinit
 	MaterialDefinitionsToRebuild.Add(&Definition);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void FVoxelMaterialDefinitionManager::CacheParameters()
 {
 	VOXEL_FUNCTION_COUNTER();
@@ -208,23 +228,11 @@ void FVoxelMaterialDefinitionManager::CacheParameters()
 			continue;
 		}
 
-		TVoxelAddOnlyMap<FGuid, FName> GuidToParameterName;
-		GuidToParameterName.Reserve(MaterialDefinition->Parameters.Num());
-		for (const FVoxelParameter& Parameter : MaterialDefinition->Parameters)
-		{
-			GuidToParameterName.Add_CheckNew(Parameter.Guid, Parameter.Name);
-		}
-
+		const FString BaseName = "VOXELPARAM_" + MaterialDefinition->GetGuid().ToString() + "_";
 		for (const auto& It : MaterialDefinition->GuidToParameterData)
 		{
-			const FName* NamePtr = GuidToParameterName.Find(It.Key);
-			if (!ensure(NamePtr))
-			{
-				continue;
-			}
-
 			It.Value->CacheParameters(
-				FName("VOXELPARAM_" + NamePtr->ToString()),
+				FName(BaseName + It.Key.ToString()),
 				*CachedParameters);
 		}
 	}
@@ -253,5 +261,27 @@ void FVoxelMaterialDefinitionManager::SetAllParameters(UMaterialInstanceDynamic&
 	{
 		VOXEL_SCOPE_COUNTER("SetTextureParameterValue");
 		Instance.SetTextureParameterValue(It.Key, It.Value.Get());
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelMaterialDefinitionManager::LogIds()
+{
+	VOXEL_FUNCTION_COUNTER();
+	check(IsInGameThread());
+
+	for (int32 Index = 0; Index < Materials.Num(); Index++)
+	{
+		if (const UVoxelMaterialDefinitionInterface* Material = Materials[Index])
+		{
+			LOG_VOXEL(Log, "%d: %s", Index, *Material->GetPathName());
+		}
+		else
+		{
+			LOG_VOXEL(Log, "%d: null", Index);
+		}
 	}
 }

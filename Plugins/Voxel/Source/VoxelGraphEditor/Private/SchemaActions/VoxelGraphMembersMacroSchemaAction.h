@@ -40,6 +40,8 @@ public:
 	virtual FEdGraphSchemaActionDefiningObject GetPersistentItemDefiningObject() const override;
 	//~ End FEdGraphSchemaAction Interface
 
+	static void OnPaste(const TSharedPtr<FVoxelGraphToolkit>& Toolkit, const UVoxelGraph* GraphToCopy);
+
 protected:
 	bool IsMacroUsed(UVoxelGraph* LookupGraph, UVoxelGraph* MacroGraph) const;
 	void InvalidateMacroNodes(UVoxelGraph* LookupGraph, UVoxelGraph* MacroGraph, bool bDelete) const;

@@ -4,10 +4,11 @@
 #include "VoxelExec.h"
 #include "VoxelEdGraph.h"
 #include "VoxelChannel.h"
-#include "VoxelSpawnable.h"
+#include "VoxelSurface.h"
 #include "VoxelExposedSeed.h"
 #include "VoxelGraphSchema.h"
 #include "VoxelGraphToolkit.h"
+#include "VoxelGraphEditorSettings.h"
 #include "Point/VoxelPointSet.h"
 #include "Nodes/VoxelGraphKnotNode.h"
 #include "Nodes/VoxelGraphStructNode.h"
@@ -136,6 +137,7 @@ FLinearColor FVoxelGraphVisuals::GetPinColor(const FVoxelPinType& InType)
 	const FVoxelPinType Type = InType.GetInnerExposedType();
 
 	const UGraphEditorSettings* Settings = GetDefault<UGraphEditorSettings>();
+	const UVoxelGraphEditorSettings* VoxelSettings = GetDefault<UVoxelGraphEditorSettings>();
 
 	if (Type.IsWildcard())
 	{
@@ -173,13 +175,13 @@ FLinearColor FVoxelGraphVisuals::GetPinColor(const FVoxelPinType& InType)
 	{
 		return Settings->ExecutionPinTypeColor;
 	}
-	else if (Type.Is<FVoxelSpawnable>())
-	{
-		return Settings->TransformPinTypeColor;
-	}
 	else if (Type.Is<FVoxelPointSet>())
 	{
-		return Settings->NamePinTypeColor;
+		return VoxelSettings->PointSetPinColor;
+	}
+	else if (Type.Is<FVoxelSurface>())
+	{
+		return VoxelSettings->SurfacePinColor;
 	}
 	else if (Type.Is<FVector>())
 	{
@@ -197,11 +199,11 @@ FLinearColor FVoxelGraphVisuals::GetPinColor(const FVoxelPinType& InType)
 	}
 	else if (Type.Is<FVoxelExposedSeed>())
 	{
-		return Settings->NamePinTypeColor;
+		return VoxelSettings->SeedPinColor;
 	}
 	else if (Type.Is<FVoxelChannelName>())
 	{
-		return Settings->NamePinTypeColor;
+		return VoxelSettings->ChannelPinColor;
 	}
 	else if (Type.Is<FVoxelFloatRange>())
 	{
@@ -490,7 +492,7 @@ class FVoxelGraphNodeFactory : public FGraphPanelNodeFactory
 
 VOXEL_RUN_ON_STARTUP_EDITOR(RegisterGraphConnectionDrawingPolicyFactory)
 {
-	FEdGraphUtilities::RegisterVisualNodeFactory(MakeVoxelShared<FVoxelGraphNodeFactory>());
-	FEdGraphUtilities::RegisterVisualPinFactory(MakeVoxelShared<FVoxelGraphPanelPinFactory>());
-	FEdGraphUtilities::RegisterVisualPinConnectionFactory(MakeVoxelShared<FVoxelGraphConnectionDrawingPolicyFactory>());
+	FEdGraphUtilities::RegisterVisualNodeFactory(MakeShared<FVoxelGraphNodeFactory>());
+	FEdGraphUtilities::RegisterVisualPinFactory(MakeShared<FVoxelGraphPanelPinFactory>());
+	FEdGraphUtilities::RegisterVisualPinConnectionFactory(MakeShared<FVoxelGraphConnectionDrawingPolicyFactory>());
 }

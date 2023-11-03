@@ -163,9 +163,9 @@ const uint32 GVoxelMemoryTLS = FPlatformTLS::AllocTlsSlot();
 #endif
 
 #if ENABLE_VOXEL_ALLOCATOR && VOXEL_DEBUG
-void FVoxelMemory::CheckIsVoxelAlloc(void* Original)
+void FVoxelMemory::CheckIsVoxelAlloc(const void* Original)
 {
-	FVoxelMemoryScope::GetBlock(Original);
+	FVoxelMemoryScope::GetBlock(ConstCast(Original));
 }
 #endif
 
@@ -174,6 +174,13 @@ void* FVoxelMemory::MallocImpl(const SIZE_T Count, const uint32 Alignment)
 	VOXEL_ALLOW_MALLOC_SCOPE();
 	CheckVoxelMemoryFunction();
 	checkVoxelSlow(Count > 0);
+
+#if ENABLE_LOW_LEVEL_MEM_TRACKER
+	if (!GVoxelLLMDisabled)
+	{
+		CheckVoxelLLMScope();
+	}
+#endif
 
 	if (FVoxelMemoryScope* Scope = static_cast<FVoxelMemoryScope*>(FPlatformTLS::GetTlsValue(GVoxelMemoryTLS)))
 	{

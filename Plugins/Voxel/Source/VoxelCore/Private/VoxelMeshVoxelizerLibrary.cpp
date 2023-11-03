@@ -55,7 +55,7 @@ FVoxelMeshVoxelizerInputData UVoxelMeshVoxelizerLibrary::CreateMeshDataFromStati
 
 	LOG_VOXEL(Log, "Extracting mesh data from GPU for %s", *StaticMesh.GetName());
 
-	ENQUEUE_RENDER_COMMAND(GetMergedSectionFromStaticMesh)([&](FRHICommandListImmediate& RHICmdList)
+	VOXEL_ENQUEUE_RENDER_COMMAND(GetMergedSectionFromStaticMesh)([&](FRHICommandListImmediate& RHICmdList)
 	{
 		{
 			VOXEL_SCOPE_COUNTER("Copy Vertices from GPU");

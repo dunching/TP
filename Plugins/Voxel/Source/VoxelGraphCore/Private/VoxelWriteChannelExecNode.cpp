@@ -1,7 +1,15 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelWriteChannelExecNode.h"
+#include "VoxelGraph.h"
+#include "VoxelSurface.h"
 #include "VoxelQueryChannelNode.h"
+#include "EdGraph/EdGraphNode.h"
+
+FVoxelWriteChannelExecNode::FVoxelWriteChannelExecNode()
+{
+	GetPin(ValuePin).SetType(FVoxelPinType::Make<FVoxelSurface>());
+}
 
 TVoxelUniquePtr<FVoxelExecNodeRuntime> FVoxelWriteChannelExecNode::CreateExecRuntime(const TSharedRef<const FVoxelExecNode>& SharedThis) const
 {
@@ -9,6 +17,21 @@ TVoxelUniquePtr<FVoxelExecNodeRuntime> FVoxelWriteChannelExecNode::CreateExecRun
 }
 
 #if WITH_EDITOR
+void FVoxelWriteChannelExecNode::FDefinition::Initialize(UEdGraphNode& EdGraphNode)
+{
+	GVoxelChannelManager->OnChannelDefinitionsChanged_GameThread.Add(MakeWeakPtrDelegate(this, [this, WeakNode = MakeWeakObjectPtr(&EdGraphNode)]
+	{
+		UEdGraphNode* GraphNode = WeakNode.Get();
+		if (!ensure(GraphNode))
+		{
+			return;
+		}
+
+		GraphNode->ReconstructNode();
+		GraphNode->GetTypedOuter<UVoxelGraph>()->ForceRecompile();
+	}));
+}
+
 bool FVoxelWriteChannelExecNode::FDefinition::OnPinDefaultValueChanged(const FName PinName, const FVoxelPinValue& NewDefaultValue)
 {
 	if (PinName != Node.ChannelPin ||
@@ -40,37 +63,20 @@ void FVoxelWriteChannelExecNodeRuntime::Create()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	PinValuesProvider.Compute(this, [this](const FPinValues& PinValues)
-	{
-		UpdateBrush(PinValues);
-	});
-}
+	const FName ChannelName = GetConstantPin(Node.ChannelPin).Name;
+	const int32 Priority = GetConstantPin(Node.PriorityPin);
+	const TSharedRef<const FVoxelBounds> Bounds = GetConstantPin(Node.BoundsPin);
+	const float Smoothness = GetConstantPin(Node.SmoothnessPin);
 
-void FVoxelWriteChannelExecNodeRuntime::Destroy()
-{
-	VOXEL_FUNCTION_COUNTER();
-	VOXEL_SCOPE_LOCK(CriticalSection);
-	BrushRef = {};
-}
+	const FVoxelQueryScope Scope(nullptr, &GetContext().Get());
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void FVoxelWriteChannelExecNodeRuntime::UpdateBrush(const FPinValues& PinValues)
-{
-	VOXEL_FUNCTION_COUNTER();
-	VOXEL_SCOPE_LOCK(CriticalSection);
-
-	const FVoxelQueryScope Scope(nullptr, GetContextPtr());
-
-	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = GVoxelChannelManager->GetWorldChannelManager(GetWorld());
-	const TSharedPtr<FVoxelWorldChannel> Channel = ChannelManager->FindChannel(PinValues.Channel.Name);
+	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(GetWorld());
+	const TSharedPtr<FVoxelWorldChannel> Channel = ChannelManager->FindChannel(ChannelName);
 	if (!Channel)
 	{
 		VOXEL_MESSAGE(Error, "{0}: No channel named {1} found. Valid names: {2}",
 			this,
-			PinValues.Channel.Name,
+			ChannelName,
 			ChannelManager->GetValidChannelNames());
 		return;
 	}
@@ -78,16 +84,18 @@ void FVoxelWriteChannelExecNodeRuntime::UpdateBrush(const FPinValues& PinValues)
 	const FString NodeId = GetNodeRef().NodeId.ToString();
 
 	const FVoxelBrushPriority FullPriority = FVoxelRuntimeChannel::GetFullPriority(
-		PinValues.Priority,
+		Priority,
 		GetGraphPath(),
 		&NodeId,
 		GetInstanceName());
 
 	FVoxelBox LocalBounds;
-	if (PinValues.Bounds != FVoxelBox() &&
-		!PinValues.Bounds.IsInfinite())
+	if (Bounds->IsValid())
 	{
-		LocalBounds = PinValues.Bounds;
+		// Shouldn't need invalidation
+		ensure(Bounds->GetLocalToWorld() == GetRuntimeInfo()->GetLocalToWorld());
+
+		LocalBounds = Bounds->GetBox_NoDependency(GetRuntimeInfo()->GetLocalToWorld());
 	}
 	else
 	{
@@ -103,7 +111,7 @@ void FVoxelWriteChannelExecNodeRuntime::UpdateBrush(const FPinValues& PinValues)
 			this,
 			WeakThis = AsWeak(),
 			FullPriority,
-			Smoothness = PinValues.Smoothness,
+			Smoothness = Smoothness,
 			Definition = Channel->Definition](const FVoxelQuery& Query) -> FVoxelFutureValue
 		{
 			const TSharedPtr<FVoxelExecNodeRuntime> This = WeakThis.Pin();
@@ -148,4 +156,9 @@ void FVoxelWriteChannelExecNodeRuntime::UpdateBrush(const FPinValues& PinValues)
 		});
 
 	Channel->AddBrush(Brush, BrushRef);
+}
+
+void FVoxelWriteChannelExecNodeRuntime::Destroy()
+{
+	BrushRef = {};
 }

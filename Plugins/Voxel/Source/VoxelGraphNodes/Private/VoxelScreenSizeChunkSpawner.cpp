@@ -3,17 +3,35 @@
 #include "VoxelScreenSizeChunkSpawner.h"
 #include "VoxelRuntime.h"
 
-BEGIN_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
-
-DEFINE_UNIQUE_VOXEL_ID(FChunkId);
-
-END_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
+DEFINE_UNIQUE_VOXEL_ID(FVoxelScreenSizeChunkId);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void FVoxelScreenSizeChunkSpawnerImpl::Tick(FVoxelRuntime& Runtime)
+void FVoxelScreenSizeChunkSpawner::Initialize(FVoxelRuntime& Runtime)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!ChunkScreenSizeValueFactory.IsValid())
+	{
+		// Default ScreenSizeChunkSpawner
+		ensure(!QueryContext);
+		ensure(!QueryParameters);
+		return;
+	}
+
+	ensure(!ChunkScreenSizeValue.IsValid());
+	ChunkScreenSizeValue = ChunkScreenSizeValueFactory.Compute(QueryContext.ToSharedRef(), QueryParameters.ToSharedRef());
+
+	ChunkScreenSizeValue.OnChanged_GameThread(MakeWeakPtrLambda(this, [this](const float NewChunkScreenSize)
+	{
+		LastChunkScreenSize = NewChunkScreenSize;
+		Refresh();
+	}));;
+}
+
+void FVoxelScreenSizeChunkSpawner::Tick(FVoxelRuntime& Runtime)
 {
 	VOXEL_FUNCTION_COUNTER();
 
@@ -48,34 +66,27 @@ void FVoxelScreenSizeChunkSpawnerImpl::Tick(FVoxelRuntime& Runtime)
 	bUpdateQueued = true;
 }
 
-void FVoxelScreenSizeChunkSpawnerImpl::Refresh()
+void FVoxelScreenSizeChunkSpawner::Refresh()
 {
 	bUpdateQueued = true;
 }
 
-void FVoxelScreenSizeChunkSpawnerImpl::Recreate()
-{
-	bUpdateQueued = true;
-	bRecreateQueued = true;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
+void FVoxelScreenSizeChunkSpawner::UpdateTree(const FVector& ViewOrigin)
 {
 	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(ScreenSizeChunkSpawner);
 
-	if (!ChunkScreenSize.IsSet())
+	if (!LastChunkScreenSize.IsSet())
 	{
 		ensure(ChunkScreenSizeValue.IsValid());
 		ensure(bUpdateQueued);
 		return;
 	}
 
-	const int64 SizeInChunks = FMath::Max<int64>(FMath::CeilToInt64(WorldSize / (VoxelSize * ChunkSize)), 2);
+	const int64 SizeInChunks = FMath::Max<int64>(FMath::CeilToInt64(WorldSize / (GetVoxelSize() * ChunkSize)), 2);
 	const int32 OctreeDepth = FMath::Min<int32>(FMath::CeilLogTwo64(SizeInChunks), 29);
 
 	ensure(bUpdateQueued);
@@ -84,16 +95,7 @@ void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
 	ensure(!bTaskInProgress);
 	bTaskInProgress = true;
 
-	if (bRecreateQueued)
-	{
-		Octree.Reset();
-		bRecreateQueued = false;
-
-		VOXEL_SCOPE_LOCK(CriticalSection);
-		Chunks_RequiresLock.Empty();
-	}
-
-	AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, MakeWeakPtrLambda(this, [this, ViewOrigin, OctreeDepth, OldTree = Octree]
+	AsyncVoxelTask(MakeWeakPtrLambda(this, [this, ViewOrigin, OctreeDepth, OldTree = Octree]
 	{
 		const TSharedRef<FOctree> NewTree = MakeVoxelShared<FOctree>(
 			OctreeDepth,
@@ -110,7 +112,7 @@ void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
 		TSet<FChunkId> ChunksToAdd;
 		TSet<FChunkId> ChunksToRemove;
 		TSet<FChunkId> ChunksToUpdate;
-		NewTree->Update(ChunkScreenSize.GetValue(), ChunkInfos, ChunksToAdd, ChunksToRemove, ChunksToUpdate);
+		NewTree->Update(LastChunkScreenSize.GetValue(), ChunkInfos, ChunksToAdd, ChunksToRemove, ChunksToUpdate);
 
 		{
 			VOXEL_SCOPE_COUNTER("Sort");
@@ -126,12 +128,6 @@ void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
 
 		for (const FChunkId ChunkId : ChunksToUpdate)
 		{
-			AsyncTask(ENamedThreads::GameThread, [=]
-				{
-					const auto WorldPtr = GEditor->GetEditorWorldContext().World();
-					FlushPersistentDebugLines(WorldPtr);
-				});
-
 			FChunk& Chunk = *Chunks_RequiresLock.FindChecked(ChunkId);
 			const FChunkInfo ChunkInfo = ChunkInfos[ChunkId];
 
@@ -235,7 +231,7 @@ void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
 			ensure(!Chunk->ChunkRef);
 		}
 
-		AsyncTask(ENamedThreads::GameThread, MakeWeakPtrLambda(this, [=]
+		FVoxelUtilities::RunOnGameThread(MakeWeakPtrLambda(this, [=]
 		{
 			VOXEL_FUNCTION_COUNTER();
 			check(IsInGameThread());
@@ -245,7 +241,7 @@ void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
 
 			if (NewTree->NumNodes() >= GVoxelChunkSpawnerMaxChunks)
 			{
-				VOXEL_MESSAGE(Error, "{0}: voxel.chunkspawner.MaxChunks reached", NodeRef);
+				VOXEL_MESSAGE(Error, "{0}: voxel.chunkspawner.MaxChunks reached", GraphNodeRef);
 			}
 
 			Octree = NewTree;
@@ -257,9 +253,7 @@ void FVoxelScreenSizeChunkSpawnerImpl::UpdateTree(const FVector& ViewOrigin)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
-
-void FOctree::Update(
+void FVoxelScreenSizeChunkSpawner::FOctree::Update(
 	const float ChunkScreenSize,
 	TMap<FChunkId, FChunkInfo>& ChunkInfos,
 	TSet<FChunkId>& ChunksToAdd,
@@ -408,7 +402,7 @@ void FOctree::Update(
 	});
 }
 
-FORCEINLINE bool FOctree::AdjacentNodeHasHigherHeight(const FNodeRef NodeRef, const int32 Direction) const
+FORCEINLINE bool FVoxelScreenSizeChunkSpawner::FOctree::AdjacentNodeHasHigherHeight(const FNodeRef NodeRef, const int32 Direction) const
 {
 	const int32 NodeSize = NodeRef.GetSize();
 
@@ -447,8 +441,6 @@ FORCEINLINE bool FOctree::AdjacentNodeHasHigherHeight(const FNodeRef NodeRef, co
 	return Result.GetHeight() > NodeRef.GetHeight();
 }
 
-END_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -463,14 +455,14 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MakeScreenSizeChunkSpawner, Spawner)
 	return VOXEL_ON_COMPLETE(WorldSize, ChunkSize, MaxLOD, EnableTransitions)
 	{
 		const TSharedRef<FVoxelScreenSizeChunkSpawner> Spawner = MakeVoxelShared<FVoxelScreenSizeChunkSpawner>();
-		Spawner->Node = GetNodeRef();
+		Spawner->GraphNodeRef = GetNodeRef();
 		Spawner->WorldSize = WorldSize;
 		Spawner->ChunkSize = FMath::Clamp(FMath::CeilToInt(ChunkSize / 2.f) * 2, 4, 128);
 		Spawner->MaxLOD = MaxLOD;
 		Spawner->bEnableTransitions = EnableTransitions;
-		Spawner->ChunkScreenSizeValue = MakeDynamicValueFactory(ChunkScreenSizePin).Compute(
-			Query.GetSharedContext(),
-			Query.GetSharedParameters());
+		Spawner->ChunkScreenSizeValueFactory = MakeDynamicValueFactory(ChunkScreenSizePin);
+		Spawner->QueryContext = Query.GetSharedContext();
+		Spawner->QueryParameters = Query.GetSharedParameters();
 		return Spawner;
 	};
 }

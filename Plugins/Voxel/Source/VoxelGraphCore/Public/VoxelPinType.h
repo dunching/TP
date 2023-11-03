@@ -75,6 +75,20 @@ struct FVoxelWildcardBuffer_DEPRECATED
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+USTRUCT()
+struct VOXELGRAPHCORE_API FVoxelBufferInterface : public FVoxelVirtualStruct
+{
+	GENERATED_BODY()
+	GENERATED_VIRTUAL_STRUCT_BODY()
+
+	virtual int32 Num_Slow() const VOXEL_PURE_VIRTUAL({});
+	virtual bool IsValid_Slow() const VOXEL_PURE_VIRTUAL({});
+};
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 template<typename>
 struct TIsSafeVoxelPinType
 {
@@ -96,6 +110,11 @@ struct TIsSafeVoxelPinType<FVoxelInstancedStruct>
 {
 	static constexpr bool Value = false;
 };
+template<>
+struct TIsSafeVoxelPinType<FVoxelBufferInterface>
+{
+	static constexpr bool Value = false;
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -113,9 +132,19 @@ struct TIsSafeVoxelPinValue<FVoxelWildcard>
 	static constexpr bool Value = false;
 };
 template<>
+struct TIsSafeVoxelPinValue<FVoxelWildcardBuffer>
+{
+	static constexpr bool Value = false;
+};
+template<>
 struct TIsSafeVoxelPinValue<FVoxelRuntimePinValue>
 {
 	static constexpr bool Value = false;
+};
+template<>
+struct TIsSafeVoxelPinValue<FVoxelBufferInterface>
+{
+	static constexpr bool Value = true;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -322,8 +351,10 @@ public:
 	FEdGraphPinType GetEdGraphPinType_K2() const;
 	bool HasPinDefaultValue() const;
 	bool CanBeCastedTo(const FVoxelPinType& Other) const;
-	bool CanBeCastedTo_CheckArray(const FVoxelPinType& Other) const;
+	bool CanBeCastedTo_K2(const FVoxelPinType& Other) const;
+	bool CanBeCastedTo_Schema(const FVoxelPinType& Other) const;
 
+	void PostSerialize(const FArchive& Ar);
 	bool Serialize(FStructuredArchive::FSlot Slot);
 
 public:
@@ -425,6 +456,20 @@ public:
 		if constexpr (std::is_same_v<T, FVoxelBuffer>)
 		{
 			return IsBuffer();
+		}
+		else if constexpr (std::is_same_v<T, FVoxelBufferInterface>)
+		{
+			if (IsBuffer())
+			{
+				return true;
+			}
+
+			if (!IsStruct())
+			{
+				return false;
+			}
+
+			return GetStruct()->IsChildOf(StaticStructFast<FVoxelBufferInterface>());
 		}
 		else
 		{
@@ -532,6 +577,7 @@ struct TStructOpsTypeTraits<FVoxelPinType> : public TStructOpsTypeTraitsBase2<FV
 {
 	enum
 	{
+		WithPostSerialize = true,
 		WithStructuredSerializer = true,
 	};
 };
@@ -550,7 +596,9 @@ enum class EVoxelPinTypeSetType
 	AllBufferArrays,
 	AllUniformsAndBufferArrays,
 	AllExposed,
-	AllMaterials
+	AllMaterials,
+	AllEnums,
+	AllObjects
 };
 
 struct VOXELGRAPHCORE_API FVoxelPinTypeSet
@@ -598,6 +646,18 @@ public:
 	{
 		FVoxelPinTypeSet Set;
 		Set.SetType = EVoxelPinTypeSetType::AllMaterials;
+		return Set;
+	}
+	static FVoxelPinTypeSet AllEnums()
+	{
+		FVoxelPinTypeSet Set;
+		Set.SetType = EVoxelPinTypeSetType::AllEnums;
+		return Set;
+	}
+	static FVoxelPinTypeSet AllObjects()
+	{
+		FVoxelPinTypeSet Set;
+		Set.SetType = EVoxelPinTypeSetType::AllObjects;
 		return Set;
 	}
 

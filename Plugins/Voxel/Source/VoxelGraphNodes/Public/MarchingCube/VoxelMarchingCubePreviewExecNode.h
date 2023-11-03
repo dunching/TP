@@ -32,15 +32,16 @@ struct VOXELGRAPHNODES_API FVoxelMarchingCubePreviewExecNode : public FVoxelExec
 	GENERATED_VOXEL_NODE_BODY()
 
 	VOXEL_INPUT_PIN(FVoxelSurface, Surface, nullptr, VirtualPin);
+	// Disable if this is a sculpt tool
+	VOXEL_INPUT_PIN(bool, OnlyDrawIfSelected, true, VirtualPin);
 	// If not set will be automatically computed from Surface
-	VOXEL_INPUT_PIN(FVoxelBox, Bounds, nullptr, VirtualPin, AdvancedDisplay);
+	VOXEL_INPUT_PIN(FVoxelBounds, Bounds, nullptr, VirtualPin, AdvancedDisplay);
 	// The size of the mesh to create in voxels
 	VOXEL_INPUT_PIN(int32, Size, 32, VirtualPin, AdvancedDisplay);
 	VOXEL_INPUT_PIN(FVoxelMaterial, Material, "/Voxel/EditorAssets/M_BrushPreview.M_BrushPreview", VirtualPin, AdvancedDisplay);
 	// Body instance for the collision, ignored in editor worlds
 	VOXEL_INPUT_PIN(FBodyInstance, BodyInstance, nullptr, VirtualPin, AdvancedDisplay);
 	// If true the mesh will only be drawn if it's selected in the editor
-	VOXEL_INPUT_PIN(bool, OnlyDrawIfSelected, true, VirtualPin, AdvancedDisplay);
 
 	TValue<FVoxelMarchingCubeBrushPreviewMesh> CreateMesh(
 		const FVoxelQuery& Query,

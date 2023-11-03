@@ -3,11 +3,57 @@
 #pragma once
 
 #include "VoxelMinimal.h"
+#include "Buffer/VoxelStaticMeshBuffer.h"
 #include "Point/VoxelPointHandleProvider.h"
 #include "VoxelInstancedCollisionComponent.generated.h"
 
-struct FVoxelInvoker;
-struct FVoxelMeshDataBase;
+class FVoxelPointOverrideChunk;
+
+DECLARE_VOXEL_COUNTER(VOXELSPAWNER_API, STAT_VoxelNumCollisionInstances, "Num Collision Instances");
+
+struct VOXELSPAWNER_API FVoxelInstancedCollisionDataImpl
+{
+	TVoxelArray<int32> FreeIndices;
+	TVoxelMap<FVoxelPointId, int32> PointIdToIndex;
+
+	TVoxelArray<int32> InstanceBodiesToUpdate;
+	TVoxelArray<TSharedPtr<FBodyInstance>> InstanceBodiesToDelete;
+
+	TVoxelArray<FVoxelPointId> PointIds;
+	TVoxelArray<FTransform3f> Transforms;
+	TVoxelArray<TSharedPtr<FBodyInstance>> InstanceBodies;
+
+	FVoxelFastCriticalSection CriticalSection;
+	TVoxelArray<TWeakPtr<FBodyInstance>> AllBodyInstances_RequiresLock;
+
+	void FlushInstanceBodiesToDelete();
+};
+
+class VOXELSPAWNER_API FVoxelInstancedCollisionData
+{
+public:
+	const FVoxelStaticMesh Mesh;
+	const FVoxelPointChunkRef ChunkRef;
+
+	FVoxelInstancedCollisionData(
+		const FVoxelStaticMesh& Mesh,
+		const FVoxelPointChunkRef& ChunkRef)
+		: Mesh(Mesh)
+		, ChunkRef(ChunkRef)
+	{
+	}
+
+	FVoxelFastCriticalSection CriticalSection;
+
+	FORCEINLINE FVoxelInstancedCollisionDataImpl& GetDataImpl_RequiresLock()
+	{
+		checkVoxelSlow(CriticalSection.IsLocked());
+		return DataImpl;
+	}
+
+private:
+	FVoxelInstancedCollisionDataImpl DataImpl;
+};
 
 UCLASS()
 class VOXELSPAWNER_API UVoxelInstancedCollisionComponent
@@ -17,13 +63,14 @@ class VOXELSPAWNER_API UVoxelInstancedCollisionComponent
 	GENERATED_BODY()
 
 public:
-	UVoxelInstancedCollisionComponent() = default;
+	UVoxelInstancedCollisionComponent();
 
 	//~ Begin UPrimitiveComponent Interface
 	virtual UBodySetup* GetBodySetup() override;
 	virtual bool ShouldCreatePhysicsState() const override;
 	virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
 	virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
+	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
 
 	virtual void OnCreatePhysicsState() override;
 	virtual void OnDestroyPhysicsState() override;
@@ -35,39 +82,23 @@ public:
 		FVoxelPointHandle& OutHandle) const override;
 	//~ End IVoxelPointHandleProvider Interface
 
-	void SetStaticMesh(UStaticMesh* Mesh);
-	void SetInvokerChannel(FName NewInvokerChannel);
-	void SetMeshData(const TSharedRef<const FVoxelMeshDataBase>& NewMeshData);
-	void UpdateInstances(TConstVoxelArrayView<int32> Indices);
-	void RemoveInstances(TConstVoxelArrayView<int32> Indices);
+	void SetData(const TSharedRef<FVoxelInstancedCollisionData>& NewData);
+	void ReturnToPool();
+	void Update();
 
-	FORCEINLINE bool HasMeshData() const
+	TSharedRef<FBodyInstance> MakeBodyInstance(int32 Index) const;
+
+	FORCEINLINE TSharedPtr<FVoxelInstancedCollisionData> GetData() const
 	{
-		return MeshData.IsValid();
+		return Data;
 	}
 
-public:
-	void CreateCollision();
-	void ResetCollision();
-
-	//~ Begin UPrimitiveComponent Interface
-	virtual FPrimitiveSceneProxy* CreateSceneProxy() override;
-	//~ End UPrimitiveComponent Interface
-
 private:
-	UPROPERTY(Transient)
-	TObjectPtr<UStaticMesh> StaticMesh = nullptr;
+	TSharedPtr<FVoxelInstancedCollisionData> Data;
+	TSharedPtr<FVoxelPointOverrideChunk> OverrideChunk;
+	FSharedVoidPtr OverrideChunkDelegatePtr;
 
-	TSharedPtr<const FVoxelMeshDataBase> MeshData;
-	FName InvokerChannel;
-	TVoxelArray<TVoxelUniquePtr<FBodyInstance>> InstanceBodies;
-
-	bool bAllInstancesEnabled = false;
-	TSharedPtr<const TVoxelAddOnlySet<int32>> EnabledInstances;
-
-	void CreateAllBodies();
-	TVoxelUniquePtr<FBodyInstance> MakeBodyInstance(int32 Index) const;
+	VOXEL_COUNTER_HELPER(STAT_VoxelNumCollisionInstances, NumInstances);
 
 	friend class FVoxelInstancedCollisionSceneProxy;
-	friend class FVoxelInstancedCollisionComponentManager;
 };

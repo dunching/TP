@@ -56,7 +56,7 @@ void UVoxelMeshComponent::ReturnToPool()
 
 FPrimitiveSceneProxy* UVoxelMeshComponent::CreateSceneProxy()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (!Mesh)
 	{

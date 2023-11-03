@@ -48,6 +48,7 @@ private:
 		, Context(Context)
 		, Parameters(Parameters)
 		, Referencer(Referencer)
+		, OnChangedImpl(MakeVoxelShared<FOnChangedImpl>(Name))
 	{
 	}
 
@@ -59,6 +60,13 @@ private:
 	class FOnChangedImpl : public TSharedFromThis<FOnChangedImpl>
 	{
 	public:
+		const FName Name;
+
+		explicit FOnChangedImpl(const FName Name)
+			: Name(Name)
+		{
+		}
+
 		void SetOnChanged(FOnChanged&& NewOnChanged);
 		void Execute(const FVoxelRuntimePinValue& NewValue, int32 NewValueCounter);
 
@@ -68,7 +76,7 @@ private:
 		int32 LastValueCounter = -1;
 		FVoxelRuntimePinValue PendingValue;
 	};
-	const TSharedRef<FOnChangedImpl> OnChangedImpl = MakeVoxelShared<FOnChangedImpl>();
+	const TSharedRef<FOnChangedImpl> OnChangedImpl;
 
 	void Compute_RequiresLock_WillUnlock();
 	void OnComputed(
@@ -88,8 +96,8 @@ void FVoxelDynamicValueState::FOnChangedImpl::SetOnChanged(FOnChanged&& NewOnCha
 {
 	VOXEL_FUNCTION_COUNTER();
 	VOXEL_SCOPE_LOCK(CriticalSection);
+	ensureMsgf(!OnChanged, TEXT("Previous OnChanged will be cleared! %s was likely copied by mistake"), *Name.ToString());
 
-	ensure(!OnChanged);
 	OnChanged = MoveTemp(NewOnChanged);
 
 	if (!PendingValue.IsValid())
@@ -141,19 +149,24 @@ void FVoxelDynamicValueState::Compute_RequiresLock_WillUnlock()
 	if (Thread == EVoxelTaskThread::GameThread &&
 		IsInGameThread())
 	{
-		Group = FVoxelTaskGroup::CreateSynchronous(Name, Context, Referencer);
+		Group = FVoxelTaskGroup::CreateSynchronous(Name, Referencer, Context);
 	}
 	else
 	{
-		Group = FVoxelTaskGroup::Create(Name, Priority, Context, Referencer);
+		Group = FVoxelTaskGroup::Create(Name, Priority, Referencer, Context);
 	}
 
 	DependencyTracker.Reset();
 
-	const FVoxelTaskGroupScope Scope(*Group);
-
 	// In case the voxel task is ran immediately if Thread is GameThread
 	CriticalSection.Unlock();
+
+	FVoxelTaskGroupScope Scope;
+	if (!Scope.Initialize(*Group))
+	{
+		// Exiting
+		return;
+	}
 
 	MakeVoxelTask(STATIC_FNAME("FVoxelDynamicValueState_Setup"))
 	.Thread(Thread)
@@ -180,9 +193,9 @@ void FVoxelDynamicValueState::Compute_RequiresLock_WillUnlock()
 		}));
 	}));
 
-	if (Scope.Group->bIsSynchronous)
+	if (Scope.GetGroup().bIsSynchronous)
 	{
-		Scope.Group->TryRunSynchronously_Ensure();
+		Scope.GetGroup().TryRunSynchronously_Ensure();
 	}
 }
 
@@ -243,15 +256,20 @@ TSharedRef<FVoxelDynamicValueStateBase> FVoxelDynamicValueFactoryBase::ComputeSt
 	const TSharedRef<FVoxelQueryContext>& Context,
 	const TSharedRef<const FVoxelQueryParameters>& Parameters) const
 {
+	ensure(Compute);
+	ensure(!Name.IsNone());
+	ensure(Type.IsValid());
+	ensure(Referencer);
+
 	const TSharedRef<FVoxelDynamicValueState> State = MakeVoxelShareable(new (GVoxelMemory) FVoxelDynamicValueState(
-		Compute,
+		Compute.ToSharedRef(),
 		Name,
 		Type,
 		PrivateThread,
 		PrivatePriority,
 		Context,
 		Parameters,
-		Referencer));
+		Referencer.ToSharedRef()));
 
 	State->CriticalSection.Lock();
 	State->Compute_RequiresLock_WillUnlock();

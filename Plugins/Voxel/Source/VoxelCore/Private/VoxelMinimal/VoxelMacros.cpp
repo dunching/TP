@@ -70,7 +70,6 @@ struct FVoxelRunOnStartupStatics
 		}
 		void Execute()
 		{
-			VOXEL_LLM_SCOPE();
 			VOXEL_FUNCTION_COUNTER();
 
 			check(!bRun);
@@ -92,6 +91,7 @@ struct FVoxelRunOnStartupStatics
 
 	FFunctions GameFunctions;
 	FFunctions EditorFunctions;
+	FFunctions EditorCookFunctions;
 	FFunctions FirstTickFunctions;
 
 	static FVoxelRunOnStartupStatics& Get()
@@ -111,6 +111,10 @@ FVoxelRunOnStartupPhaseHelper::FVoxelRunOnStartupPhaseHelper(const EVoxelRunOnSt
 	{
 		FVoxelRunOnStartupStatics::Get().EditorFunctions.Add(Priority, MoveTemp(Lambda));
 	}
+	else if (Phase == EVoxelRunOnStartupPhase::EditorCook)
+	{
+		FVoxelRunOnStartupStatics::Get().EditorCookFunctions.Add(Priority, MoveTemp(Lambda));
+	}
 	else
 	{
 		check(Phase == EVoxelRunOnStartupPhase::FirstTick);
@@ -128,6 +132,7 @@ FDelayedAutoRegisterHelper GVoxelRunOnStartup_Game(EDelayedRegisterRunPhase::Obj
 		}
 
 		FVoxelRunOnStartupStatics::Get().GameFunctions.Execute();
+		FVoxelRunOnStartupStatics::Get().EditorCookFunctions.Execute();
 	});
 });
 

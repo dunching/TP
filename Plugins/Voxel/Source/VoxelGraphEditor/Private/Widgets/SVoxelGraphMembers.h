@@ -6,80 +6,78 @@
 #include "VoxelGraph.h"
 #include "Widgets/SVoxelMembers.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-enum class EMembersNodeSection
+class SVoxelGraphMembers : public SVoxelMembers
 {
-	None,
-	Graph,
-	InlineMacros,
-	MacroLibraries,
-	Parameters,
-	MacroInputs,
-	MacroOutputs,
-	LocalVariables,
-};
-
-FORCEINLINE int32 GetSectionId(const EMembersNodeSection Type)
-{
-	switch (Type)
+public:
+	enum class ESection
 	{
-	default: check(false);
-	case EMembersNodeSection::None: return 0;
-	case EMembersNodeSection::Graph: return 1;
-	case EMembersNodeSection::InlineMacros: return 2;
-	case EMembersNodeSection::MacroLibraries: return 3;
-	case EMembersNodeSection::Parameters: return 4;
-	case EMembersNodeSection::MacroInputs: return 5;
-	case EMembersNodeSection::MacroOutputs: return 6;
-	case EMembersNodeSection::LocalVariables: return 7;
-	}
-}
-FORCEINLINE EMembersNodeSection GetSection(const int32 SectionId)
-{
-	switch (SectionId)
-	{
-	case 1: return EMembersNodeSection::Graph;
-	case 2: return EMembersNodeSection::InlineMacros;
-	case 3: return EMembersNodeSection::MacroLibraries;
-	case 4: return EMembersNodeSection::Parameters;
-	case 5: return EMembersNodeSection::MacroInputs;
-	case 6: return EMembersNodeSection::MacroOutputs;
-	case 7: return EMembersNodeSection::LocalVariables;
-	default: ensure(SectionId == 0); return EMembersNodeSection::None;
-	}
-}
+		None,
+		Graph,
+		InlineMacros,
+		MacroLibraries,
+		Parameters,
+		MacroInputs,
+		MacroOutputs,
+		LocalVariables,
+	};
 
-FORCEINLINE EMembersNodeSection GetSection(const EVoxelGraphParameterType Type)
-{
-	switch (Type)
+	FORCEINLINE static int32 GetSectionId(const ESection Type)
 	{
-	default: ensure(false);
-	case EVoxelGraphParameterType::Parameter: return EMembersNodeSection::Parameters;
-	case EVoxelGraphParameterType::Input: return EMembersNodeSection::MacroInputs;
-	case EVoxelGraphParameterType::Output: return EMembersNodeSection::MacroOutputs;
-	case EVoxelGraphParameterType::LocalVariable: return EMembersNodeSection::LocalVariables;
+		switch (Type)
+		{
+		default: check(false);
+		case ESection::None: return 0;
+		case ESection::Graph: return 1;
+		case ESection::InlineMacros: return 2;
+		case ESection::MacroLibraries: return 3;
+		case ESection::Parameters: return 4;
+		case ESection::MacroInputs: return 5;
+		case ESection::MacroOutputs: return 6;
+		case ESection::LocalVariables: return 7;
+		}
 	}
-}
-FORCEINLINE int32 GetSectionId(const EVoxelGraphParameterType Type)
-{
-	return GetSectionId(GetSection(Type));
-}
-
-FORCEINLINE EVoxelGraphParameterType GetParameterType(const EMembersNodeSection Type)
-{
-	switch (Type)
+	FORCEINLINE static ESection GetSection(const int32 SectionId)
 	{
-	default: ensure(false);
-	case EMembersNodeSection::Parameters: return EVoxelGraphParameterType::Parameter;
-	case EMembersNodeSection::MacroInputs: return EVoxelGraphParameterType::Input;
-	case EMembersNodeSection::MacroOutputs: return EVoxelGraphParameterType::Output;
-	case EMembersNodeSection::LocalVariables: return EVoxelGraphParameterType::LocalVariable;
+		switch (SectionId)
+		{
+		case 1: return ESection::Graph;
+		case 2: return ESection::InlineMacros;
+		case 3: return ESection::MacroLibraries;
+		case 4: return ESection::Parameters;
+		case 5: return ESection::MacroInputs;
+		case 6: return ESection::MacroOutputs;
+		case 7: return ESection::LocalVariables;
+		default: ensure(SectionId == 0);
+			return ESection::None;
+		}
 	}
-}
+	FORCEINLINE static ESection GetSection(const EVoxelGraphParameterType Type)
+	{
+		switch (Type)
+		{
+		default: ensure(false);
+		case EVoxelGraphParameterType::Parameter: return ESection::Parameters;
+		case EVoxelGraphParameterType::Input: return ESection::MacroInputs;
+		case EVoxelGraphParameterType::Output: return ESection::MacroOutputs;
+		case EVoxelGraphParameterType::LocalVariable: return ESection::LocalVariables;
+		}
+	}
+	FORCEINLINE static int32 GetSectionId(const EVoxelGraphParameterType Type)
+	{
+		return GetSectionId(GetSection(Type));
+	}
+	FORCEINLINE static EVoxelGraphParameterType GetParameterType(const ESection Type)
+	{
+		switch (Type)
+		{
+		default: ensure(false);
+		case ESection::Parameters: return EVoxelGraphParameterType::Parameter;
+		case ESection::MacroInputs: return EVoxelGraphParameterType::Input;
+		case ESection::MacroOutputs: return EVoxelGraphParameterType::Output;
+		case ESection::LocalVariables: return EVoxelGraphParameterType::LocalVariable;
+		}
+	}
 
-class SMembers : public SVoxelMembers
-{
 public:
 	VOXEL_SLATE_ARGS()
 	{
@@ -113,5 +111,3 @@ private:
 private:
 	FDelegateHandle OnMembersChangedHandle;
 };
-
-END_VOXEL_NAMESPACE(Graph)

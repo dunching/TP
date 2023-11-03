@@ -77,22 +77,27 @@ namespace FVoxelUtilities
 			DivideRound(V.Y, Divisor));
 	}
 
-	FORCEINLINE uint64 SquaredSize(const FIntPoint& V)
+	FORCEINLINE int64 SizeSquared(const FIntPoint& V)
 	{
-		return FMath::Square<int64>(V.X) + FMath::Square<int64>(V.Y);
+		return
+			FMath::Square<int64>(V.X) +
+			FMath::Square<int64>(V.Y);
 	}
 	FORCEINLINE double Size(const FIntPoint& V)
 	{
-		return FMath::Sqrt(double(SquaredSize(V)));
+		return FMath::Sqrt(double(SizeSquared(V)));
 	}
 
-	FORCEINLINE uint64 SquaredSize(const FIntVector& V)
+	FORCEINLINE int64 SizeSquared(const FIntVector& V)
 	{
-		return FMath::Square<int64>(V.X) + FMath::Square<int64>(V.Y) + FMath::Square<int64>(V.Z);
+		return
+			FMath::Square<int64>(V.X) +
+			FMath::Square<int64>(V.Y) +
+			FMath::Square<int64>(V.Z);
 	}
 	FORCEINLINE double Size(const FIntVector& V)
 	{
-		return FMath::Sqrt(double(SquaredSize(V)));
+		return FMath::Sqrt(double(SizeSquared(V)));
 	}
 
 	FORCEINLINE bool IsMultipleOfPowerOfTwo(const FIntVector& Vector, int32 PowerOfTwo)

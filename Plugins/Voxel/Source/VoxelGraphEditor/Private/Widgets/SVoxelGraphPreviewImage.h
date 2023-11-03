@@ -4,9 +4,7 @@
 
 #include "VoxelEditorMinimal.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SPreviewImage : public SCompoundWidget
+class SVoxelGraphPreviewImage : public SCompoundWidget
 {
 public:
 	VOXEL_SLATE_ARGS()
@@ -40,5 +38,3 @@ private:
 	FVector Position_World = FVector::ZeroVector;
 	FVector2D LocalPosition = FVector2D::ZeroVector;
 };
-
-END_VOXEL_NAMESPACE(Graph)

@@ -133,7 +133,7 @@ public:
 	//~ Begin FPrimitiveSceneProxy Interface
 	virtual void DestroyRenderThreadResources() override
 	{
-		VOXEL_FUNCTION_COUNTER_LLM();
+		VOXEL_FUNCTION_COUNTER();
 		RenderData.Reset();
 	}
 	virtual void GetDynamicMeshElements(
@@ -142,7 +142,7 @@ public:
 		const uint32 VisibilityMap,
 		FMeshElementCollector& Collector) const override
 	{
-		VOXEL_FUNCTION_COUNTER_LLM();
+		VOXEL_FUNCTION_COUNTER();
 
 		if (!RenderData)
 		{

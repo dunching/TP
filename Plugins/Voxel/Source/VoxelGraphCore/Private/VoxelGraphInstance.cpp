@@ -11,7 +11,7 @@ UVoxelGraphInstance::UVoxelGraphInstance()
 	ParameterContainer = CreateDefaultSubobject<UVoxelParameterContainer>("ParameterContainer");
 	ParameterContainer->OnProviderChanged.AddWeakLambda(this, [this]
 	{
-		GVoxelGraphExecutorManager->OnGraphChanged_GameThread(*this);
+		GVoxelGraphExecutorManager->NotifyGraphChanged(*this);
 	});
 }
 

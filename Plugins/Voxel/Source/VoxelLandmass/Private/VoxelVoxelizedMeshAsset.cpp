@@ -2,10 +2,10 @@
 
 #include "VoxelVoxelizedMeshAsset.h"
 #include "VoxelVoxelizedMeshData.h"
-#include "VoxelLandmassSettings.h"
 
 #include "MeshDescription.h"
 #include "Engine/StaticMesh.h"
+#include "Misc/ConfigCacheIni.h"
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Serialization/BufferArchive.h"
@@ -18,16 +18,11 @@
 
 DEFINE_VOXEL_FACTORY(UVoxelVoxelizedMeshAsset);
 
-float UVoxelVoxelizedMeshAsset::GetVoxelSize() const
-{
-	return GetDefault<UVoxelLandmassSettings>()->BaseVoxelSize * VoxelSizeMultiplier;
-}
-
 TSharedPtr<const FVoxelVoxelizedMeshData> UVoxelVoxelizedMeshAsset::GetMeshData() const
 {
 	if (MeshData)
 	{
-		if (MeshData->VoxelSize != GetVoxelSize() ||
+		if (MeshData->VoxelSize != VoxelSize ||
 			MeshData->MaxSmoothness != MaxSmoothness ||
 			MeshData->VoxelizerSettings != VoxelizerSettings)
 		{
@@ -88,7 +83,7 @@ void UVoxelVoxelizedMeshAsset::Serialize(FArchive& Ar)
 				MeshData = MakeVoxelShared<FVoxelVoxelizedMeshData>();
 			}
 			ConstCast(*MeshData).Serialize(Ar);
-	}
+		}
 #endif
 	}
 }
@@ -123,8 +118,6 @@ void UVoxelVoxelizedMeshAsset::TryCreateMeshData() const
 	{
 		return;
 	}
-
-	float VoxelSize = GetDefault<UVoxelLandmassSettings>()->BaseVoxelSize * VoxelSizeMultiplier;
 
 #if WITH_EDITOR
 	FString KeySuffix;

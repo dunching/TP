@@ -89,8 +89,8 @@ public:
 	FORCEINLINE TVoxelArrayView<typename TChooseClass<std::is_const_v<T>, const uint8, uint8>::Result> GetRawView() const
 	{
 		checkVoxelSlow(IsValid());
-		using Byte = typename TChooseClass<std::is_const_v<T>, const uint8, uint8>::Result;
-		return TVoxelArrayView<Byte>(reinterpret_cast<Byte*>(GetMemory()), GetStruct()->GetStructureSize());
+		using ByteType = typename TChooseClass<std::is_const_v<T>, const uint8, uint8>::Result;
+		return TVoxelArrayView<ByteType>(reinterpret_cast<ByteType*>(GetMemory()), GetStruct()->GetStructureSize());
 	}
 
 	FORCEINLINE bool Identical(const TVoxelStructView<const T>& Other) const

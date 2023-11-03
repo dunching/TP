@@ -9,7 +9,8 @@
 VOXEL_INITIALIZE_STYLE(GraphNodeEditor)
 {
 	Set("Node.Overlay.Warning", new IMAGE_BRUSH("Graphs/NodeOverlay_Warning", CoreStyleConstants::Icon32x32));
-	Set("Node.Overlay.Debug", new CORE_IMAGE_BRUSH_SVG("Starship/Blueprints/Breakpoint_Valid", FVector2D(20.0f, 20.0f), FSlateColor(FColor::Red)));
+	Set("Node.Overlay.Debug", new CORE_IMAGE_BRUSH_SVG("Starship/Blueprints/Breakpoint_Valid", FVector2D(20.0f, 20.0f), FSlateColor(FColor::Cyan)));
+	Set("Node.Overlay.Preview", new CORE_IMAGE_BRUSH_SVG("Starship/Blueprints/Breakpoint_Valid", FVector2D(20.0f, 20.0f), FSlateColor(FColor::Red)));
 
 	Set("Pin.Buffer.Connected", new IMAGE_BRUSH("Graphs/BufferPin_Connected", FVector2D(15, 11)));
 	Set("Pin.Buffer.Disconnected", new IMAGE_BRUSH("Graphs/BufferPin_Disconnected", FVector2D(15, 11)));
@@ -18,6 +19,9 @@ VOXEL_INITIALIZE_STYLE(GraphNodeEditor)
 
 	Set("Pin.PointSet.Connected", new IMAGE_BRUSH("Graphs/PointSetPin_Connected", FVector2D(19, 15)));
 	Set("Pin.PointSet.Disconnected", new IMAGE_BRUSH("Graphs/PointSetPin_Disconnected", FVector2D(19, 15)));
+
+	Set("Pin.Surface.Connected", new IMAGE_BRUSH("Graphs/SurfacePin_Connected", FVector2D(19, 15)));
+	Set("Pin.Surface.Disconnected", new IMAGE_BRUSH("Graphs/SurfacePin_Disconnected", FVector2D(19, 15)));
 
 	Set("Node.Stats.TitleGloss", new BOX_BRUSH("Graphs/Node_Stats_Gloss", FMargin(12.0f / 64.0f)));
 	Set("Node.Stats.ColorSpill", new BOX_BRUSH("Graphs/Node_Stats_Color_Spill", FMargin(8.0f / 64.0f, 3.0f / 32.0f, 0.f, 0.f)));
@@ -173,17 +177,25 @@ TArray<FOverlayWidgetInfo> SVoxelGraphNode::GetOverlayWidgets(bool bSelected, co
 
 void SVoxelGraphNode::GetOverlayBrushes(bool bSelected, const FVector2D WidgetSize, TArray<FOverlayBrushInfo>& Brushes) const
 {
-	if (!GetVoxelNode().bEnablePreview)
+	if (GetVoxelNode().bEnableDebug)
 	{
-		return;
+		const FSlateBrush* Brush = FVoxelEditorStyle::Get().GetBrush(TEXT("Node.Overlay.Debug"));
+
+		FOverlayBrushInfo BrushInfo;
+		BrushInfo.Brush = Brush;
+		BrushInfo.OverlayOffset = -Brush->GetImageSize() / 2.f;
+		Brushes.Add(BrushInfo);
 	}
 
-	const FSlateBrush* Brush = FVoxelEditorStyle::Get().GetBrush(TEXT("Node.Overlay.Debug"));
+	if (GetVoxelNode().bEnablePreview)
+	{
+		const FSlateBrush* Brush = FVoxelEditorStyle::Get().GetBrush(TEXT("Node.Overlay.Preview"));
 
-	FOverlayBrushInfo BrushInfo;
-	BrushInfo.Brush = Brush;
-	BrushInfo.OverlayOffset = -Brush->GetImageSize() / 2.f;
-	Brushes.Add(BrushInfo);
+		FOverlayBrushInfo BrushInfo;
+		BrushInfo.Brush = Brush;
+		BrushInfo.OverlayOffset = -Brush->GetImageSize() / 2.f;
+		Brushes.Add(BrushInfo);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1043,63 +1055,77 @@ TSharedRef<SWidget> SVoxelGraphNode::MakeStatWidget() const
 {
 	const FLinearColor Color = FLinearColor(FColor::Orange) * 0.6f;
 
-	return
-		SNew(SOverlay)
-		.Visibility_Lambda([this]
-		{
-			if (!IVoxelGraphNodeStatInterface::bEnableStats ||
-				GetVoxelNode().Stats.NumElements == 0)
+	const TSharedRef<SVerticalBox> VBox =
+		SNew(SVerticalBox)
+		.Cursor(EMouseCursor::Default);
+
+	for (IVoxelNodeStatProvider* Provider : GVoxelNodeStatProviders)
+	{
+		VBox->AddSlot()
+		.AutoHeight()
+		[
+			SNew(SOverlay)
+			.ToolTipText_Lambda([this, Provider]
 			{
-				return EVisibility::Collapsed;
-			}
+				return Provider->GetToolTip(GetVoxelNode());
+			})
+			.Visibility_Lambda([this, Provider]
+			{
+				if (!GVoxelEnableNodeStats)
+				{
+					return EVisibility::Collapsed;
+				}
 
-			return EVisibility::Visible;
-		})
-		+ SOverlay::Slot()
-		[
-			SNew(SImage)
-			.Image(FVoxelEditorStyle::GetBrush("Node.Stats.TitleGloss"))
-			.ColorAndOpacity(Color)
-		]
-		+ SOverlay::Slot()
-		.HAlign(HAlign_Left)
-		.VAlign(VAlign_Center)
-		[
-			SNew(SBorder)
-			.BorderImage(FVoxelEditorStyle::GetBrush("Node.Stats.ColorSpill"))
-			.Padding(FMargin(10.f, 5.f, 20.f, 3.f))
-			.BorderBackgroundColor(Color)
+				if (Provider->GetText(GetVoxelNode()).IsEmpty())
+				{
+					return EVisibility::Collapsed;
+				}
+
+				return EVisibility::Visible;
+			})
+			+ SOverlay::Slot()
 			[
-				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot()
-				.VAlign(VAlign_Top)
-				.Padding(FMargin(0.f, 0.f, 4.f, 0.f))
-				.AutoWidth()
+				SNew(SImage)
+				.Image(FVoxelEditorStyle::GetBrush("Node.Stats.TitleGloss"))
+				.ColorAndOpacity(Color)
+			]
+			+ SOverlay::Slot()
+			.HAlign(HAlign_Left)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SBorder)
+				.BorderImage(FVoxelEditorStyle::GetBrush("Node.Stats.ColorSpill"))
+				.Padding(FMargin(10.f, 5.f, 20.f, 3.f))
+				.BorderBackgroundColor(Color)
 				[
-					SNew(SImage)
-					.Image(FAppStyle::GetBrush("GraphEditor.Timeline_16x"))
-					.ColorAndOpacity(Color)
-				]
-				+ SHorizontalBox::Slot()
-				[
-					SNew(SBox)
-					.MinDesiredWidth(55.f)
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.VAlign(VAlign_Top)
+					.Padding(FMargin(0.f, 0.f, 4.f, 0.f))
+					.AutoWidth()
 					[
-						SNew(STextBlock)
-						.ColorAndOpacity(FCoreStyle::Get().GetColor("ErrorReporting.ForegroundColor"))
-						.Text_Lambda([this]
-						{
-							const IVoxelGraphNodeStatInterface::FStats Stats = GetVoxelNode().Stats;
-
-							return FText::Format(INVTEXT("{0} x {1} = {2}"),
-								FVoxelUtilities::ConvertToTimeText(Stats.Time / Stats.NumElements),
-								FVoxelUtilities::ConvertToNumberText(Stats.NumElements),
-								FVoxelUtilities::ConvertToTimeText(Stats.Time));
-						})
+						SNew(SImage)
+						.Image(FAppStyle::GetBrush("GraphEditor.Timeline_16x"))
+						.ColorAndOpacity(Color)
+					]
+					+ SHorizontalBox::Slot()
+					[
+						SNew(SBox)
+						.MinDesiredWidth(55.f)
+						[
+							SNew(STextBlock)
+							.ColorAndOpacity(FCoreStyle::Get().GetColor("ErrorReporting.ForegroundColor"))
+							.Text_Lambda([this, Provider]
+							{
+								return Provider->GetText(GetVoxelNode());
+							})
+						]
 					]
 				]
 			]
 		];
+	}
+	return VBox;
 }
 
 EVisibility SVoxelGraphNode::GetButtonVisibility(bool bVisible) const

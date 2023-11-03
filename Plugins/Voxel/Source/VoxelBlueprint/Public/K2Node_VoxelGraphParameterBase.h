@@ -42,7 +42,7 @@ struct FVoxelGraphBlueprintParameter
 	}
 };
 
-UCLASS()
+UCLASS(Abstract)
 class VOXELBLUEPRINT_API UK2Node_VoxelGraphParameterBase : public UK2Node_VoxelBaseNode
 {
 	GENERATED_BODY()
@@ -58,7 +58,7 @@ public:
 
 	//~ Begin UK2Node Interface
 	virtual void ExpandNode(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph) override;
-	virtual void PinConnectionListChanged(UEdGraphPin* Pin) override;
+	virtual void NotifyPinConnectionListChanged(UEdGraphPin* Pin) override;
 	virtual void PostReconstructNode() override;
 	virtual bool IsConnectionDisallowed(const UEdGraphPin* MyPin, const UEdGraphPin* OtherPin, FString& OutReason) const override;
 	virtual void PostLoad() override;

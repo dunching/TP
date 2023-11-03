@@ -1,11 +1,13 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "FunctionLibrary/VoxelBasicFunctionLibrary.h"
+#include "Point/VoxelChunkedPointSet.h"
 #include "VoxelGraphMigration.h"
 
 VOXEL_RUN_ON_STARTUP_GAME(VoxelBasicFunctionLibraryMigrations)
 {
 	REGISTER_VOXEL_FUNCTION_MIGRATION("Get Brush Transform", UVoxelBasicFunctionLibrary, GetTransform);
+	REGISTER_VOXEL_FUNCTION_MIGRATION("Get Spawnable Bounds", UVoxelBasicFunctionLibrary, GetPointChunkBounds);
 }
 
 FVoxelSeedBuffer UVoxelBasicFunctionLibrary::HashPosition(
@@ -53,10 +55,15 @@ int32 UVoxelBasicFunctionLibrary::GetLOD() const
 	return LODQueryParameter->LOD;
 }
 
-FVoxelBox UVoxelBasicFunctionLibrary::GetSpawnableBounds() const
+FVoxelBox UVoxelBasicFunctionLibrary::GetPointChunkBounds() const
 {
-	FindVoxelQueryParameter_Function(FVoxelSpawnableBoundsQueryParameter, SpawnableBoundsQueryParameter);
-	return SpawnableBoundsQueryParameter->Bounds;
+	FindVoxelQueryParameter_Function(FVoxelPointChunkRefQueryParameter, PointChunkRefQueryParameter);
+	return PointChunkRefQueryParameter->ChunkRef.GetBounds();
+}
+
+ECollisionEnabled::Type UVoxelBasicFunctionLibrary::GetCollisionEnabled(const FBodyInstance& BodyInstance) const
+{
+	return BodyInstance.GetCollisionEnabled(false);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -118,11 +125,7 @@ bool UVoxelBasicFunctionLibrary::IsServer() const
 
 FTransform UVoxelBasicFunctionLibrary::GetTransform() const
 {
-	const FVoxelTransformRef LocalToQuery =
-		GetQuery().GetInfo(EVoxelQueryInfo::Local).GetLocalToWorld() *
-		GetQuery().GetInfo(EVoxelQueryInfo::Query).GetWorldToLocal();
-
-	const FMatrix Transform = LocalToQuery.Get(GetQuery());
+	const FMatrix Transform = GetQuery().GetLocalToQuery().Get(GetQuery());
 	ensureVoxelSlow(FTransform(Transform).ToMatrixWithScale().Equals(Transform));
 	return FTransform(Transform);
 }

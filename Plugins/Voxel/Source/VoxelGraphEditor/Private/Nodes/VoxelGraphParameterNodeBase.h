@@ -19,13 +19,16 @@ public:
 	UPROPERTY()
 	FVoxelGraphParameter CachedParameter;
 
+	virtual EVoxelGraphParameterType GetParameterType() const VOXEL_PURE_VIRTUAL({});
+
 	FVoxelGraphParameter* GetParameter() const;
 	const FVoxelGraphParameter& GetParameterSafe() const;
 
 	//~ Begin UVoxelGraphNode Interface
 	virtual void AllocateDefaultPins() final override;
-	virtual bool CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const override;
+	virtual FLinearColor GetNodeTitleColor() const override;
 	virtual void PrepareForCopying() override;
+	virtual void PostPasteNode() override;
 	//~ End UVoxelGraphNode Interface
 
 protected:

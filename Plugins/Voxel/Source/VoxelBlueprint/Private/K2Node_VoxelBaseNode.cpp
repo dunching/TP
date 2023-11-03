@@ -16,6 +16,11 @@ void UK2Node_VoxelBaseNode::GetMenuActions(FBlueprintActionDatabaseRegistrar& Ac
 {
 	Super::GetMenuActions(ActionRegistrar);
 
+	if (GetClass()->HasAnyClassFlags(CLASS_Abstract))
+	{
+		return;
+	}
+
 	if (ActionRegistrar.IsOpenForRegistration(GetClass()))
 	{
 		UBlueprintNodeSpawner* NodeSpawner = UBlueprintNodeSpawner::Create(GetClass());
@@ -113,26 +118,26 @@ bool UK2Node_VoxelBaseNode::CanAutoConvert(const UEdGraphPin& Pin, const UEdGrap
 		OtherPin.PinType.PinSubCategoryObject->GetClass() != UClass::StaticClass() &&
 		!OtherPin.PinType.PinSubCategoryObject->IsA<UEnum>())
 	{
-		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + OtherPin.PinType.PinSubCategoryObject->GetName();
+		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + UEdGraphSchema_K2::TypeToText(OtherPin.PinType).ToString();
 		return false;
 	}
 
 	const FVoxelPinType TargetType = FVoxelPinType::MakeFromK2(OtherPin.PinType);
 	if (!TargetType.IsValid())
 	{
-		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + OtherPin.PinType.PinCategory.ToString();
+		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + UEdGraphSchema_K2::TypeToText(OtherPin.PinType).ToString();
 		return false;
 	}
 
 	if (TargetType.IsWildcard())
 	{
-		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + OtherPin.PinType.PinCategory.ToString();
+		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + UEdGraphSchema_K2::TypeToText(OtherPin.PinType).ToString();
 		return false;
 	}
 
 	if (!FVoxelPinTypeSet::AllExposed().GetTypes().Contains(TargetType))
 	{
-		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + OtherPin.PinType.PinCategory.ToString();
+		OutReason = GetNodeTitle(ENodeTitleType::FullTitle).ToString() + " does not support " + UEdGraphSchema_K2::TypeToText(OtherPin.PinType).ToString();
 		return false;
 	}
 

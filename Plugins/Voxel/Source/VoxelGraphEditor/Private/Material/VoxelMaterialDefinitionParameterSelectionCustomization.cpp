@@ -85,7 +85,16 @@ void FVoxelMaterialDefinitionParameterSelectionCustomization::CustomizeDetails(I
 			return;
 		}
 
-		IDetailCategoryBuilder& Builder = DetailLayout.EditCategory("Parameter", INVTEXT("Parameter"));
-		Builder.AddProperty(ParameterDataHandle);
+		Wrapper = FVoxelStructCustomizationWrapper::Make(ParameterDataHandle.ToSharedRef());
+		if (!Wrapper)
+		{
+			return;
+		}
+
+		IDetailCategoryBuilder& Builder = DetailLayout.EditCategory("Parameter Data", INVTEXT("Parameter Data"));
+		for (const TSharedPtr<IPropertyHandle>& Handle : Wrapper->AddChildStructure())
+		{
+			Builder.AddProperty(Handle);
+		}
 	}
 }

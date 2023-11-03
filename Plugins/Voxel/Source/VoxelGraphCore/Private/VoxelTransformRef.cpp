@@ -1,10 +1,10 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelTransformRef.h"
 #include "VoxelQuery.h"
 #include "VoxelDependency.h"
 
-class FVoxelTransformRefImpl
+class VOXELGRAPHCORE_API FVoxelTransformRefImpl
 {
 public:
 	const FName Name;
@@ -113,7 +113,7 @@ FName FVoxelTransformRefImpl::MakeName(const TVoxelArray<FNode>& InNodes)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FVoxelTransformRefManager : public FVoxelTicker
+class FVoxelTransformRefManager : public FVoxelSingleton
 {
 public:
 	TVoxelArray<TSharedPtr<FVoxelTransformRefImpl>> TransformRefs_GameThread;
@@ -208,7 +208,7 @@ public:
 		return TransformRef;
 	}
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelSingleton Interface
 	virtual void Tick() override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -220,6 +220,8 @@ public:
 				TransformRefs_GameThread.Add(TransformRef);
 			}
 		}
+
+		VOXEL_SCOPE_COUNTER_FORMAT("Num = %d", TransformRefs_GameThread.Num());
 
 		FVoxelDependencyInvalidationScope InvalidationScope;
 
@@ -294,7 +296,7 @@ public:
 			OnChanged.Broadcast(Transform);
 		}
 	}
-	//~ End FVoxelTicker Interface
+	//~ End FVoxelSingleton Interface
 
 private:
 	FVoxelFastCriticalSection NodesToTransformRefCriticalSection;
@@ -325,16 +327,7 @@ private:
 	TVoxelMap<FNodeArray, TWeakPtr<FVoxelTransformRefImpl>> NodesToTransformRef;
 };
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-FVoxelTransformRefManager* GVoxelTransformRefManager = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelTransformRefManager)
-{
-	GVoxelTransformRefManager = new FVoxelTransformRefManager();
-}
+FVoxelTransformRefManager* GVoxelTransformRefManager = MakeVoxelSingleton(FVoxelTransformRefManager);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -359,6 +352,18 @@ FVoxelTransformRef FVoxelTransformRef::Make(const TSharedRef<const IVoxelTransfo
 {
 	return FVoxelTransformRef(GVoxelTransformRefManager->Make({ FVoxelTransformRefImpl::FNode(Provider) }));
 }
+
+void FVoxelTransformRef::NotifyTransformChanged(const USceneComponent& Component)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	// TODO Do something smarter
+	GVoxelTransformRefManager->Tick();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 bool FVoxelTransformRef::IsIdentity() const
 {
@@ -449,6 +454,10 @@ FVoxelTransformRef FVoxelTransformRef::operator*(const FVoxelTransformRef& Other
 
 	return FVoxelTransformRef(GVoxelTransformRefManager->Make(Nodes));
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 void FVoxelTransformRef::AddOnChanged(const FOnChanged& OnChanged, const bool bFireNow) const
 {

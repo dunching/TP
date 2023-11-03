@@ -18,6 +18,7 @@ public:
 
 	//~ Begin SGraphNodeK2Base interface
 	virtual void CreatePinWidgets() override;
+	virtual TSharedPtr<SGraphPin> CreatePinWidget(UEdGraphPin* Pin) const override;
 	//~ End SGraphNodeK2Base interface
 
 private:

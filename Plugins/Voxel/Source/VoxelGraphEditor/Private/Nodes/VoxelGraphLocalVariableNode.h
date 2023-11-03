@@ -15,7 +15,10 @@ class UVoxelGraphLocalVariableNode : public UVoxelGraphParameterNodeBase
 
 public:
 	//~ Begin UVoxelGraphNode Interface
-	virtual void PostPasteNode() override;
+	virtual EVoxelGraphParameterType GetParameterType() const override
+	{
+		return EVoxelGraphParameterType::LocalVariable;
+	}
 	//~ End UVoxelGraphNode Interface
 };
 
@@ -27,13 +30,9 @@ class UVoxelGraphLocalVariableDeclarationNode : public UVoxelGraphLocalVariableN
 public:
 	//~ Begin UVoxelGraphLocalVariableNode Interface
 	virtual void AllocateParameterPins(const FVoxelGraphParameter& Parameter) override;
-	virtual void PinDefaultValueChanged(UEdGraphPin* Pin) override;
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
 	virtual bool CanJumpToDefinition() const override { return true; }
-	virtual void PostReconstructNode() override;
 	//~ End UVoxelGraphLocalVariableNode Interface
-
-	UVoxelGraphNode* IsInLoop();
 };
 
 UCLASS()

@@ -3,7 +3,7 @@
 #include "SVoxelGraphPinChannelName.h"
 #include "VoxelChannel.h"
 #include "VoxelGraphVisuals.h"
-#include "SVoxelChannelEditor.h"
+#include "Widgets/SVoxelChannelEditor.h"
 
 void SVoxelGraphPinChannelName::Construct(const FArguments& InArgs, UEdGraphPin* InGraphPinObj)
 {

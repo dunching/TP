@@ -165,6 +165,8 @@ void UVoxelParameterContainer::FixupProvider()
 
 void UVoxelParameterContainer::PostLoad()
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	Super::PostLoad();
 
 	LastProvider = Provider;
@@ -174,6 +176,8 @@ void UVoxelParameterContainer::PostLoad()
 #if WITH_EDITOR
 void UVoxelParameterContainer::PostEditUndo()
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	Super::PostEditUndo();
 
 	Fixup();
@@ -245,7 +249,10 @@ TSharedPtr<IVoxelParameterRootView> UVoxelParameterContainer::GetParameterViewIm
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-bool UVoxelParameterContainer::Set(const FName Name, const FVoxelPinValue& Value, FString* OutError)
+bool UVoxelParameterContainer::Set(
+	const FName Name,
+	FVoxelPinValue Value,
+	FString* OutError)
 {
 	VOXEL_FUNCTION_COUNTER();
 
@@ -268,6 +275,13 @@ bool UVoxelParameterContainer::Set(const FName Name, const FVoxelPinValue& Value
 	}
 
 	const FVoxelPinType ExposedType = ParameterView->GetType().GetExposedType();
+	if (ExposedType.Is<float>() &&
+		Value.Is<double>())
+	{
+		// Implicitly convert from double to float for convenience with blueprints
+		Value = FVoxelPinValue::Make<float>(Value.Get<double>());
+	}
+
 	if (!Value.CanBeCastedTo(ExposedType))
 	{
 		if (OutError)

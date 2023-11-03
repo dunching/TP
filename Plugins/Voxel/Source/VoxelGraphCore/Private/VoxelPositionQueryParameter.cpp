@@ -2,6 +2,7 @@
 
 #include "VoxelPositionQueryParameter.h"
 #include "VoxelBufferUtilities.h"
+#include "VoxelPositionQueryParameterImpl.ispc.generated.h"
 
 FVoxelBox FVoxelPositionQueryParameter::GetBounds() const
 {
@@ -12,59 +13,30 @@ FVoxelBox FVoxelPositionQueryParameter::GetBounds() const
 		return *CachedBounds_RequiresLock;
 	}
 
-	if (Grid2D)
+	if (PrecomputedBounds)
 	{
-		ensure(!Grid3D);
-		ensure(!Sparse);
-
-		CachedBounds_RequiresLock = FVoxelBox(
-			FVector(FVector2D(Grid2D->Start), FVoxelBox::Infinite.Min.Z),
-			FVector(FVector2D(Grid2D->Start) + Grid2D->Step * FVector2D(Grid2D->Size), FVoxelBox::Infinite.Max.Z));
-		return *CachedBounds_RequiresLock;
-	}
-	if (Grid3D)
-	{
-		ensure(!Grid2D);
-		ensure(!Sparse);
-
-		CachedBounds_RequiresLock = FVoxelBox(
-			FVector(Grid3D->Start),
-			FVector(Grid3D->Start) + Grid3D->Step * FVector(Grid3D->Size));
-		return *CachedBounds_RequiresLock;
-	}
-	if (Sparse)
-	{
-		ensure(!Grid2D);
-		ensure(!Grid3D);
-
-		if (Sparse->Bounds)
-		{
-			CachedBounds_RequiresLock = Sparse->Bounds.GetValue();
-			return *CachedBounds_RequiresLock;
-		}
-
-		if (!CachedPositions_RequiresLock)
-		{
-			VOXEL_SCOPE_COUNTER("Compute sparse positions");
-			CachedPositions_RequiresLock = Sparse->Compute();
-			ensure(CachedPositions_RequiresLock->Num() > 0);
-		}
-
-		VOXEL_SCOPE_COUNTER("Compute sparse bounds");
-
-		const FFloatInterval MinMaxX = CachedPositions_RequiresLock->X.GetStorage().GetMinMaxSafe();
-		const FFloatInterval MinMaxY = CachedPositions_RequiresLock->Y.GetStorage().GetMinMaxSafe();
-		const FFloatInterval MinMaxZ = CachedPositions_RequiresLock->Z.GetStorage().GetMinMaxSafe();
-
-		CachedBounds_RequiresLock = FVoxelBox(
-			FVector(MinMaxX.Min, MinMaxY.Min, MinMaxZ.Min),
-			FVector(MinMaxX.Max, MinMaxY.Max, MinMaxZ.Max));
-
+		CachedBounds_RequiresLock = PrecomputedBounds.GetValue();
 		return *CachedBounds_RequiresLock;
 	}
 
-	ensure(false);
-	return {};
+	if (!CachedPositions_RequiresLock)
+	{
+		VOXEL_SCOPE_COUNTER("Compute positions");
+		CachedPositions_RequiresLock = (*Compute)();
+		ensure(CachedPositions_RequiresLock->Num() > 0);
+	}
+
+	VOXEL_SCOPE_COUNTER("Compute bounds");
+
+	const FFloatInterval MinMaxX = CachedPositions_RequiresLock->X.GetStorage().GetMinMaxSafe();
+	const FFloatInterval MinMaxY = CachedPositions_RequiresLock->Y.GetStorage().GetMinMaxSafe();
+	const FFloatInterval MinMaxZ = CachedPositions_RequiresLock->Z.GetStorage().GetMinMaxSafe();
+
+	CachedBounds_RequiresLock = FVoxelBox(
+		FVector(MinMaxX.Min, MinMaxY.Min, MinMaxZ.Min),
+		FVector(MinMaxX.Max, MinMaxY.Max, MinMaxZ.Max));
+
+	return *CachedBounds_RequiresLock;
 }
 
 FVoxelVectorBuffer FVoxelPositionQueryParameter::GetPositions() const
@@ -76,174 +48,156 @@ FVoxelVectorBuffer FVoxelPositionQueryParameter::GetPositions() const
 		return *CachedPositions_RequiresLock;
 	}
 
-	if (Grid2D)
-	{
-		ensure(!Grid3D);
-		ensure(!Sparse);
+	VOXEL_SCOPE_COUNTER("Compute positions");
+	CachedPositions_RequiresLock = (*Compute)();
+	ensure(CachedPositions_RequiresLock->Num() > 0);
 
-		FVoxelFloatBufferStorage WriteX;
-		FVoxelFloatBufferStorage WriteY;
-
-		WriteX.Allocate(Grid2D->Size.X * Grid2D->Size.Y);
-		WriteY.Allocate(Grid2D->Size.X * Grid2D->Size.Y);
-
-		FVoxelBufferUtilities::WritePositions2D(
-			WriteX,
-			WriteY,
-			Grid2D->Start,
-			Grid2D->Step,
-			Grid2D->Size);
-
-		CachedPositions_RequiresLock = FVoxelVectorBuffer();
-		CachedPositions_RequiresLock->X = FVoxelFloatBuffer::Make(WriteX);
-		CachedPositions_RequiresLock->Y = FVoxelFloatBuffer::Make(WriteY);
-		CachedPositions_RequiresLock->Z = FVoxelFloatBuffer::Make(0.f);
-		return *CachedPositions_RequiresLock;
-	}
-	if (Grid3D)
-	{
-		ensure(!Grid2D);
-		ensure(!Sparse);
-
-		FVoxelFloatBufferStorage WriteX;
-		FVoxelFloatBufferStorage WriteY;
-		FVoxelFloatBufferStorage WriteZ;
-
-		WriteX.Allocate(Grid3D->Size.X * Grid3D->Size.Y * Grid3D->Size.Z);
-		WriteY.Allocate(Grid3D->Size.X * Grid3D->Size.Y * Grid3D->Size.Z);
-		WriteZ.Allocate(Grid3D->Size.X * Grid3D->Size.Y * Grid3D->Size.Z);
-
-		FVoxelBufferUtilities::WritePositions3D(
-			WriteX,
-			WriteY,
-			WriteZ,
-			Grid3D->Start,
-			Grid3D->Step,
-			Grid3D->Size);
-
-		CachedPositions_RequiresLock = FVoxelVectorBuffer::Make(WriteX, WriteY, WriteZ);
-		return *CachedPositions_RequiresLock;
-	}
-	if (Sparse)
-	{
-		ensure(!Grid2D);
-		ensure(!Grid3D);
-
-		VOXEL_SCOPE_COUNTER("Compute sparse positions");
-		CachedPositions_RequiresLock = Sparse->Compute();
-		ensure(CachedPositions_RequiresLock->Num() > 0);
-		return *CachedPositions_RequiresLock;
-	}
-
-	ensure(false);
-	return {};
+	return *CachedPositions_RequiresLock;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void FVoxelPositionQueryParameter::InitializeSparse(
-	const FVoxelVectorBuffer& Positions,
-	const TOptional<FVoxelBox>& LocalBounds)
+void FVoxelPositionQueryParameter::Initialize(
+	const FVoxelVectorBuffer& NewPositions,
+	const TOptional<FVoxelBox>& NewBounds)
 {
-	ensure(!Grid2D);
-	ensure(!Grid3D);
-	ensure(!Sparse);
-	ensure(Positions.Num() > 0);
+	ensure(NewPositions.Num() > 0);
 
-	Sparse = MakeVoxelShared<FSparse>();
-	Sparse->Bounds = LocalBounds;
-	Sparse->Compute = [Positions]
+	PrecomputedBounds = NewBounds;
+	Compute = MakeVoxelShared<TVoxelUniqueFunction<FVoxelVectorBuffer()>>([NewPositions]
 	{
-		return Positions;
-	};
+		return NewPositions;
+	});
 
-	if (VOXEL_DEBUG && LocalBounds)
+	if (VOXEL_DEBUG && NewBounds)
 	{
 		CheckBounds();
 	}
 }
 
-void FVoxelPositionQueryParameter::InitializeSparse(
-	TVoxelUniqueFunction<FVoxelVectorBuffer()>&& Compute,
-	const TOptional<FVoxelBox>& LocalBounds)
+void FVoxelPositionQueryParameter::Initialize(
+	TVoxelUniqueFunction<FVoxelVectorBuffer()>&& NewCompute,
+	const TOptional<FVoxelBox>& NewBounds)
 {
-	ensure(!Grid2D);
-	ensure(!Grid3D);
-	ensure(!Sparse);
+	PrecomputedBounds = NewBounds;
+	Compute = MakeSharedCopy(MoveTemp(NewCompute));
 
-	Sparse = MakeVoxelShared<FSparse>();
-	Sparse->Bounds = LocalBounds;
-	Sparse->Compute = MoveTemp(Compute);
-
-	if (VOXEL_DEBUG && LocalBounds)
+	if (VOXEL_DEBUG && NewBounds)
 	{
 		CheckBounds();
 	}
 }
 
-void FVoxelPositionQueryParameter::InitializeSparseGradient(
-	const FVoxelVectorBuffer& Positions,
-	const TOptional<FVoxelBox>& LocalBounds)
+void FVoxelPositionQueryParameter::InitializeGradient(
+	const FVoxelVectorBuffer& NewPositions,
+	const TOptional<FVoxelBox>& NewBounds)
 {
-	ensure(!Grid2D);
-	ensure(!Grid3D);
-	ensure(!Sparse);
-	ensure(Positions.Num() > 0);
+	ensure(NewPositions.Num() > 0);
 
-	Sparse = MakeVoxelShared<FSparse>();
-	Sparse->bIsGradient = true;
-	Sparse->Bounds = LocalBounds;
-	Sparse->Compute = [Positions]
+	bIsGradient = true;
+	PrecomputedBounds = NewBounds;
+	Compute = MakeVoxelShared<TVoxelUniqueFunction<FVoxelVectorBuffer()>>([NewPositions]
 	{
-		return Positions;
-	};
+		return NewPositions;
+	});
 
-	if (VOXEL_DEBUG && LocalBounds)
+	if (VOXEL_DEBUG && NewBounds)
 	{
 		CheckBounds();
 	}
 }
 
-void FVoxelPositionQueryParameter::InitializeGrid2D(
-	const FVector2f& Start,
-	const float Step,
-	const FIntPoint& Size)
-{
-	ensure(!Grid2D);
-	ensure(!Grid3D);
-	ensure(!Sparse);
-
-	Grid2D = MakeVoxelShared<FGrid2D>();
-	Grid2D->Start = Start;
-	Grid2D->Step = Step;
-	Grid2D->Size = Size;
-
-	if (!ensure(Grid2D->Size % 2 == 0))
-	{
-		Grid2D->Size = 2 * FVoxelUtilities::DivideCeil(Grid2D->Size, 2);
-	}
-}
-
-void FVoxelPositionQueryParameter::InitializeGrid3D(
+void FVoxelPositionQueryParameter::InitializeGrid(
 	const FVector3f& Start,
 	const float Step,
 	const FIntVector& Size)
 {
-	ensure(!Grid2D);
-	ensure(!Grid3D);
-	ensure(!Sparse);
-
-	Grid3D = MakeVoxelShared<FGrid3D>();
-	Grid3D->Start = Start;
-	Grid3D->Step = Step;
-	Grid3D->Size = Size;
-
-	if (!ensure(Grid3D->Size % 2 == 0))
+	if (!ensure(int64(Size.X) * int64(Size.Y) * int64(Size.Z) < MAX_int32))
 	{
-		Grid3D->Size = 2 * FVoxelUtilities::DivideCeil(Grid3D->Size, 2);
+		return;
 	}
+
+	Grid = MakeVoxelShared<FGrid>(FGrid
+	{
+		Start,
+		Step,
+		Size
+	});
+
+	Initialize(
+		[=]
+		{
+			VOXEL_SCOPE_COUNTER("VoxelPositionQueryParameter_WritePositions3D");
+
+			const int32 Num = Size.X * Size.Y * Size.Z;
+
+			FVoxelFloatBufferStorage X; X.Allocate(Num);
+			FVoxelFloatBufferStorage Y;	Y.Allocate(Num);
+			FVoxelFloatBufferStorage Z;	Z.Allocate(Num);
+
+			ForeachVoxelBufferChunk(Num, [&](const FVoxelBufferIterator& Iterator)
+			{
+				ispc::VoxelPositionQueryParameter_WritePositions3D(
+					X.GetData(Iterator),
+					Y.GetData(Iterator),
+					Z.GetData(Iterator),
+					Start.X,
+					Start.Y,
+					Start.Z,
+					Size.X,
+					Size.Y,
+					Step,
+					Iterator.GetIndex(),
+					Iterator.Num());
+			});
+
+			return FVoxelVectorBuffer::Make(X, Y, Z);
+		},
+		FVoxelBox(FVector(Start), FVector(Start) + Step * FVector(Size)));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+FVoxelQuery FVoxelPositionQueryParameter::TransformQuery(const FVoxelQuery& Query, const FMatrix& Transform)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	const FVoxelPositionQueryParameter* PositionQueryParameter = Query.GetParameters().Find<FVoxelPositionQueryParameter>();
+	if (!ensure(PositionQueryParameter))
+	{
+		return Query;
+	}
+
+	if (Transform.Equals(FMatrix::Identity))
+	{
+		// Nothing to be done
+		return Query;
+	}
+
+	const FVoxelVectorBuffer Positions = PositionQueryParameter->GetPositions();
+
+	const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
+	if (PositionQueryParameter->Grid &&
+		Transform.Rotator().IsNearlyZero() &&
+		Transform.GetScaleVector().IsUniform())
+	{
+		Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid(
+			FMatrix44f(Transform).TransformPosition(PositionQueryParameter->Grid->Start),
+			PositionQueryParameter->Grid->Step * Transform.GetMaximumAxisScale(),
+			PositionQueryParameter->Grid->Size);
+	}
+	else
+	{
+		Parameters->Add<FVoxelPositionQueryParameter>().Initialize([=]
+		{
+			return FVoxelBufferUtilities::ApplyTransform(Positions, Transform);
+		});
+	}
+	return Query.MakeNewQuery(Parameters);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -10,6 +10,8 @@ DECLARE_VOXEL_COUNTER(VOXELCORE_API, STAT_VoxelNumMaterialInstancesUsed, "Num Ma
 DEFINE_VOXEL_COUNTER(STAT_VoxelNumMaterialInstancesPooled);
 DEFINE_VOXEL_COUNTER(STAT_VoxelNumMaterialInstancesUsed);
 
+DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelMaterialRef);
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -25,7 +27,7 @@ struct FVoxelInstancePool
 	TArray<UMaterialInstanceDynamic*> Instances;
 };
 
-class FVoxelMaterialRefManager : public FGCObject
+class FVoxelMaterialRefManager : public FVoxelSingleton
 {
 public:
 	TSharedPtr<FVoxelMaterialRef> DefaultMaterial;
@@ -38,7 +40,13 @@ public:
 	TVoxelMap<TWeakObjectPtr<UMaterialInstanceDynamic>, TVoxelArray<TWeakPtr<FVoxelMaterialRef>>> InstanceToChildren;
 
 public:
-	//~ Begin FGCObject Interface
+	//~ Begin FVoxelSingleton Interface
+	virtual void Initialize() override
+	{
+		UMaterial* DefaultMaterialObject = UMaterial::GetDefaultMaterial(MD_Surface);
+		check(DefaultMaterialObject);
+		DefaultMaterial = FVoxelMaterialRef::Make(DefaultMaterialObject);
+	}
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -78,11 +86,7 @@ public:
 			Collector.AddReferencedObjects(It.Value.Instances);
 		}
 	}
-	virtual FString GetReferencerName() const override
-	{
-		return "FVoxelMaterialRefManager";
-	}
-	//~ End FGCObject Interface
+	//~ End FVoxelSingleton Interface
 
 public:
 	UMaterialInstanceDynamic* GetInstanceFromPool(UMaterialInterface* Parent)
@@ -134,21 +138,7 @@ public:
 		INC_VOXEL_COUNTER(STAT_VoxelNumMaterialInstancesPooled);
 	}
 };
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-FVoxelMaterialRefManager* GVoxelMaterialRefManager = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(CreateGVoxelMaterialInterfaceManager)
-{
-	GVoxelMaterialRefManager = new FVoxelMaterialRefManager();
-
-	UMaterial* DefaultMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
-	check(DefaultMaterial);
-	GVoxelMaterialRefManager->DefaultMaterial = FVoxelMaterialRef::Make(DefaultMaterial);
-}
+FVoxelMaterialRefManager* GVoxelMaterialRefManager = MakeVoxelSingleton(FVoxelMaterialRefManager);
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -170,6 +160,7 @@ TSharedRef<FVoxelMaterialRef> FVoxelMaterialRef::Make(UMaterialInterface* Materi
 
 	const TSharedRef<FVoxelMaterialRef> MaterialRef = MakeVoxelShareable(new (GVoxelMemory) FVoxelMaterialRef());
 	MaterialRef->Material = Material;
+	MaterialRef->WeakMaterial = Material;
 	GVoxelMaterialRefManager->MaterialRefs.Add(MaterialRef);
 
 	return MaterialRef;
@@ -209,6 +200,7 @@ TSharedRef<FVoxelMaterialRef> FVoxelMaterialRef::MakeInstance(UMaterialInterface
 
 	const TSharedRef<FVoxelMaterialRef> MaterialRef = MakeVoxelShareable(new (GVoxelMemory) FVoxelMaterialRef());
 	MaterialRef->Material = Instance;
+	MaterialRef->WeakMaterial = Instance;
 	MaterialRef->InstanceRef = InstanceRef;
 	GVoxelMaterialRefManager->MaterialRefs.Add(MaterialRef);
 

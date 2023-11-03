@@ -35,7 +35,7 @@ void FVoxelPlaceableItemUtilities::RegisterActorFactory(const UClass* ActorFacto
 	UActorFactory* ActorFactory = ActorFactoryClass->GetDefaultObject<UActorFactory>();
 
 	IPlacementModeModule& PlacementModeModule = IPlacementModeModule::Get();
-	PlacementModeModule.RegisterPlaceableItem(VoxelPlaceableItemHandle, MakeVoxelShared<FPlaceableItem>(ActorFactory, FAssetData(ActorFactory->NewActorClass)));
+	PlacementModeModule.RegisterPlaceableItem(VoxelPlaceableItemHandle, MakeShared<FPlaceableItem>(ActorFactory, FAssetData(ActorFactory->NewActorClass)));
 	PlacementModeModule.RegenerateItemsForCategory(FBuiltInPlacementCategories::AllClasses());
 }
 

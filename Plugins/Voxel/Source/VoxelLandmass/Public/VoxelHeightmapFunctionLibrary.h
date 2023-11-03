@@ -31,7 +31,7 @@ struct VOXELLANDMASS_API FVoxelHeightmapRefPinType : public FVoxelObjectPinType
 	{
 		if (bSetObject)
 		{
-			Object = Struct.Asset.Get();
+			Object = Struct.Asset;
 		}
 		else
 		{

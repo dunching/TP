@@ -2,7 +2,6 @@
 
 #include "VoxelRandomSelectNode.h"
 #include "VoxelBufferUtilities.h"
-#include "VoxelGraphNodeStatInterface.h"
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_RandomSelect, Result)
 {
@@ -22,6 +21,8 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_RandomSelect, Result)
 
 		FVoxelInt32BufferStorage Indices;
 		Indices.Allocate(Seeds.Num());
+
+		const int32 Random = STATIC_HASH("RandomSelect");
 
 		if (Weights.Num() > 0)
 		{
@@ -53,7 +54,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_RandomSelect, Result)
 			for (int32 Index = 0; Index < Seeds.Num(); Index++)
 			{
 				const FVoxelSeed Seed = Seeds[Index];
-				const uint32 LocalSeed = FVoxelUtilities::MurmurHash(uint32(Seed), Index);
+				const uint32 LocalSeed = FVoxelUtilities::MurmurHash(uint32(Seed), Random);
 				const double Value = TotalSum * FVoxelUtilities::GetFraction(LocalSeed);
 
 				for (int32 ValueIndex = 0; ValueIndex < NumValues; ValueIndex++)
@@ -77,7 +78,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_RandomSelect, Result)
 			for (int32 Index = 0; Index < Seeds.Num(); Index++)
 			{
 				const FVoxelSeed Seed = Seeds[Index];
-				const uint32 LocalSeed = FVoxelUtilities::MurmurHash(uint32(Seed), Index);
+				const uint32 LocalSeed = FVoxelUtilities::MurmurHash(uint32(Seed), Random);
 				Indices[Index] = FVoxelUtilities::RandRange(LocalSeed, 0, NumValues - 1);
 			}
 		}

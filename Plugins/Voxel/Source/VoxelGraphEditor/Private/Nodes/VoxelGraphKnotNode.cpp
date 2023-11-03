@@ -1,7 +1,6 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelGraphKnotNode.h"
-#include "VoxelGraphSchemaBase.h"
 
 void UVoxelGraphKnotNode::AllocateDefaultPins()
 {
@@ -115,11 +114,6 @@ bool UVoxelGraphKnotNode::ShouldDrawNodeAsControlPointOnly(int32& OutInputPinInd
 	OutOutputPinIndex = 1;
 
 	return true;
-}
-
-bool UVoxelGraphKnotNode::CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const
-{
-	return Schema->IsA<UVoxelGraphSchemaBase>();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

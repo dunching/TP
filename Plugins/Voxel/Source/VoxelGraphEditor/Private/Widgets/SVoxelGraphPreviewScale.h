@@ -4,9 +4,7 @@
 
 #include "VoxelEditorMinimal.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SPreviewScale : public SCompoundWidget
+class SVoxelGraphPreviewScale : public SCompoundWidget
 {
 public:
 	TWeakPtr<SWidget> SizeWidget;
@@ -23,5 +21,3 @@ private:
 	TAttribute<double> Value;
 	TAttribute<int32> Resolution;
 };
-
-END_VOXEL_NAMESPACE(Graph)

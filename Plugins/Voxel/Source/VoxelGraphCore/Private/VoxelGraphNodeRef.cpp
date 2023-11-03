@@ -2,6 +2,7 @@
 
 #include "VoxelGraphNodeRef.h"
 #include "VoxelGraph.h"
+#include "VoxelRuntimeGraph.h"
 #if WITH_EDITOR
 #include "EdGraph/EdGraph.h"
 #endif
@@ -9,6 +10,7 @@
 const FName FVoxelNodeNames::Builtin = "Builtin";
 const FName FVoxelNodeNames::ExecuteNodeId = "ExecuteNode";
 const FName FVoxelNodeNames::MergeNodeId = "MergeNode";
+const FName FVoxelNodeNames::PreviewNodeId = "PreviewNode";
 const FName FVoxelNodeNames::GetPreviousOutputNodeId = "GetPreviousOutputNode";
 const FName FVoxelNodeNames::MacroTemplateInput = "Template_Graph";
 const FName FVoxelNodeNames::MacroRecursiveTemplateInput = "RecursiveTemplate_Graphs";
@@ -33,7 +35,7 @@ UEdGraphNode* FVoxelGraphNodeRef::GetGraphNode_EditorOnly() const
 	VOXEL_FUNCTION_COUNTER();
 	ensure(IsInGameThread());
 
-	if (EdGraphNodeName_EditorOnly == FVoxelNodeNames::Builtin)
+	if (EdGraphNodeName == FVoxelNodeNames::Builtin)
 	{
 		return nullptr;
 	}
@@ -53,7 +55,8 @@ UEdGraphNode* FVoxelGraphNodeRef::GetGraphNode_EditorOnly() const
 
 	for (UEdGraphNode* Node : EdGraph->Nodes)
 	{
-		if (Node->GetFName() == EdGraphNodeName_EditorOnly)
+		if (ensure(Node) &&
+			Node->GetFName() == EdGraphNodeName)
 		{
 			return Node;
 		}
@@ -64,16 +67,32 @@ UEdGraphNode* FVoxelGraphNodeRef::GetGraphNode_EditorOnly() const
 }
 #endif
 
+bool FVoxelGraphNodeRef::IsDeleted() const
+{
+	ensure(!EdGraphNodeName.IsNone());
+
+	if (EdGraphNodeName == FVoxelNodeNames::Builtin)
+	{
+		return false;
+	}
+
+	const UVoxelGraph* ResolvedGraph = GetGraph();
+	if (!ensure(ResolvedGraph))
+	{
+		return false;
+	}
+
+	return !ResolvedGraph->GetRuntimeGraph().GetData().GetNodeNameToNode().Contains(EdGraphNodeName);
+}
+
 FVoxelGraphNodeRef FVoxelGraphNodeRef::WithSuffix(const FString& Suffix) const
 {
 	FVoxelGraphNodeRef Result;
 	Result.Graph = Graph;
 	Result.NodeId = NodeId + "_" + Suffix;
 	Result.TemplateInstance = TemplateInstance;
-	Result.DebugName = DebugName + " (" + Suffix + ")";
-#if WITH_EDITOR
-	Result.EdGraphNodeName_EditorOnly = EdGraphNodeName_EditorOnly;
-#endif
+	Result.EdGraphNodeTitle = EdGraphNodeTitle + " (" + Suffix + ")";
+	Result.EdGraphNodeName = EdGraphNodeName;
 	return Result;
 }
 
@@ -82,13 +101,32 @@ FString FVoxelGraphPinRef::ToString() const
 	const UVoxelGraphInterface* Graph = Node.Graph.Get();
 	return FString::Printf(TEXT("%s.%s.%s"),
 		Graph ? *Graph->GetPathName() : TEXT("<null>"),
-		*Node.DebugName.ToString(),
+		*Node.EdGraphNodeTitle.ToString(),
 		*PinName.ToString());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
+
+FString FVoxelNodePath::ToDebugString() const
+{
+	TStringBuilderWithBuffer<TCHAR, NAME_SIZE> Result;
+	for (const FVoxelGraphNodeRef& NodeRef : NodeRefs)
+	{
+		Result += TEXT("/");
+
+		if (NodeRef.EdGraphNodeTitle.IsNone())
+		{
+			NodeRef.NodeId.AppendString(Result);
+		}
+		else
+		{
+			NodeRef.EdGraphNodeTitle.AppendString(Result);
+		}
+	}
+	return FString(Result.ToView());
+}
 
 bool FVoxelNodePath::NetSerialize(FArchive& Ar, UPackageMap& Map)
 {
@@ -140,6 +178,12 @@ bool FVoxelNodePath::NetSerialize(FArchive& Ar, UPackageMap& Map)
 		ensure(false);
 		return false;
 	}
+}
+
+FArchive& operator<<(FArchive& Ar, FVoxelNodePath& Path)
+{
+	Ar << Path.NodeRefs;
+	return Ar;
 }
 
 uint32 GetTypeHash(const FVoxelNodePath& Path)

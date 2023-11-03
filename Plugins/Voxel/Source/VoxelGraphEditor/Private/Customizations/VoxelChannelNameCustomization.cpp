@@ -5,10 +5,15 @@
 #include "VoxelGraphVisuals.h"
 #include "Widgets/SVoxelChannelEditor.h"
 
-class FVoxelChannelNameCustomization : public IPropertyTypeCustomization
+class FVoxelChannelNameCustomization
+	: public IPropertyTypeCustomization
+	, public FVoxelTicker
 {
 public:
-	virtual void CustomizeHeader(TSharedRef<IPropertyHandle> PropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& CustomizationUtils) override
+	virtual void CustomizeHeader(
+		const TSharedRef<IPropertyHandle> PropertyHandle,
+		FDetailWidgetRow& HeaderRow,
+		IPropertyTypeCustomizationUtils& CustomizationUtils) override
 	{
 		NameHandle = PropertyHandle->GetChildHandleStatic(FVoxelChannelName, Name);
 
@@ -25,7 +30,7 @@ public:
 			HeaderRow
 			.NameContent()
 			[
-				NameHandle->CreatePropertyNameWidget()
+				PropertyHandle->CreatePropertyNameWidget()
 			]
 			.ValueContent()
 			[
@@ -41,6 +46,7 @@ public:
 		case FPropertyAccess::Success: break;
 		}
 
+		CachedChannel = Channel;
 		TOptional<FVoxelChannelDefinition> ChannelDef = GVoxelChannelManager->FindChannelDefinition(Channel);
 
 		PreviewImageWidget =
@@ -57,14 +63,14 @@ public:
 		HeaderRow
 		.NameContent()
 		[
-			NameHandle->CreatePropertyNameWidget()
+			PropertyHandle->CreatePropertyNameWidget()
 		]
 		.ValueContent()
 		[
 			SNew(SBox)
 			.MinDesiredWidth(125.f)
 			[
-				SNew(SComboButton)
+				SAssignNew(SelectedComboButton, SComboButton)
 				.ComboButtonStyle(FAppStyle::Get(), "ComboButton")
 				.OnGetMenuContent(this, &FVoxelChannelNameCustomization::GetMenuContent)
 				.ContentPadding(0)
@@ -100,6 +106,25 @@ public:
 	{
 	}
 
+	virtual void Tick() override
+	{
+		if (!NameHandle ||
+			!SelectedComboButton)
+		{
+			return;
+		}
+
+		FName Channel;
+		ensure(NameHandle->GetValue(Channel) == FPropertyAccess::Success);
+		if (CachedChannel == Channel)
+		{
+			return;
+		}
+
+		CachedChannel = Channel;
+		UpdateButtonContents();
+	}
+
 private:
 	TSharedRef<SWidget> GetMenuContent()
 	{
@@ -112,44 +137,63 @@ private:
 		NameHandle->GetValue(Channel);
 
 		return
-			SNew(SVoxelChannelEditor)
-			.SelectedChannel(Channel)
-			.OnChannelSelected_Lambda(MakeWeakPtrLambda(this, [=](const FName NewChannel)
-			{
-				if (!ensure(NameHandle))
+			SAssignNew(MenuContent, SMenuOwner)
+			[
+				SNew(SVoxelChannelEditor)
+				.SelectedChannel(Channel)
+				.OnChannelSelected_Lambda(MakeWeakPtrLambda(this, [=](const FName NewChannel)
 				{
-					return;
-				}
+					CachedChannel = NewChannel;
+					if (!ensure(NameHandle))
+					{
+						return;
+					}
 
-				NameHandle->SetValue(NewChannel);
+					NameHandle->SetValue(NewChannel);
 
-				if (!ensure(PreviewTextWidget) ||
-					!ensure(PreviewImageWidget))
-				{
-					return;
-				}
+					UpdateButtonContents();
 
-				PreviewTextWidget->SetText(FText::FromName(NewChannel));
+					if (MenuContent &&
+						SelectedComboButton)
+					{
+						MenuContent->CloseSummonedMenus();
+						SelectedComboButton->SetIsOpen(false);
+					}
+				}))
+			];
+	}
 
-				TOptional<FVoxelChannelDefinition> ChannelDef = GVoxelChannelManager->FindChannelDefinition(NewChannel);
-				if (ChannelDef.IsSet() &&
-					ChannelDef->Type.IsValid())
-				{
-					PreviewImageWidget->SetImage(FVoxelGraphVisuals::GetPinIcon(ChannelDef->Type).GetIcon());
-					PreviewImageWidget->SetColorAndOpacity(FVoxelGraphVisuals::GetPinColor(ChannelDef->Type));
-					PreviewImageWidget->SetVisibility(EVisibility::Visible);
-				}
-				else
-				{
-					PreviewImageWidget->SetVisibility(EVisibility::Collapsed);
-				}
-			}));
+	void UpdateButtonContents() const
+	{
+		if (!ensure(PreviewTextWidget) ||
+			!ensure(PreviewImageWidget))
+		{
+			return;
+		}
+
+		PreviewTextWidget->SetText(FText::FromName(CachedChannel));
+
+		TOptional<FVoxelChannelDefinition> ChannelDef = GVoxelChannelManager->FindChannelDefinition(CachedChannel);
+		if (ChannelDef.IsSet() &&
+			ChannelDef->Type.IsValid())
+		{
+			PreviewImageWidget->SetImage(FVoxelGraphVisuals::GetPinIcon(ChannelDef->Type).GetIcon());
+			PreviewImageWidget->SetColorAndOpacity(FVoxelGraphVisuals::GetPinColor(ChannelDef->Type));
+			PreviewImageWidget->SetVisibility(EVisibility::Visible);
+		}
+		else
+		{
+			PreviewImageWidget->SetVisibility(EVisibility::Collapsed);
+		}
 	}
 
 private:
 	TSharedPtr<IPropertyHandle> NameHandle;
 	TSharedPtr<STextBlock> PreviewTextWidget;
 	TSharedPtr<SImage> PreviewImageWidget;
+	TSharedPtr<SMenuOwner> MenuContent;
+	TSharedPtr<SComboButton> SelectedComboButton;
+	FName CachedChannel;
 };
 
 DEFINE_VOXEL_STRUCT_LAYOUT(FVoxelChannelName, FVoxelChannelNameCustomization);

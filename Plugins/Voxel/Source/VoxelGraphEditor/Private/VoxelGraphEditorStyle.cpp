@@ -5,6 +5,17 @@
 
 VOXEL_INITIALIZE_STYLE(GraphEditor)
 {
+	using namespace CoreStyleConstants;
+
+	Set("VoxelGraph.Compile", new CORE_IMAGE_BRUSH_SVG("Starship/MainToolbar/compile", Icon40x40));
+	Set("VoxelGraph.Compile.Small", new CORE_IMAGE_BRUSH_SVG("Starship/MainToolbar/compile", Icon20x20));
+
+	Set("VoxelGraph.CompileAll", new CORE_IMAGE_BRUSH_SVG("Starship/MainToolbar/compile", Icon40x40));
+	Set("VoxelGraph.CompileAll.Small", new CORE_IMAGE_BRUSH_SVG("Starship/MainToolbar/compile", Icon20x20));
+
+	Set("VoxelGraph.EnableStats", new CORE_IMAGE_BRUSH_SVG("Starship/Common/Statistics", Icon40x40));
+	Set("VoxelGraph.EnableStats.Small", new CORE_IMAGE_BRUSH_SVG("Starship/Common/Statistics", Icon20x20));
+
 	{
 		Set("Graph.Preview.Scale", new BOX_BRUSH("Graphs/Preview_Scale", 4.f / 16.f));
 		Set("Graph.Preview.Ruler", new BOX_BRUSH("Graphs/Preview_Ruler", 4.f / 16.f));

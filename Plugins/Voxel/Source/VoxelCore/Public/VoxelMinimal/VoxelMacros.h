@@ -16,9 +16,8 @@
 #endif
 
 #if INTELLISENSE_PARSER
-#undef VOXEL_DEBUG
 #define VOXEL_DEBUG 1
-#undef RHI_RAYTRACING
+#define UE_NODISCARD [[nodiscard]]
 #define RHI_RAYTRACING 1
 #define INTELLISENSE_ONLY(...) __VA_ARGS__
 #define INTELLISENSE_SKIP(...)
@@ -96,9 +95,48 @@ extern VOXELCORE_API bool GVoxelDisableSlowChecks;
 
 VOXELCORE_API uint64 VoxelHashString(const FStringView& Name);
 
-#define STATIC_FNAME(Name) ([]() -> const FName& { VOXEL_ALLOW_MALLOC_SCOPE(); static const FName StaticName = Name; return StaticName; }())
-#define STATIC_FSTRING(String) ([]() -> const FString& { static const FString StaticString = String; return StaticString; }())
-#define STATIC_HASH(Name) ([]() -> uint64 { VOXEL_ALLOW_MALLOC_SCOPE(); static const uint64 StaticHash = VoxelHashString(TEXT(Name)); return StaticHash; }())
+#if VOXEL_DEBUG
+#define VOXEL_STATIC_HELPER_CHECK() ON_SCOPE_EXIT { ensure(StaticRawValue != 0); }
+#else
+#define VOXEL_STATIC_HELPER_CHECK()
+#endif
+
+// Zero initialize static and check if it's 0
+// That way the static TLS logic is optimized out and this is compiled to a single mov + test
+// This works only if the initializer is deterministic & can be called multiple times
+#define VOXEL_STATIC_HELPER(InType) \
+	static TVoxelTypeForBytes<sizeof(InType)>::Type StaticRawValue = 0; \
+	VOXEL_STATIC_HELPER_CHECK(); \
+	InType& StaticValue = ReinterpretCastRef<InType>(StaticRawValue); \
+	if (!StaticRawValue)
+
+template<typename T>
+inline static FName GVoxelStaticName{ static_cast<T*>(nullptr)->operator()() };
+
+template<typename T>
+FORCEINLINE const FName& VoxelStaticName(const T&)
+{
+    return GVoxelStaticName<T>;
+}
+
+#define STATIC_FNAME(Name) VoxelStaticName([]{ return FName(Name); })
+
+#define STATIC_FSTRING(String) \
+	([]() -> const FString& \
+	{ \
+		static const FString StaticString = String; \
+		return StaticString; \
+	}())
+
+#define STATIC_HASH(Name) \
+	([]() -> uint64 \
+	{ \
+		VOXEL_STATIC_HELPER(uint64) \
+		{ \
+			StaticValue = VoxelHashString(TEXT(Name)); \
+		} \
+		return StaticValue; \
+	}())
 
 #define GET_MEMBER_NAME_STATIC(ClassName, MemberName) STATIC_FNAME(GET_MEMBER_NAME_STRING_CHECKED(ClassName, MemberName))
 #define GET_OWN_MEMBER_NAME(MemberName) GET_MEMBER_NAME_CHECKED(TDecay<decltype(*this)>::Type, MemberName)
@@ -130,12 +168,25 @@ VOXELCORE_API uint64 VoxelHashString(const FStringView& Name);
 	    TEXT(Description), \
 		MakeLambdaDelegate([] \
 		{ \
-			VOXEL_LLM_SCOPE(); \
 			VOXEL_SCOPE_COUNTER(#Name); \
 			Cmd ## Name(); \
 		})); \
 	\
 	static void Cmd ## Name()
+
+#define VOXEL_CONSOLE_WORLD_COMMAND(Name, Command, Description) \
+	INTELLISENSE_ONLY(void Name()); \
+	static void Cmd ## Name(const TArray<FString>&, UWorld*); \
+	static FAutoConsoleCommand AutoCmd ## Name( \
+	    TEXT(Command), \
+	    TEXT(Description), \
+		MakeLambdaDelegate([](const TArray<FString>& Args, UWorld* World, FOutputDevice&) \
+		{ \
+			VOXEL_SCOPE_COUNTER(#Name); \
+			Cmd ## Name(Args, World); \
+		})); \
+	\
+	static void Cmd ## Name(const TArray<FString>& Args, UWorld* World)
 
 struct VOXELCORE_API FVoxelConsoleSinkHelper
 {
@@ -155,6 +206,8 @@ struct VOXELCORE_API FVoxelConsoleSinkHelper
 #define VOXEL_EXPAND(X) X
 
 #define VOXEL_APPEND_LINE(X) PREPROCESSOR_JOIN(X, __LINE__)
+
+#define ON_SCOPE_EXIT_IMPL(Suffix) const auto PREPROCESSOR_JOIN(PREPROCESSOR_JOIN(ScopeGuard_, __LINE__), Suffix) = ::ScopeExitSupport::FScopeGuardSyntaxSupport() + [&]()
 
 // Unlike GENERATE_MEMBER_FUNCTION_CHECK, this supports inheritance
 // However, it doesn't do any signature check
@@ -208,6 +261,7 @@ enum class EVoxelRunOnStartupPhase
 {
 	Game,
 	Editor,
+	EditorCook,
 	FirstTick
 };
 struct VOXELCORE_API FVoxelRunOnStartupPhaseHelper
@@ -225,7 +279,10 @@ struct VOXELCORE_API FVoxelRunOnStartupPhaseHelper
 	void VOXEL_APPEND_LINE(PREPROCESSOR_JOIN(VoxelStartupFunction, UniqueId))()
 
 #define VOXEL_RUN_ON_STARTUP_GAME(UniqueId) VOXEL_RUN_ON_STARTUP(UniqueId, Game, 0)
+// Will only run if GIsEditor is true
 #define VOXEL_RUN_ON_STARTUP_EDITOR(UniqueId) VOXEL_RUN_ON_STARTUP(UniqueId, Editor, 0)
+// Will run before any package PostLoad to work for cooker
+#define VOXEL_RUN_ON_STARTUP_EDITOR_COOK(UniqueId) VOXEL_RUN_ON_STARTUP(UniqueId, EditorCook, 0)
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -296,8 +353,6 @@ struct FVoxelLambdaCaller
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
-
-#define VOXEL_UNIQUE_ID() []() { ensureVoxelSlowNoSideEffects(IsInGameThread()); static uint64 __UniqueId = 0; return ++__UniqueId; }()
 
 // UniqueClass: to forbid copying ids from different classes
 template<typename UniqueClass>
@@ -436,6 +491,28 @@ FORCEINLINE ToType&& ReinterpretCastRef(FromType&& From)
 	return reinterpret_cast<ToType&&>(From);
 }
 
+template<typename ToType, typename FromType, typename = typename TEnableIf<sizeof(FromType) == sizeof(ToType) && std::is_const_v<FromType> == std::is_const_v<ToType>>::Type>
+FORCEINLINE TSharedPtr<ToType>& ReinterpretCastSharedPtr(TSharedPtr<FromType>& From)
+{
+	return ReinterpretCastRef<TSharedPtr<ToType>>(From);
+}
+template<typename ToType, typename FromType, typename = typename TEnableIf<sizeof(FromType) == sizeof(ToType) && std::is_const_v<FromType> == std::is_const_v<ToType>>::Type>
+FORCEINLINE TSharedRef<ToType>& ReinterpretCastSharedPtr(TSharedRef<FromType>& From)
+{
+	return ReinterpretCastRef<TSharedRef<ToType>>(From);
+}
+
+template<typename ToType, typename FromType, typename = typename TEnableIf<sizeof(FromType) == sizeof(ToType) && std::is_const_v<FromType> == std::is_const_v<ToType>>::Type>
+FORCEINLINE const TSharedPtr<ToType>& ReinterpretCastSharedPtr(const TSharedPtr<FromType>& From)
+{
+	return ReinterpretCastRef<TSharedPtr<ToType>>(From);
+}
+template<typename ToType, typename FromType, typename = typename TEnableIf<sizeof(FromType) == sizeof(ToType) && std::is_const_v<FromType> == std::is_const_v<ToType>>::Type>
+FORCEINLINE const TSharedRef<ToType>& ReinterpretCastSharedPtr(const TSharedRef<FromType>& From)
+{
+	return ReinterpretCastRef<TSharedRef<ToType>>(From);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -545,6 +622,10 @@ struct TVoxelConstCast<const T>
 	}
 };
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 template<typename T>
 struct TVoxelConstCast<TSharedPtr<const T>>
 {
@@ -553,7 +634,6 @@ struct TVoxelConstCast<TSharedPtr<const T>>
 		return ReinterpretCastRef<TSharedPtr<T>>(Value);
 	}
 };
-
 template<typename T>
 struct TVoxelConstCast<TSharedRef<const T>>
 {
@@ -571,7 +651,6 @@ struct TVoxelConstCast<const TSharedPtr<const T>>
 		return ReinterpretCastRef<TSharedPtr<T>>(Value);
 	}
 };
-
 template<typename T>
 struct TVoxelConstCast<const TSharedRef<const T>>
 {
@@ -580,6 +659,31 @@ struct TVoxelConstCast<const TSharedRef<const T>>
 		return ReinterpretCastRef<TSharedRef<T>>(Value);
 	}
 };
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+template<typename T>
+struct TVoxelConstCast<TObjectPtr<const T>>
+{
+	FORCEINLINE static TObjectPtr<T>& ConstCast(TObjectPtr<const T>& Value)
+	{
+		return ReinterpretCastRef<TObjectPtr<T>>(Value);
+	}
+};
+template<typename T>
+struct TVoxelConstCast<const TObjectPtr<const T>>
+{
+	FORCEINLINE static const TObjectPtr<T>& ConstCast(const TObjectPtr<const T>& Value)
+	{
+		return ReinterpretCastRef<TObjectPtr<T>>(Value);
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 template<typename T>
 FORCEINLINE auto ConstCast(T& Value) -> decltype(auto)
@@ -926,50 +1030,6 @@ FORCEINLINE TSoftObjectPtr<T> MakeSoftObjectPtr(const FString& Path)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-#define INTERNAL_BEGIN_VOXEL_NAMESPACE(Name) namespace Name {
-#define INTERNAL_END_VOXEL_NAMESPACE(Name) }
-#define INTERNAL_VOXEL_USE_NAMESPACE(Name) ::Name
-#define INTERNAL_VOXEL_USE_NAMESPACE_TYPE(Type) ::Type Type
-#define INTERNAL_VOXEL_USE_NAMESPACE_TYPES(Namespace, Type) using Type = Voxel::Namespace::Type;
-
-#define BEGIN_VOXEL_NAMESPACE(...) namespace Voxel { VOXEL_FOREACH(INTERNAL_BEGIN_VOXEL_NAMESPACE, __VA_ARGS__)
-#define END_VOXEL_NAMESPACE(...) \
-	INTELLISENSE_ONLY(struct { void Dummy() { using namespace Voxel VOXEL_FOREACH(INTERNAL_VOXEL_USE_NAMESPACE, __VA_ARGS__); } };) \
-	VOXEL_FOREACH_SUFFIX(INTERNAL_END_VOXEL_NAMESPACE, __VA_ARGS__) }
-
-#define VOXEL_USE_NAMESPACE(...) using namespace Voxel VOXEL_FOREACH(INTERNAL_VOXEL_USE_NAMESPACE, __VA_ARGS__)
-#define VOXEL_USE_NAMESPACE_TYPES(Namespace, ...) VOXEL_FOREACH_ONE_ARG(INTERNAL_VOXEL_USE_NAMESPACE_TYPES, Namespace, __VA_ARGS__)
-
-
-#define INTERNAL_VOXEL_FWD_NAMESPACE_CLASS(Type) class Type;
-#define INTERNAL_VOXEL_FWD_NAMESPACE_STRUCT(Type) struct Type;
-
-#define VOXEL_FWD_DECLARE_NAMESPACE_CLASS(...) \
-	namespace Voxel \
-	{ \
-		VOXEL_FOREACH_IMPL(INTERNAL_BEGIN_VOXEL_NAMESPACE, INTERNAL_VOXEL_FWD_NAMESPACE_CLASS, VOXEL_VOID_MACRO, __VA_ARGS__) \
-		VOXEL_FOREACH_IMPL(INTERNAL_END_VOXEL_NAMESPACE, VOXEL_VOID_MACRO, VOXEL_VOID_MACRO, __VA_ARGS__) \
-	}
-
-#define VOXEL_FWD_DECLARE_NAMESPACE_STRUCT(...) \
-	namespace Voxel \
-	{ \
-		VOXEL_FOREACH_IMPL(INTERNAL_BEGIN_VOXEL_NAMESPACE, INTERNAL_VOXEL_FWD_NAMESPACE_STRUCT, VOXEL_VOID_MACRO, __VA_ARGS__) \
-		VOXEL_FOREACH_IMPL(INTERNAL_END_VOXEL_NAMESPACE, VOXEL_VOID_MACRO, VOXEL_VOID_MACRO, __VA_ARGS__) \
-	}
-
-#define VOXEL_FWD_NAMESPACE_CLASS(NewName, ...) \
-	VOXEL_FWD_DECLARE_NAMESPACE_CLASS(__VA_ARGS__) \
-	using NewName = Voxel VOXEL_FOREACH(INTERNAL_VOXEL_USE_NAMESPACE, __VA_ARGS__);
-
-#define VOXEL_FWD_NAMESPACE_STRUCT(NewName, ...) \
-	VOXEL_FWD_DECLARE_NAMESPACE_STRUCT(__VA_ARGS__) \
-	using NewName = Voxel VOXEL_FOREACH(INTERNAL_VOXEL_USE_NAMESPACE, __VA_ARGS__);
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
 #define DECLARE_VOXEL_VERSION(...) \
 	struct \
 	{ \
@@ -1085,4 +1145,18 @@ VOXELCORE_API void ExitVoxelAllowReallocScope(bool bBackup);
 #define VOXEL_ALLOW_MALLOC_SCOPE()
 #define VOXEL_ALLOW_REALLOC_SCOPE()
 #define VOXEL_ALLOW_MALLOC_INLINE(...) (__VA_ARGS__)
+#endif
+
+#if VOXEL_DEBUG
+VOXELCORE_API void EnterVoxelAllowLeakScope();
+VOXELCORE_API void ExitVoxelAllowLeakScope();
+
+#define VOXEL_ALLOW_LEAK_SCOPE() \
+	EnterVoxelAllowLeakScope(); \
+	ON_SCOPE_EXIT \
+	{ \
+		ExitVoxelAllowLeakScope(); \
+	}
+#else
+#define VOXEL_ALLOW_LEAK_SCOPE()
 #endif

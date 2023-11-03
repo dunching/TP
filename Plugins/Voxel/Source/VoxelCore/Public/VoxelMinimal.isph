@@ -147,9 +147,45 @@ uniform int8 extract(int8 x, uniform int i);
 uniform int16 extract(int16 x, uniform int i);
 uniform int32 extract(int32 x, uniform int i);
 uniform int64 extract(int64 x, uniform int i);
+uniform uint8 extract(uint8 x, uniform int i);
+uniform uint16 extract(uint16 x, uniform int i);
+uniform uint32 extract(uint32 x, uniform int i);
+uniform uint64 extract(uint64 x, uniform int i);
 uniform float16 extract(float16 x, uniform int i);
 uniform float extract(float x, uniform int i);
 uniform double extract(double x, uniform int i);
+
+[[nodiscard]] bool insert(bool x, uniform int i, uniform bool v);
+[[nodiscard]] int8 insert(int8 x, uniform int i, uniform int8 v);
+[[nodiscard]] int16 insert(int16 x, uniform int i, uniform int16 v);
+[[nodiscard]] int32 insert(int32 x, uniform int i, uniform int32 v);
+[[nodiscard]] int64 insert(int64 x, uniform int i, uniform int64 v);
+[[nodiscard]] uint8 insert(uint8 x, uniform int i, uniform uint8 v);
+[[nodiscard]] uint16 insert(uint16 x, uniform int i, uniform uint16 v);
+[[nodiscard]] uint32 insert(uint32 x, uniform int i, uniform uint32 v);
+[[nodiscard]] uint64 insert(uint64 x, uniform int i, uniform uint64 v);
+[[nodiscard]] float16 insert(float16 x, uniform int i, uniform float16 v);
+[[nodiscard]] float insert(float x, uniform int i, uniform float v);
+[[nodiscard]] double insert(double x, uniform int i, uniform double v);
+
+bool and(bool a, bool b);
+bool or(bool a, bool b);
+uniform bool and(uniform bool a, uniform bool b);
+uniform bool or(uniform bool a, uniform bool b);
+
+int8 select(bool cond, int8 t, int8 f);
+int8 select(uniform bool cond, int8 t, int8 f);
+uniform int8 select(uniform bool cond, uniform int8 t, uniform int8 f);
+
+int16 select(bool cond, int16 t, int16 f);
+int32 select(bool cond, int32 t, int32 f);
+int64 select(bool cond, int64 t, int64 f);
+uint8 select(bool cond, uint8 t, uint8 f);
+uint16 select(bool cond, uint16 t, uint16 f);
+uint32 select(bool cond, uint32 t, uint32 f);
+uint64 select(bool cond, uint64 t, uint64 f);
+float select(bool cond, float t, float f);
+double select(bool cond, double t, double f);
 
 float abs(float value);
 int32 abs(int32 value);
@@ -316,6 +352,11 @@ FORCEINLINE uint32 MurmurHash32(uint32 Value, uint32 Seed)
 {
 	uint32 H = 1831214719 * (1460481823 + Seed);
 	return MurmurHash32(H ^ Value);
+}
+
+FORCEINLINE bool IsPowerOfTwo(uint32 Value)
+{
+	return (Value & (Value - 1)) == 0;
 }
 
 #define MAX_uint8	0xff
@@ -1030,6 +1071,15 @@ FORCEINLINE float3 OctahedronToUnitVector(const FVoxelOctahedron Octahedron)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
+
+FORCEINLINE bool IsIdentity(const float4 Rotation)
+{
+	return
+		Rotation.x == 0.f &&
+		Rotation.y == 0.f &&
+		Rotation.z == 0.f &&
+		Rotation.w == 1.f;
+}
 
 FORCEINLINE float4 MakeQuaternionFromEuler(const float Pitch, const float Yaw, const float Roll)
 {

@@ -29,6 +29,10 @@ struct VOXELGRAPHCORE_API FVoxelPointId
 	{
 		return PointId == Other.PointId;
 	}
+	FORCEINLINE bool operator!=(const FVoxelPointId& Other) const
+	{
+		return PointId != Other.PointId;
+	}
 	FORCEINLINE friend uint32 GetTypeHash(const FVoxelPointId& Id)
 	{
 		return GetTypeHash(Id.PointId);

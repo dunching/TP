@@ -425,6 +425,15 @@ public:
 		return IsValid();
 	}
 
+	FORCEINLINE bool operator==(const TVoxelInstancedStruct& Other) const
+	{
+		return FVoxelInstancedStruct::operator==(Other);
+	}
+	FORCEINLINE bool operator!=(const TVoxelInstancedStruct& Other) const
+	{
+		return FVoxelInstancedStruct::operator!=(Other);
+	}
+
 private:
 	FORCEINLINE void CheckType() const
 	{

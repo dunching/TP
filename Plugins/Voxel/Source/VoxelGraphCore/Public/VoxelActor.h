@@ -11,15 +11,21 @@
 class FVoxelRuntime;
 class UVoxelGraphInterface;
 class UVoxelParameterContainer;
-class UVoxelPointStorageComponent;
+class UVoxelPointStorage;
+class UVoxelSculptStorage;
 
 UCLASS()
 class VOXELGRAPHCORE_API UVoxelActorRootComponent : public UPrimitiveComponent
 {
 	GENERATED_BODY()
+
+public:
+	//~ Begin UPrimitiveComponent Interface
+	virtual bool MoveComponentImpl(const FVector& Delta, const FQuat& NewRotation, bool bSweep, FHitResult* Hit, EMoveComponentFlags MoveFlags, ETeleportType Teleport) override;
+	//~ End UPrimitiveComponent Interface
 };
 
-UCLASS(HideCategories = ("Rendering", "Replication", "Input", "Collision", "LOD", "HLOD", "Cooking", "WorldPartition", "DataLayers", "Networking", "Physics"))
+UCLASS(HideCategories = ("Rendering", "Replication", "Input", "Collision", "LOD", "HLOD", "Cooking", "DataLayers", "Networking", "Physics"))
 class VOXELGRAPHCORE_API AVoxelActor
 	: public AActor
 	, public IVoxelRuntimeProvider
@@ -36,6 +42,16 @@ public:
 #if WITH_EDITOR
 	bool bCreateRuntimeOnConstruction_EditorOnly = true;
 #endif
+
+	FSimpleMulticastDelegate OnRuntimeCreated;
+	FSimpleMulticastDelegate OnRuntimeDestroyed;
+
+public:
+	UPROPERTY()
+	TObjectPtr<UVoxelPointStorage> PointStorageComponent;
+
+	UPROPERTY()
+	TObjectPtr<UVoxelSculptStorage> SculptStorageComponent;
 
 public:
 	UPROPERTY()
@@ -118,9 +134,6 @@ private:
 
 private:
 	bool bDisableModify = false;
-
-	UPROPERTY()
-	TObjectPtr<UVoxelPointStorageComponent> PointStorageComponent;
 
 	friend FVoxelRuntime;
 };

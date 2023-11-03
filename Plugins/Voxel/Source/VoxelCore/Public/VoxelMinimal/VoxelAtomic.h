@@ -10,7 +10,10 @@ template<typename T>
 struct TVoxelAtomic
 {
 public:
-	TVoxelAtomic() = default;
+	TVoxelAtomic()
+	{
+		Value = T{};
+	}
 	TVoxelAtomic(const T Value)
 		: Value(Value)
 	{

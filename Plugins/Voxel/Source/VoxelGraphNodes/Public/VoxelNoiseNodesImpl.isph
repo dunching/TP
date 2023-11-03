@@ -133,8 +133,12 @@ FORCEINLINE int32 HashPrimesHB(int32 Seed, int32 A, int32 B, int32 C)
 	return Hash;
 }
 
-FORCEINLINE float GetPerlin2D(const int32 Seed, const float2 Position)
+FORCEINLINE float GetPerlin2D(const int32 Seed, float2 Position)
 {
+	// Small offset to avoid always getting the same value when querying at integer coordinates
+	Position.x += 0.04902460144f;
+	Position.y += 0.02112610644f;
+
 	const float2 Floor = floor(Position);
 
 	const int2 PositionA = MakeInt2(Floor) * NoisePrimes_int2;
@@ -155,8 +159,13 @@ FORCEINLINE float GetPerlin2D(const int32 Seed, const float2 Position)
 			QuinticAlpha.y);
 }
 
-FORCEINLINE float GetPerlin3D(const int32 Seed, const float3 Position)
+FORCEINLINE float GetPerlin3D(const int32 Seed, float3 Position)
 {
+	// Small offset to avoid always getting the same value when querying at integer coordinates
+	Position.x += 0.04902460144f;
+	Position.y += 0.02112610644f;
+	Position.y += 0.06403176963f;
+
 	const float3 Floor = floor(Position);
 
 	const int3 PositionA = MakeInt3(Floor) * NoisePrimes_int3;

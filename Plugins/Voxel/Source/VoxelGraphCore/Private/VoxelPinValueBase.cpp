@@ -151,7 +151,8 @@ void FVoxelPinValueBase::ExportToProperty(const FProperty& Property, void* Memor
 	VOXEL_FUNCTION_COUNTER();
 
 	if (!ensure(IsValid()) ||
-		!ensure(CanBeCastedTo(FVoxelPinType(Property))))
+		// CanBeCastedTo_K2: ExportToProperty does implicit float -> double conversion
+		!ensure(Type.CanBeCastedTo_K2(FVoxelPinType(Property))))
 	{
 		return;
 	}
@@ -181,12 +182,20 @@ void FVoxelPinValueBase::ExportToProperty(const FProperty& Property, void* Memor
 	break;
 	case EVoxelPinInternalType::Float:
 	{
-		if (!ensure(Property.IsA<FFloatProperty>()))
+		if (Property.IsA<FFloatProperty>())
 		{
+			CastFieldChecked<FFloatProperty>(Property).SetPropertyValue(Memory, Get<float>());
 			return;
 		}
 
-		CastFieldChecked<FFloatProperty>(Property).SetPropertyValue(Memory, Get<float>());
+		if (Property.IsA<FDoubleProperty>())
+		{
+			CastFieldChecked<FDoubleProperty>(Property).SetPropertyValue(Memory, Get<float>());
+			return;
+		}
+
+		ensure(false);
+		return;
 	}
 	break;
 	case EVoxelPinInternalType::Double:

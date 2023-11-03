@@ -9,9 +9,7 @@
 
 class IVoxelParameterProvider;
 
-class VOXELGRAPHCORE_API FVoxelParameterValues
-	: public TSharedFromThis<FVoxelParameterValues>
-	, public FVoxelTicker
+class VOXELGRAPHCORE_API FVoxelParameterValues : public TSharedFromThis<FVoxelParameterValues>
 {
 public:
 	static TSharedRef<FVoxelParameterValues> Create(const TWeakInterfacePtr<IVoxelParameterProvider>& Provider);
@@ -23,10 +21,6 @@ public:
 		const FVoxelPinType& Type,
 		const FVoxelParameterPath& Path,
 		const FVoxelQuery& Query) const;
-
-	//~ Begin FVoxelTicker Interface
-	virtual void Tick() override;
-	//~ End FVoxelTicker Interface
 
 private:
 	const FName Name;
@@ -50,7 +44,6 @@ private:
 	}
 
 private:
-	bool bUpdateQueued = false;
 	TVoxelSet<TWeakInterfacePtr<IVoxelParameterProvider>> BoundProviders;
 
 	void BindOnChanged(const TWeakInterfacePtr<IVoxelParameterProvider>& Provider);
@@ -62,4 +55,6 @@ private:
 		const FVoxelPinType& Type,
 		const FVoxelParameterPath& Path,
 		const FVoxelQuery& Query);
+
+	friend class FVoxelParameterValuesManager;
 };

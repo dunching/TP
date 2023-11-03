@@ -19,11 +19,6 @@ public:
 
 	FVoxelNode_Select();
 
-	static void Select(
-		FVoxelTerminalBuffer& OutBuffer,
-		const FVoxelInt32Buffer& Indices,
-		const TConstVoxelArrayView<const FVoxelTerminalBuffer*> Buffers);
-
 public:
 	//~ Begin FVoxelNode Interface
 #if WITH_EDITOR

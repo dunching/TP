@@ -7,6 +7,7 @@ using UnrealBuildTool;
 public class ModuleRules_Voxel : ModuleRules
 {
 	protected bool bDevWorkflow = false;
+	protected bool bVoxelDebugInEditor = false;
 	protected bool bGeneratingResharperProjectFiles = false;
 	protected bool bStrictIncludes = false;
 
@@ -19,6 +20,8 @@ public class ModuleRules_Voxel : ModuleRules
 		CppStandard = CppStandardVersion.Cpp17;
 
 		string AppDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "/Unreal Engine/";
+
+		bVoxelDebugInEditor = File.Exists(PluginDirectory + "/../VoxelDebugInEditor.txt");
 
 		// Detect if Resharper is being used
 		// Be careful not to enable this all the time -Rider is passed otherwise
@@ -174,6 +177,12 @@ public class VoxelCore : ModuleRules_Voxel
 			 Target.Configuration == UnrealTargetConfiguration.DebugGame))
 		{
 			PublicDefinitions.Add("VOXEL_DEBUG=1");
+		}
+		else if (
+			bVoxelDebugInEditor &&
+			Target.bBuildEditor)
+		{
+			PublicDefinitions.Add("VOXEL_DEBUG=WITH_EDITOR");
 		}
 		else
 		{

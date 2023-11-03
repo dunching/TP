@@ -3,47 +3,14 @@
 #include "VoxelGraphExecutor.h"
 #include "VoxelGraph.h"
 #include "VoxelGraphInstance.h"
-#include "VoxelGraphCompilerUtilities.h"
+#include "VoxelGraphCompiler.h"
 #include "VoxelRootNode.h"
 #include "VoxelDependency.h"
 #include "VoxelParameterContainer.h"
-#if WITH_EDITOR
-#include "Editor/EditorEngine.h"
-#include "Subsystems/AssetEditorSubsystem.h"
-#endif
 
-VOXEL_CONSOLE_COMMAND(
-	ForceTranslateAll,
-	"voxel.ForceTranslateAll",
-	"")
-{
-	GVoxelGraphExecutorManager->ForceTranslateAll();
-}
+FVoxelGraphExecutorManager* GVoxelGraphExecutorManager = MakeVoxelSingleton(FVoxelGraphExecutorManager);
 
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelGraphExecutor);
-DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelGraphExecutorInfo);
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-FVoxelGraphExecutorManager* GVoxelGraphExecutorManager = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(CreateVoxelGraphExecutorManager)
-{
-	GVoxelGraphExecutorManager = new FVoxelGraphExecutorManager();
-
-	FCoreUObjectDelegates::GetPreGarbageCollectDelegate().AddLambda([]
-	{
-		GVoxelGraphExecutorManager->CleanupOldExecutors(10.f);
-	});
-
-	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
-	{
-		GVoxelGraphExecutorManager->CleanupOldExecutors(-1.f);
-	});
-}
-
 DEFINE_UNIQUE_VOXEL_ID(FVoxelGraphExecutorGlobalId);
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -60,16 +27,51 @@ FVoxelFutureValue FVoxelGraphExecutor::Execute(const FVoxelQuery& Query) const
 	return RootNode->GetNodeRuntime().Get(RootNode->ValuePin, Query.EnterScope(*RootNode));
 }
 
+TSharedRef<FVoxelGraphExecutor> FVoxelGraphExecutor::MakeDummy()
+{
+	const TSharedRef<FVoxelGraphExecutorInfo> GraphExecutorInfo = MakeVoxelShared<FVoxelGraphExecutorInfo>();
+#if WITH_EDITOR
+	GraphExecutorInfo->Graph_EditorOnly = MakeVoxelShared<Voxel::Graph::FGraph>();
+#endif
+
+	return MakeVoxelShared<FVoxelGraphExecutor>(
+		nullptr,
+		GraphExecutorInfo,
+		TVoxelAddOnlySet<TSharedPtr<const FVoxelNode>>());
+}
+
+TSharedPtr<FVoxelGraphExecutor> FVoxelGraphExecutor::Create(const FVoxelGraphPinRef& GraphPinRef)
+{
+	const UVoxelGraph* Graph = GraphPinRef.Node.GetGraph();
+	if (!Graph)
+	{
+		// Don't return nullptr - this isn't a compilation error, just an empty graph
+		return MakeDummy();
+	}
+	return Graph->GetRuntimeGraph().CreateExecutor(GraphPinRef);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelGraphExecutorManager::Initialize()
+{
+	FCoreUObjectDelegates::GetPreGarbageCollectDelegate().AddLambda([]
+	{
+		GVoxelGraphExecutorManager->CleanupOldExecutors(10.f);
+	});
+
+	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
+	{
+		GVoxelGraphExecutorManager->CleanupOldExecutors(-1.f);
+	});
+}
 
 void FVoxelGraphExecutorManager::Tick()
 {
 	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(Graph);
 
-	FCompilationScope CompilationScope;
 	// Group all the invalidate calls
 	const FVoxelDependencyInvalidationScope DependencyInvalidationScope;
 
@@ -79,7 +81,7 @@ void FVoxelGraphExecutorManager::Tick()
 		if (!ExecutorRef->Executor_GameThread)
 		{
 			VOXEL_SCOPE_COUNTER_FORMAT("Recompiling %s", *ExecutorRef->Ref.ToString());
-			ExecutorRef->SetExecutor(FCompilerUtilities::CreateExecutor(ExecutorRef->Ref));
+			ExecutorRef->SetExecutor_GameThread(FVoxelGraphExecutor::Create(ExecutorRef->Ref));
 		}
 	}
 
@@ -90,14 +92,11 @@ void FVoxelGraphExecutorManager::Tick()
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-FString FVoxelGraphExecutorManager::GetReferencerName() const
-{
-	return "FVoxelGraphExecutorManager";
-}
-
 void FVoxelGraphExecutorManager::AddReferencedObjects(FReferenceCollector& Collector)
 {
 	VOXEL_FUNCTION_COUNTER();
+
+	FVoxelNullCheckReferenceCollector NullCheckCollector(Collector);
 
 	for (const auto& It : MakeCopy(ExecutorRefs_GameThread))
 	{
@@ -107,17 +106,7 @@ void FVoxelGraphExecutorManager::AddReferencedObjects(FReferenceCollector& Colle
 			continue;
 		}
 
-		for (const FObjectKey& ObjectKey : ExecutorInfo->ReferencedObjects)
-		{
-			UObject* Object = ObjectKey.ResolveObjectPtr();
-			if (!Object)
-			{
-				continue;
-			}
-
-			Collector.AddReferencedObject(Object);
-			ensure(Object);
-		}
+		NullCheckCollector.AddReferencedObject(ConstCast(ExecutorInfo->RuntimeInfo));
 	}
 }
 
@@ -128,7 +117,6 @@ void FVoxelGraphExecutorManager::AddReferencedObjects(FReferenceCollector& Colle
 void FVoxelGraphExecutorManager::RecompileAll()
 {
 	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(Graph);
 	check(IsInGameThread());
 
 	const double StartTime = FPlatformTime::Seconds();
@@ -137,67 +125,32 @@ void FVoxelGraphExecutorManager::RecompileAll()
 		LOG_VOXEL(Log, "RecompileAll took %fs", FPlatformTime::Seconds() - StartTime);
 	};
 
-	const FCompilationScope CompilationScope;
 	// Group all the invalidate calls
 	const FVoxelDependencyInvalidationScope DependencyInvalidationScope;
+
+	for (UVoxelRuntimeGraph* RuntimeGraph : TObjectRange<UVoxelRuntimeGraph>())
+	{
+		if (RuntimeGraph->IsTemplate())
+		{
+			continue;
+		}
+
+		RuntimeGraph->ForceRecompile();
+	}
 
 	for (const auto& It : MakeCopy(ExecutorRefs_GameThread))
 	{
 		FExecutorRef& ExecutorRef = *It.Value;
 
-		if (FCompilerUtilities::IsNodeDeleted(It.Key.Node))
+		if (It.Key.Node.IsDeleted())
 		{
 			ExecutorRefs_GameThread.Remove(It.Key);
 			ExecutorRef.Dependency->Invalidate();
 			continue;
 		}
 
-#if WITH_EDITOR
-		if (FCompilerUtilities::RaiseOrphanWarnings_EditorOnly)
-		{
-			if (UVoxelGraph* Graph = It.Key.Node.GetGraph())
-			{
-				FCompilerUtilities::RaiseOrphanWarnings_EditorOnly(*Graph);
-			}
-		}
-#endif
-
-		ExecutorRef.SetExecutor(FCompilerUtilities::CreateExecutor(It.Key));
+		ExecutorRef.SetExecutor_GameThread(FVoxelGraphExecutor::Create(It.Key));
 	}
-}
-
-void FVoxelGraphExecutorManager::ForceTranslateAll()
-{
-#if WITH_EDITOR
-	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(Graph);
-	check(IsInGameThread());
-
-	if (!FCompilerUtilities::ForceTranslateGraph_EditorOnly)
-	{
-		return;
-	}
-
-	const double StartTime = FPlatformTime::Seconds();
-	ON_SCOPE_EXIT
-	{
-		LOG_VOXEL(Log, "ForceTranslateAll took %fs", FPlatformTime::Seconds() - StartTime);
-	};
-
-	TSet<UVoxelGraph*> Graphs;
-	for (const auto& It : ExecutorRefs_GameThread)
-	{
-		if (UVoxelGraph* Graph = It.Key.Node.GetGraph())
-		{
-			Graphs.Add(Graph);
-		}
-	}
-
-	for (UVoxelGraph* Graph : Graphs)
-	{
-		FCompilerUtilities::ForceTranslateGraph_EditorOnly(*Graph);
-	}
-#endif
 }
 
 void FVoxelGraphExecutorManager::CleanupOldExecutors(const double TimeInSeconds)
@@ -220,93 +173,51 @@ void FVoxelGraphExecutorManager::CleanupOldExecutors(const double TimeInSeconds)
 	}
 }
 
-void FVoxelGraphExecutorManager::OnGraphChanged_GameThread(const UVoxelGraphInterface& Graph)
+void FVoxelGraphExecutorManager::NotifyGraphChanged(const UVoxelGraphInterface& Graph)
 {
 	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(Graph);
 	check(IsInGameThread());
 
-	const FCompilationScope CompilationScope;
-	// Group all the invalidate calls
-	const FVoxelDependencyInvalidationScope DependencyInvalidationScope;
+	OnGraphChanged.Broadcast(Graph);
 
-	for (const auto& It : MakeCopy(ExecutorRefs_GameThread))
+	RefreshExecutors([&](const FExecutorRef& ExecutorRef)
 	{
-		FExecutorRef& ExecutorRef = *It.Value;
-
-		const bool bHasMatch = INLINE_LAMBDA
+		if (const TSharedPtr<const FVoxelGraphExecutorInfo> ExecutorInfo = ExecutorRef.ExecutorInfo_GameThread)
 		{
-			if (const TSharedPtr<const FVoxelGraphExecutorInfo> ExecutorInfo = ExecutorRef.ExecutorInfo_GameThread)
+			// Dummy won't have RuntimeInfo
+			if (ExecutorInfo->RuntimeInfo &&
+				ExecutorInfo->RuntimeInfo->ShouldRecompile(Graph))
 			{
-				if (ExecutorInfo->ReferencedGraphs.Contains(&Graph))
-				{
-					return true;
-				}
+				return true;
+			}
+		}
+
+		// Check the hierarchy for any potential match
+		const UVoxelGraphInterface* ExecutorGraph = ExecutorRef.Ref.Node.Graph.Get();
+		while (ExecutorGraph)
+		{
+			if (ExecutorGraph == &Graph)
+			{
+				return true;
 			}
 
-			// Check the hierarchy for any potential match
-			const UVoxelGraphInterface* ExecutorGraph = ExecutorRef.Ref.Node.Graph.Get();
-			while (ExecutorGraph)
+			const UVoxelGraphInstance* Instance = Cast<UVoxelGraphInstance>(ExecutorGraph);
+			if (!Instance)
 			{
-				if (ExecutorGraph == &Graph)
-				{
-					return true;
-				}
-
-				const UVoxelGraphInstance* Instance = Cast<UVoxelGraphInstance>(ExecutorGraph);
-				if (!Instance)
-				{
-					return false;
-				}
-
-				Instance->ParameterContainer->FixupProvider();
-				ExecutorGraph = Instance->ParameterContainer->GetTypedProvider<UVoxelGraphInterface>();
+				return false;
 			}
 
-			return false;
-		};
-
-		if (!bHasMatch)
-		{
-			continue;
+			Instance->ParameterContainer->FixupProvider();
+			ExecutorGraph = Instance->ParameterContainer->GetTypedProvider<UVoxelGraphInterface>();
 		}
 
-		if (FCompilerUtilities::IsNodeDeleted(It.Key.Node))
-		{
-			ExecutorRefs_GameThread.Remove(It.Key);
-			ExecutorRef.Dependency->Invalidate();
-			continue;
-		}
-
-		const TSharedPtr<const FVoxelGraphExecutor> NewExecutor = FCompilerUtilities::CreateExecutor(It.Key);
-		const TSharedPtr<const FVoxelGraphExecutorInfo> OldExecutorInfo = ExecutorRef.ExecutorInfo_GameThread;
-
-		if (NewExecutor.IsValid() != OldExecutorInfo.IsValid())
-		{
-			LOG_VOXEL(Log, "Updating %s: compilation status changed", *It.Key.ToString());
-			ExecutorRef.SetExecutor(NewExecutor);
-			continue;
-		}
-
-		if (!NewExecutor.IsValid())
-		{
-			// Failed to compile
-			continue;
-		}
-
-#if WITH_EDITOR
-		FString Diff;
-		if (OldExecutorInfo->Graph_EditorOnly->Identical(*NewExecutor->Info->Graph_EditorOnly, &Diff))
-		{
-			// No changes
-			continue;
-		}
-		LOG_VOXEL(Log, "Updating %s: %s", *It.Key.ToString(), *Diff);
-#endif
-
-		ExecutorRef.SetExecutor(NewExecutor);
-	}
+		return false;
+	});
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 TSharedRef<const FVoxelComputeValue> FVoxelGraphExecutorManager::MakeCompute_GameThread(
 	const FVoxelPinType Type,
@@ -322,6 +233,8 @@ TSharedRef<const FVoxelComputeValue> FVoxelGraphExecutorManager::MakeCompute_Gam
 
 	return MakeVoxelShared<FVoxelComputeValue>([=](const FVoxelQuery& Query) -> FVoxelFutureValue
 	{
+		ensureVoxelSlow(ExecutorRef.GetSharedReferenceCount() > 1);
+
 		// Always add dependency, especially if we failed to compile
 		Query.GetDependencyTracker().AddDependency(ExecutorRef->Dependency);
 
@@ -334,6 +247,8 @@ TSharedRef<const FVoxelComputeValue> FVoxelGraphExecutorManager::MakeCompute_Gam
 				.Dependency(FutureExecutor)
 				.Execute<FVoxelGraphExecutorRef>([=]
 				{
+					ensure(!ExecutorRef->bIsFirstExecutor_GameThread);
+
 					const TSharedRef<FVoxelGraphExecutorRef> Result = MakeVoxelShared<FVoxelGraphExecutorRef>();
 					Result->Executor = FutureExecutor.Get_CheckCompleted().Executor;
 					return Result;
@@ -346,6 +261,8 @@ TSharedRef<const FVoxelComputeValue> FVoxelGraphExecutorManager::MakeCompute_Gam
 			.Dependency(FutureExecutor)
 			.Execute(Type, [=]() -> FVoxelFutureValue
 			{
+				ensure(!ExecutorRef->bIsFirstExecutor_GameThread);
+
 				const TSharedPtr<const FVoxelGraphExecutor> Executor = FutureExecutor.Get_CheckCompleted().Executor;
 				if (!Executor)
 				{
@@ -377,8 +294,7 @@ TVoxelFutureValue<FVoxelGraphExecutorRef> FVoxelGraphExecutorManager::FExecutorR
 	{
 		if (!Executor_GameThread.IsSet())
 		{
-			VOXEL_USE_NAMESPACE(Graph);
-			SetExecutor(FCompilerUtilities::CreateExecutor(Ref));
+			SetExecutor_GameThread(FVoxelGraphExecutor::Create(Ref));
 		}
 
 		const TSharedRef<FVoxelGraphExecutorRef> Struct = MakeVoxelShared<FVoxelGraphExecutorRef>();
@@ -405,7 +321,7 @@ TVoxelFutureValue<FVoxelGraphExecutorRef> FVoxelGraphExecutorManager::FExecutorR
 	return TVoxelFutureValue<FVoxelGraphExecutorRef>(FVoxelFutureValue(FutureValueState_RequiresLock.ToSharedRef()));
 }
 
-void FVoxelGraphExecutorManager::FExecutorRef::SetExecutor(const TSharedPtr<const FVoxelGraphExecutor>& NewExecutor)
+void FVoxelGraphExecutorManager::FExecutorRef::SetExecutor_GameThread(const TSharedPtr<const FVoxelGraphExecutor>& NewExecutor)
 {
 	VOXEL_FUNCTION_COUNTER();
 	ensure(IsInGameThread());
@@ -413,6 +329,10 @@ void FVoxelGraphExecutorManager::FExecutorRef::SetExecutor(const TSharedPtr<cons
 	GVoxelGraphExecutorManager->GlobalId = FVoxelGraphExecutorGlobalId::New();
 
 	const TSharedPtr<const FVoxelGraphExecutorInfo> OldExecutorInfo = ExecutorInfo_GameThread;
+
+	const bool bIsFirstExecutor = bIsFirstExecutor_GameThread;
+	bIsFirstExecutor_GameThread = false;
+
 	if (NewExecutor)
 	{
 		ExecutorInfo_GameThread = NewExecutor->Info;
@@ -443,6 +363,14 @@ void FVoxelGraphExecutorManager::FExecutorRef::SetExecutor(const TSharedPtr<cons
 	// Outside of editor SetExecutor should never invalidate
 	// Fully diff against old executor in case this SetExecutor is because it was GCed
 #if WITH_EDITOR
+	if (bIsFirstExecutor)
+	{
+		// Never invalidate if this is the first time we're setting the executor
+		// Any call to GetExecutor will have made a future value waiting for this function to be called,
+		// and thus nothing needs to be invalidated
+		return;
+	}
+
 	if (ExecutorInfo_GameThread.IsValid() != OldExecutorInfo.IsValid())
 	{
 		Dependency->Invalidate();
@@ -484,9 +412,65 @@ TSharedRef<FVoxelGraphExecutorManager::FExecutorRef> FVoxelGraphExecutorManager:
 
 	if (GVoxelBypassTaskQueue)
 	{
-		VOXEL_USE_NAMESPACE(Graph);
-		ExecutorRef->SetExecutor(FCompilerUtilities::CreateExecutor(ExecutorRef->Ref));
+		ExecutorRef->SetExecutor_GameThread(FVoxelGraphExecutor::Create(ExecutorRef->Ref));
 	}
 
 	return ExecutorRef;
+}
+
+void FVoxelGraphExecutorManager::RefreshExecutors(const TFunctionRef<bool(const FExecutorRef& ExecutorRef)> ShouldRefresh)
+{
+	VOXEL_FUNCTION_COUNTER();
+	check(IsInGameThread());
+
+	// Group all the invalidate calls
+	const FVoxelDependencyInvalidationScope DependencyInvalidationScope;
+
+	for (const auto& It : MakeCopy(ExecutorRefs_GameThread))
+	{
+		FExecutorRef& ExecutorRef = *It.Value;
+		if (!ShouldRefresh(ExecutorRef))
+		{
+			continue;
+		}
+
+		if (It.Key.Node.IsDeleted())
+		{
+			LOG_VOXEL(Verbose, "%s deleted", *It.Key.ToString());
+
+			ExecutorRefs_GameThread.Remove(It.Key);
+			ExecutorRef.Dependency->Invalidate();
+			continue;
+		}
+
+		LOG_VOXEL(Verbose, "Recompiling %s", *It.Key.ToString());
+
+		const TSharedPtr<const FVoxelGraphExecutor> NewExecutor = FVoxelGraphExecutor::Create(It.Key);
+		const TSharedPtr<const FVoxelGraphExecutorInfo> OldExecutorInfo = ExecutorRef.ExecutorInfo_GameThread;
+
+		if (NewExecutor.IsValid() != OldExecutorInfo.IsValid())
+		{
+			LOG_VOXEL(Log, "Updating %s: compilation status changed", *It.Key.ToString());
+			ExecutorRef.SetExecutor_GameThread(NewExecutor);
+			continue;
+		}
+
+		if (!NewExecutor.IsValid())
+		{
+			// Failed to compile
+			continue;
+		}
+
+#if WITH_EDITOR
+		FString Diff;
+		if (OldExecutorInfo->Graph_EditorOnly->Identical(*NewExecutor->Info->Graph_EditorOnly, &Diff))
+		{
+			// No changes
+			continue;
+		}
+		LOG_VOXEL(Log, "Updating %s: %s", *It.Key.ToString(), *Diff);
+#endif
+
+		ExecutorRef.SetExecutor_GameThread(NewExecutor);
+	}
 }

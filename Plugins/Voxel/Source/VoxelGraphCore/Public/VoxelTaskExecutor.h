@@ -11,12 +11,10 @@ class FVoxelTaskExecutor;
 extern VOXELGRAPHCORE_API float GVoxelThreadingPriorityDuration;
 extern VOXELGRAPHCORE_API FVoxelTaskExecutor* GVoxelTaskExecutor;
 
-class VOXELGRAPHCORE_API FVoxelTaskExecutor : public FVoxelTicker
+class VOXELGRAPHCORE_API FVoxelTaskExecutor : public FVoxelSingleton
 {
 public:
 	FEvent& Event = *FPlatformProcess::GetSynchEventFromPool();
-
-	FVoxelTaskExecutor();
 
 	// Called when AddGroup is called with Groups.Num() == 0
 	FSimpleMulticastDelegate OnBeginProcessing;
@@ -36,9 +34,10 @@ public:
 	void AddGroup(const TSharedRef<FVoxelTaskGroup>& Group);
 
 public:
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelSingleton Interface
+	virtual void Initialize() override;
 	virtual void Tick() override;
-	//~ End FVoxelTicker Interface
+	//~ End FVoxelSingleton Interface
 
 	void Tick_RenderThread(FRDGBuilder& GraphBuilder);
 

@@ -367,27 +367,30 @@ void FVoxelParameterContainerDetails::Initialize(
 		LastCategories = ParameterCategories->Categories;
 	}
 
-	if (DetailCategoryInterface.IsDetailLayout())
+	if (!ParameterContainerHandle->GetInstanceMetaData("HideProvider"))
 	{
-		// Force graph at the bottom
-		IDetailCategoryBuilder& Category = DetailCategoryInterface.GetDetailLayout().EditCategory(
-			"Config",
-			{},
-			ECategoryPriority::Uncommon);
-		AddProviderProperty(Category, ProviderDropdownContainer);
-	}
-	else if (ProviderDropdownContainer)
-	{
-		// Don't make a new category property just for a fake row
-		AddProviderProperty(DetailCategoryInterface.GetDetailInterface(), ProviderDropdownContainer);
-	}
-	else
-	{
-		DetailCategoryInterface.EditCategory("Config", "Config", MakeWeakPtrLambda(this,
-			[this](const FVoxelDetailInterface& DetailInterface)
-			{
-				AddProviderProperty(DetailInterface, nullptr);
-			}));
+		if (DetailCategoryInterface.IsDetailLayout())
+		{
+			// Force graph at the bottom
+			IDetailCategoryBuilder& Category = DetailCategoryInterface.GetDetailLayout().EditCategory(
+				"Config",
+				{},
+				ECategoryPriority::Uncommon);
+			AddProviderProperty(Category, ProviderDropdownContainer);
+		}
+		else if (ProviderDropdownContainer)
+		{
+			// Don't make a new category property just for a fake row
+			AddProviderProperty(DetailCategoryInterface.GetDetailInterface(), ProviderDropdownContainer);
+		}
+		else
+		{
+			DetailCategoryInterface.EditCategory("Config", "Config", MakeWeakPtrLambda(this,
+				[this](const FVoxelDetailInterface& DetailInterface)
+				{
+					AddProviderProperty(DetailInterface, nullptr);
+				}));
+		}
 	}
 
 	TMap<FName, TVoxelArray<TVoxelArray<IVoxelParameterView*>>> CategoryToAllChildParameterViews;
@@ -419,23 +422,54 @@ void FVoxelParameterContainerDetails::Initialize(
 		});
 	}
 
+	const FString CategoryDelim = "|";
 	for (const auto& It : CategoryToAllChildParameterViews)
 	{
-		DetailCategoryInterface.EditCategory(It.Key, It.Key, MakeWeakPtrLambda(this,
-			[=](const FVoxelDetailInterface& DetailInterface)
-			{
-				for (const TVoxelArray<IVoxelParameterView*>& ChildParameterViews : It.Value)
-				{
-					GenerateView(ChildParameterViews, DetailInterface);
-				}
+		TArray<FString> Categories;
+		It.Key.ToString().ParseIntoArray(Categories, *CategoryDelim, true);
 
-				AddOrphans(
-					{},
-					ParameterRootViews,
-					DetailInterface,
-					It.Key);
-			}));
+		DetailCategoryInterface.EditCategory(
+			*Categories[0],
+			*Categories[0],
+			MakeWeakPtrLambda(this,
+				[=](const FVoxelDetailInterface& DetailInterface)
+				{
+					AddParameters(DetailInterface, It.Key, Categories, It.Value, 1);
+				}));
 	}
+}
+
+void FVoxelParameterContainerDetails::AddParameters(
+	const FVoxelDetailInterface& DetailInterface,
+	const FName FullCategoryPath,
+	const TArray<FString>& Categories,
+	const TVoxelArray<TVoxelArray<IVoxelParameterView*>>& AllChildParameterViews,
+	const int32 CategoryIndex)
+{
+	if (CategoryIndex < Categories.Num())
+	{
+		const FVoxelDetailCategoryInterface DetailCategoryInterface(DetailInterface);
+		DetailCategoryInterface.EditCategory(
+			*Categories[CategoryIndex],
+			*Categories[CategoryIndex],
+			MakeWeakPtrLambda(this,
+				[=](const FVoxelDetailInterface& ChildDetailInterface)
+				{
+					AddParameters(ChildDetailInterface, FullCategoryPath, Categories, AllChildParameterViews, CategoryIndex + 1);
+				}));
+		return;
+	}
+
+	for (const TVoxelArray<IVoxelParameterView*>& ChildParameterViews : AllChildParameterViews)
+	{
+		GenerateView(ChildParameterViews, DetailInterface);
+	}
+
+	AddOrphans(
+		{},
+		ParameterRootViews,
+		DetailInterface,
+		FullCategoryPath);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

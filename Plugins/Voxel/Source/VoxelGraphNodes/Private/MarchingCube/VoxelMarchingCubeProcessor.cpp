@@ -7,18 +7,18 @@
 FVoxelMarchingCubeProcessor::FVoxelMarchingCubeProcessor(
 	const int32 ChunkSize,
 	const int32 DataSize,
-	FVoxelFloatBufferStorage& PackedDistances,
+	FVoxelFloatBufferStorage& Distances,
 	FVoxelMarchingCubeSurface& Surface)
 	: ChunkSize(ChunkSize)
 	, DataSize(DataSize)
-	, PackedDistances(PackedDistances)
+	, Distances(Distances)
 	, Surface(Surface)
 {
 	VOXEL_FUNCTION_COUNTER();
 
 	ensure(ChunkSize == Surface.ChunkSize);
-	ensure(DataSize == ChunkSize + 2);
-	ensure(PackedDistances.Num() == FMath::Cube(DataSize));
+	ensure(DataSize == ChunkSize + 1);
+	ensure(Distances.Num() == FMath::Cube(DataSize));
 
 	const int32 EstimatedNumCells = 4 * ChunkSize * ChunkSize;
 
@@ -33,7 +33,7 @@ FVoxelMarchingCubeProcessor::FVoxelMarchingCubeProcessor(
 	// Since we use SignBit below, -0 will lead to different results than +0
 	// In practice it looks like a lot of math can converge to -0 (typically, a smooth union very far away from the object)
 	// This is an issue because one chunk might get +0, the other -0, and neither of them will generate triangles
-	PackedDistances.FixupSignBit();
+	Distances.FixupSignBit();
 }
 
 FVoxelMarchingCubeProcessor::~FVoxelMarchingCubeProcessor()
@@ -47,18 +47,7 @@ void FVoxelMarchingCubeProcessor::Generate(const bool bGenerateTransitions)
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	{
-		VOXEL_SCOPE_COUNTER("FindCells");
-
-		FindCells<0>();
-		FindCells<1>();
-		FindCells<2>();
-		FindCells<3>();
-		FindCells<4>();
-		FindCells<5>();
-		FindCells<6>();
-		FindCells<7>();
-	}
+	FindCells();
 
 	if (Surface.Cells.Num() == 0)
 	{
@@ -88,163 +77,56 @@ void FVoxelMarchingCubeProcessor::Generate(const bool bGenerateTransitions)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-template<int32 Pass>
 void FVoxelMarchingCubeProcessor::FindCells()
 {
+	VOXEL_FUNCTION_COUNTER();
 	using namespace Voxel;
 
-	checkVoxelSlow(ChunkSize % 2 == 0);
-	const int32 BlockSize = ChunkSize / 2;
-
-	checkVoxelSlow(DataSize % 2 == 0);
-	const int32 BlockDataSize = DataSize / 2;
-
-	for (int32 BlockZ = 0; BlockZ < BlockSize; BlockZ++)
+	for (int32 Z = 0; Z < ChunkSize; Z++)
 	{
-		for (int32 BlockY = 0; BlockY < BlockSize; BlockY++)
+		for (int32 Y = 0; Y < ChunkSize; Y++)
 		{
-			const int32 BaseBlockIndex = FVoxelUtilities::Get3DIndex<int32>(BlockDataSize, 0, BlockY, BlockZ);
-			for (int32 BlockX = 0; BlockX < BlockSize; BlockX++)
+			const int32 BaseIndex = FVoxelUtilities::Get3DIndex<int32>(DataSize, 0, Y, Z);
+			for (int32 X = 0; X < ChunkSize; X++)
 			{
-				const int32 IndexOffset = 8 * (BaseBlockIndex + BlockX);
+				const int32 IndexOffset = BaseIndex + X;
 
-#define INDEX(A, B, C) \
-	IndexOffset + \
-	8 * ((A + bool(Pass & 1)) / 2) + \
-	8 * ((B + bool(Pass & 2)) / 2) * BlockDataSize + \
-	8 * ((C + bool(Pass & 4)) / 2) * BlockDataSize * BlockDataSize + \
-		((A + bool(Pass & 1)) % 2) + \
-		((B + bool(Pass & 2)) % 2) * 2 + \
-		((C + bool(Pass & 4)) % 2) * 4
+#define INDEX(A, B, C) IndexOffset + A + B * DataSize + C * DataSize * DataSize
 
-				checkVoxelSlow(INDEX(0, 0, 0) == GetPackedIndex(2 * BlockX + bool(Pass & 1), 2 * BlockY + bool(Pass & 2), 2 * BlockZ + bool(Pass & 4)));
-				checkVoxelSlow(INDEX(1, 0, 0) == GetPackedIndex(2 * BlockX + bool(Pass & 1) + 1, 2 * BlockY + bool(Pass & 2), 2 * BlockZ + bool(Pass & 4)));
-				checkVoxelSlow(INDEX(0, 1, 0) == GetPackedIndex(2 * BlockX + bool(Pass & 1), 2 * BlockY + bool(Pass & 2) + 1, 2 * BlockZ + bool(Pass & 4)));
-				checkVoxelSlow(INDEX(1, 1, 0) == GetPackedIndex(2 * BlockX + bool(Pass & 1) + 1, 2 * BlockY + bool(Pass & 2) + 1, 2 * BlockZ + bool(Pass & 4)));
-				checkVoxelSlow(INDEX(0, 0, 1) == GetPackedIndex(2 * BlockX + bool(Pass & 1), 2 * BlockY + bool(Pass & 2), 2 * BlockZ + bool(Pass & 4) + 1));
-				checkVoxelSlow(INDEX(1, 0, 1) == GetPackedIndex(2 * BlockX + bool(Pass & 1) + 1, 2 * BlockY + bool(Pass & 2), 2 * BlockZ + bool(Pass & 4) + 1));
-				checkVoxelSlow(INDEX(0, 1, 1) == GetPackedIndex(2 * BlockX + bool(Pass & 1), 2 * BlockY + bool(Pass & 2) + 1, 2 * BlockZ + bool(Pass & 4) + 1));
-				checkVoxelSlow(INDEX(1, 1, 1) == GetPackedIndex(2 * BlockX + bool(Pass & 1) + 1, 2 * BlockY + bool(Pass & 2) + 1, 2 * BlockZ + bool(Pass & 4) + 1));
+				checkVoxelSlow(INDEX(0, 0, 0) == GetIndex(X + 0, Y + 0, Z + 0));
+				checkVoxelSlow(INDEX(1, 0, 0) == GetIndex(X + 1, Y + 0, Z + 0));
+				checkVoxelSlow(INDEX(0, 1, 0) == GetIndex(X + 0, Y + 1, Z + 0));
+				checkVoxelSlow(INDEX(1, 1, 0) == GetIndex(X + 1, Y + 1, Z + 0));
+				checkVoxelSlow(INDEX(0, 0, 1) == GetIndex(X + 0, Y + 0, Z + 1));
+				checkVoxelSlow(INDEX(1, 0, 1) == GetIndex(X + 1, Y + 0, Z + 1));
+				checkVoxelSlow(INDEX(0, 1, 1) == GetIndex(X + 0, Y + 1, Z + 1));
+				checkVoxelSlow(INDEX(1, 1, 1) == GetIndex(X + 1, Y + 1, Z + 1));
 
 				int32 CellCode;
 #if (PLATFORM_WINDOWS && !PLATFORM_COMPILER_CLANG) || PLATFORM_ALWAYS_HAS_AVX
-
-				// With 4 loads + movemask, _mm256_setr_ps starts to be faster
-				constexpr bool bEnableDoLoad4x = false;
-
-				if constexpr (Pass == 0)
-				{
-					const __m256 Distance = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					CellCode = _mm256_movemask_ps(Distance);
-				}
-				else if constexpr (Pass == 1)
-				{
-					const __m256 DistanceA = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					const __m256 DistanceB = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8));
-
-					const int32 MaskA = _mm256_movemask_ps(DistanceA);
-					const int32 MaskB = _mm256_movemask_ps(DistanceB);
-
-					CellCode = ((MaskA & 0b10101010) >> 1) | ((MaskB & 0b01010101) << 1);
-				}
-				else if constexpr (Pass == 2)
-				{
-					const __m256 DistanceA = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					const __m256 DistanceB = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize));
-
-					const int32 MaskA = _mm256_movemask_ps(DistanceA);
-					const int32 MaskB = _mm256_movemask_ps(DistanceB);
-
-					CellCode = ((MaskA & 0b11001100) >> 2) | ((MaskB & 0b00110011) << 2);
-				}
-				else if constexpr (Pass == 3 && bEnableDoLoad4x)
-				{
-					const __m256 DistanceA = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					const __m256 DistanceB = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8));
-					const __m256 DistanceC = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize));
-					const __m256 DistanceD = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 + 8 * BlockDataSize));
-
-					const int32 MaskA = _mm256_movemask_ps(DistanceA);
-					const int32 MaskB = _mm256_movemask_ps(DistanceB);
-					const int32 MaskC = _mm256_movemask_ps(DistanceC);
-					const int32 MaskD = _mm256_movemask_ps(DistanceD);
-
-					CellCode =
-						((MaskA & 0b10001000) >> 3) |
-						((MaskB & 0b01000100) >> 1) |
-						((MaskC & 0b00100010) << 1) |
-						((MaskD & 0b00010001) << 3);
-				}
-				else if constexpr (Pass == 4)
-				{
-					const __m256 DistanceA = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					const __m256 DistanceB = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize * BlockDataSize));
-
-					const int32 MaskA = _mm256_movemask_ps(DistanceA);
-					const int32 MaskB = _mm256_movemask_ps(DistanceB);
-
-					CellCode = ((MaskA & 0b11110000) >> 4) | ((MaskB & 0b00001111) << 4);
-				}
-				else if constexpr (Pass == 5 && bEnableDoLoad4x)
-				{
-					const __m256 DistanceA = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					const __m256 DistanceB = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8));
-					const __m256 DistanceC = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize * BlockDataSize));
-					const __m256 DistanceD = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 + 8 * BlockDataSize * BlockDataSize));
-
-					const int32 MaskA = _mm256_movemask_ps(DistanceA);
-					const int32 MaskB = _mm256_movemask_ps(DistanceB);
-					const int32 MaskC = _mm256_movemask_ps(DistanceC);
-					const int32 MaskD = _mm256_movemask_ps(DistanceD);
-
-					CellCode =
-						((MaskA & 0b10100000) >> 5) |
-						((MaskB & 0b01010000) >> 3) |
-						((MaskC & 0b00001010) << 3) |
-						((MaskD & 0b00000101) << 5);
-				}
-				else if constexpr (Pass == 6 && bEnableDoLoad4x)
-				{
-					const __m256 DistanceA = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset));
-					const __m256 DistanceB = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize));
-					const __m256 DistanceC = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize * BlockDataSize));
-					const __m256 DistanceD = _mm256_load_ps(&PackedDistances.LoadFast(IndexOffset + 8 * BlockDataSize + 8 * BlockDataSize * BlockDataSize));
-
-					const int32 MaskA = _mm256_movemask_ps(DistanceA);
-					const int32 MaskB = _mm256_movemask_ps(DistanceB);
-					const int32 MaskC = _mm256_movemask_ps(DistanceC);
-					const int32 MaskD = _mm256_movemask_ps(DistanceD);
-
-					CellCode =
-						((MaskA & 0b11000000) >> 6) |
-						((MaskB & 0b00110000) >> 2) |
-						((MaskC & 0b00001100) << 2) |
-						((MaskD & 0b00000011) << 6);
-				}
-				else
 				{
 					const __m256 Distance = _mm256_setr_ps(
-						PackedDistances.LoadFast(INDEX(0, 0, 0)),
-						PackedDistances.LoadFast(INDEX(1, 0, 0)),
-						PackedDistances.LoadFast(INDEX(0, 1, 0)),
-						PackedDistances.LoadFast(INDEX(1, 1, 0)),
-						PackedDistances.LoadFast(INDEX(0, 0, 1)),
-						PackedDistances.LoadFast(INDEX(1, 0, 1)),
-						PackedDistances.LoadFast(INDEX(0, 1, 1)),
-						PackedDistances.LoadFast(INDEX(1, 1, 1)));
+						Distances.LoadFast(INDEX(0, 0, 0)),
+						Distances.LoadFast(INDEX(1, 0, 0)),
+						Distances.LoadFast(INDEX(0, 1, 0)),
+						Distances.LoadFast(INDEX(1, 1, 0)),
+						Distances.LoadFast(INDEX(0, 0, 1)),
+						Distances.LoadFast(INDEX(1, 0, 1)),
+						Distances.LoadFast(INDEX(0, 1, 1)),
+						Distances.LoadFast(INDEX(1, 1, 1)));
 
 					CellCode = _mm256_movemask_ps(Distance);
 				}
 #else
 				{
-					const float Distance0 = PackedDistances.LoadFast(INDEX(0, 0, 0));
-					const float Distance1 = PackedDistances.LoadFast(INDEX(1, 0, 0));
-					const float Distance2 = PackedDistances.LoadFast(INDEX(0, 1, 0));
-					const float Distance3 = PackedDistances.LoadFast(INDEX(1, 1, 0));
-					const float Distance4 = PackedDistances.LoadFast(INDEX(0, 0, 1));
-					const float Distance5 = PackedDistances.LoadFast(INDEX(1, 0, 1));
-					const float Distance6 = PackedDistances.LoadFast(INDEX(0, 1, 1));
-					const float Distance7 = PackedDistances.LoadFast(INDEX(1, 1, 1));
+					const float Distance0 = Distances.LoadFast(INDEX(0, 0, 0));
+					const float Distance1 = Distances.LoadFast(INDEX(1, 0, 0));
+					const float Distance2 = Distances.LoadFast(INDEX(0, 1, 0));
+					const float Distance3 = Distances.LoadFast(INDEX(1, 1, 0));
+					const float Distance4 = Distances.LoadFast(INDEX(0, 0, 1));
+					const float Distance5 = Distances.LoadFast(INDEX(1, 0, 1));
+					const float Distance6 = Distances.LoadFast(INDEX(0, 1, 1));
+					const float Distance7 = Distances.LoadFast(INDEX(1, 1, 1));
 
 					{
 						// Most voxels are going to end up empty
@@ -262,7 +144,6 @@ void FVoxelMarchingCubeProcessor::FindCells()
 					}
 
 				Full:
-
 					CellCode =
 						(FVoxelUtilities::SignBit(Distance0) << 0) |
 						(FVoxelUtilities::SignBit(Distance1) << 1) |
@@ -283,10 +164,6 @@ void FVoxelMarchingCubeProcessor::FindCells()
 				}
 
 				CellCode = ~CellCode & 0xFF;
-
-				const int32 X = 2 * BlockX + bool(Pass & 1);
-				const int32 Y = 2 * BlockY + bool(Pass & 2);
-				const int32 Z = 2 * BlockZ + bool(Pass & 4);
 
 				ensureVoxelSlow(FVoxelUtilities::IsValidUINT8(X));
 				ensureVoxelSlow(FVoxelUtilities::IsValidUINT8(Y));
@@ -335,8 +212,8 @@ void FVoxelMarchingCubeProcessor::ProcessCells()
 			checkVoxelSlow(0 <= IndexA && IndexA < 8);
 			checkVoxelSlow(0 <= IndexB && IndexB < 8);
 
-			const float DistanceA = PackedDistances.LoadFast(GetPackedIndex(X + bool(IndexA & 1), Y + bool(IndexA & 2), Z + bool(IndexA & 4)));
-			const float DistanceB = PackedDistances.LoadFast(GetPackedIndex(X + bool(IndexB & 1), Y + bool(IndexB & 2), Z + bool(IndexB & 4)));
+			const float DistanceA = Distances.LoadFast(GetIndex(X + bool(IndexA & 1), Y + bool(IndexA & 2), Z + bool(IndexA & 4)));
+			const float DistanceB = Distances.LoadFast(GetIndex(X + bool(IndexB & 1), Y + bool(IndexB & 2), Z + bool(IndexB & 4)));
 			ensureVoxelSlow(FVoxelUtilities::SignBit(DistanceA) != FVoxelUtilities::SignBit(DistanceB));
 
 			const int32 EdgeIndex = VertexData.EdgeIndex;
@@ -482,15 +359,15 @@ void FVoxelMarchingCubeProcessor::ProcessTransitionCells()
 
 		TVoxelStaticArray<float, 9> CornerValues{ NoInit };
 
-		CornerValues[0] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X, 2 * Y));
-		CornerValues[1] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X + 1, 2 * Y));
-		CornerValues[2] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X + 2, 2 * Y));
-		CornerValues[3] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X, 2 * Y + 1));
-		CornerValues[4] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X + 1, 2 * Y + 1));
-		CornerValues[5] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X + 2, 2 * Y + 1));
-		CornerValues[6] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X, 2 * Y + 2));
-		CornerValues[7] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X + 1, 2 * Y + 2));
-		CornerValues[8] = PackedDistances.LoadFast(GetPackedIndex<Direction>(2 * X + 2, 2 * Y + 2));
+		CornerValues[0] = Distances.LoadFast(GetIndex<Direction>(2 * X + 0, 2 * Y + 0));
+		CornerValues[1] = Distances.LoadFast(GetIndex<Direction>(2 * X + 1, 2 * Y + 0));
+		CornerValues[2] = Distances.LoadFast(GetIndex<Direction>(2 * X + 2, 2 * Y + 0));
+		CornerValues[3] = Distances.LoadFast(GetIndex<Direction>(2 * X + 0, 2 * Y + 1));
+		CornerValues[4] = Distances.LoadFast(GetIndex<Direction>(2 * X + 1, 2 * Y + 1));
+		CornerValues[5] = Distances.LoadFast(GetIndex<Direction>(2 * X + 2, 2 * Y + 1));
+		CornerValues[6] = Distances.LoadFast(GetIndex<Direction>(2 * X + 0, 2 * Y + 2));
+		CornerValues[7] = Distances.LoadFast(GetIndex<Direction>(2 * X + 1, 2 * Y + 2));
+		CornerValues[8] = Distances.LoadFast(GetIndex<Direction>(2 * X + 2, 2 * Y + 2));
 
 		int32 CaseCode =
 			(FVoxelUtilities::SignBit(CornerValues[0]) << 0) |

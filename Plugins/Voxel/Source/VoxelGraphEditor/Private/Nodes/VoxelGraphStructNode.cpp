@@ -1,7 +1,6 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelGraphStructNode.h"
-#include "VoxelGraphSchema.h"
 #include "VoxelGraphVisuals.h"
 #include "VoxelGraphToolkit.h"
 #include "VoxelExposedSeed.h"
@@ -277,13 +276,14 @@ FName UVoxelGraphStructNode::GetPinCategory(const UEdGraphPin& Pin) const
 
 TSharedRef<IVoxelNodeDefinition> UVoxelGraphStructNode::GetNodeDefinition()
 {
-	if (Struct)
+	if (!ensureVoxelSlow(Struct))
 	{
-		return MakeVoxelShared<FVoxelGraphStructNodeDefinition>(*this, Struct->GetNodeDefinition());
+		return MakeVoxelShared<IVoxelNodeDefinition>();
 	}
 
-	ensureVoxelSlow(false);
-	return MakeVoxelShared<IVoxelNodeDefinition>();
+	const TSharedRef<FVoxelNodeDefinition> NodeDefinition = Struct->GetNodeDefinition();
+	NodeDefinition->Initialize(*this);
+	return MakeVoxelShared<FVoxelGraphStructNodeDefinition>(*this, NodeDefinition);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -490,11 +490,6 @@ void UVoxelGraphStructNode::PinDefaultValueChanged(UEdGraphPin* Pin)
 	}
 
 	Super::PinDefaultValueChanged(Pin);
-}
-
-bool UVoxelGraphStructNode::CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const
-{
-	return Schema->IsA<UVoxelGraphSchema>();
 }
 
 void UVoxelGraphStructNode::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)

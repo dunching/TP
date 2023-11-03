@@ -27,7 +27,7 @@ struct VOXELGRAPHNODES_API FVoxelPhysicalMaterialPinType : public FVoxelObjectPi
 	{
 		if (bSetObject)
 		{
-			Object = Struct.Material.Get();
+			Object = Struct.Material;
 		}
 		else
 		{

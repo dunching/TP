@@ -7,10 +7,15 @@
 #endif
 
 #if WITH_EDITOR
-FVoxelSourceParser& FVoxelSourceParser::Get()
+FVoxelSourceParser* GVoxelSourceParser = MakeVoxelSingleton(FVoxelSourceParser);
+
+void FVoxelSourceParser::Initialize()
 {
-	static FVoxelSourceParser Singleton;
-	return Singleton;
+	FCoreUObjectDelegates::ReloadCompleteDelegate.AddLambda([this](EReloadCompleteReason)
+	{
+		NodeToPinToTooltip = {};
+		FunctionToPropertyToDefault = {};
+	});
 }
 
 FString FVoxelSourceParser::GetPinTooltip(UScriptStruct* NodeStruct, const FName PinName)

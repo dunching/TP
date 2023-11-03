@@ -4,112 +4,6 @@
 
 // ReSharper disable CppCStyleCast
 
-export void VoxelBufferUtilities_WritePositions2D(
-	uniform float DataX[],
-	uniform float DataY[],
-	const uniform int32 IndexOffset,
-	const uniform int32 Num,
-	const uniform int32 BlockSizeX,
-	const uniform float StartX,
-	const uniform float StartY,
-	const uniform float Step)
-{
-	const uniform int64 BlockSizeXMagic = MakeFastDivide32Magic(BlockSizeX);
-
-	check(IndexOffset % 4 == 0);
-	check(Num % 4 == 0);
-
-	for (uniform int32 Index = 0; Index < Num; Index += 4)
-	{
-		uniform int32 BlockIndex = (IndexOffset + Index) / 4;
-
-		const uniform int32 BlockY = FastDivide32(BlockIndex, BlockSizeX, BlockSizeXMagic);
-		BlockIndex -= BlockY * BlockSizeX;
-
-		const uniform int32 BlockX = BlockIndex;
-
-		check(BlockX + BlockSizeX * BlockY == (IndexOffset + Index) / 4);
-
-		FOREACH(It, 0, 4)
-		{
-			DataX[Index + It] = StartX + (2 * BlockX + ((It & 0x1) ? 1 : 0)) * Step;
-		}
-		FOREACH(It, 0, 4)
-		{
-			DataY[Index + It] = StartY + (2 * BlockY + ((It & 0x2) ? 1 : 0)) * Step;
-		}
-	}
-}
-
-export void VoxelBufferUtilities_WritePositions3D(
-	uniform float DataX[],
-	uniform float DataY[],
-	uniform float DataZ[],
-	const uniform int32 IndexOffset,
-	const uniform int32 Num,
-	const uniform int32 BlockSizeX,
-	const uniform int32 BlockSizeY,
-	const uniform float StartX,
-	const uniform float StartY,
-	const uniform float StartZ,
-	const uniform float Step)
-{
-	const uniform int32 BlockSizeXY = BlockSizeX * BlockSizeY;
-	const uniform int64 BlockSizeXMagic = MakeFastDivide32Magic(BlockSizeX);
-	const uniform int64 BlockSizeXYMagic = MakeFastDivide32Magic(BlockSizeXY);
-
-	check(IndexOffset % 8 == 0);
-	check(Num % 8 == 0);
-
-	for (uniform int32 Index = 0; Index < Num; Index += 8)
-	{
-		uniform int32 BlockIndex = (IndexOffset + Index) / 8;
-
-		const uniform int32 BlockZ = FastDivide32(BlockIndex, BlockSizeXY, BlockSizeXYMagic);
-		BlockIndex -= BlockZ * BlockSizeXY;
-
-		const uniform int32 BlockY = FastDivide32(BlockIndex, BlockSizeX, BlockSizeXMagic);
-		BlockIndex -= BlockY * BlockSizeX;
-
-		const uniform int32 BlockX = BlockIndex;
-
-		check(BlockX + BlockSizeX * BlockY + BlockSizeX * BlockSizeY * BlockZ == (IndexOffset + Index) / 8);
-
-		FOREACH(It, 0, 8)
-		{
-			DataX[Index + It] = StartX + (2 * BlockX + ((It & 0x1) ? 1 : 0)) * Step;
-		}
-		FOREACH(It, 0, 8)
-		{
-			DataY[Index + It] = StartY + (2 * BlockY + ((It & 0x2) ? 1 : 0)) * Step;
-		}
-		FOREACH(It, 0, 8)
-		{
-			DataZ[Index + It] = StartZ + (2 * BlockZ + ((It & 0x4) ? 1 : 0)) * Step;
-		}
-	}
-}
-
-export void VoxelBufferUtilities_ReplicatePacked(
-	const uniform float Data[],
-	uniform float OutData[],
-	const uniform int32 Num)
-{
-	check(Num % 4 == 0);
-
-	for (uniform int32 BaseIndex = 0; BaseIndex < Num; BaseIndex += 4)
-	{
-		const uniform int32 OutBaseIndex = 2 * BaseIndex;
-
-		FOREACH(Index, 0, 4)
-		{
-			const varying float Value = Data[BaseIndex + Index];
-			OutData[OutBaseIndex + 0 + Index] = Value;
-			OutData[OutBaseIndex + 4 + Index] = Value;
-		}
-	}
-}
-
 export void VoxelBufferUtilities_ApplyTransform(
 	const uniform float PositionX[], const uniform bool bConstPositionX,
 	const uniform float PositionY[], const uniform bool bConstPositionY,
@@ -122,18 +16,37 @@ export void VoxelBufferUtilities_ApplyTransform(
 	uniform float OutPositionsY[],
 	uniform float OutPositionsZ[])
 {
-	FOREACH(Index, 0, Num)
+	if (IsIdentity(Rotation))
 	{
-		const varying float3 OldPosition = MakeFloat3(
-			bConstPositionX ? PositionX[0] : PositionX[Index],
-			bConstPositionY ? PositionY[0] : PositionY[Index],
-			bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
+		FOREACH(Index, 0, Num)
+		{
+			const varying float3 OldPosition = MakeFloat3(
+				bConstPositionX ? PositionX[0] : PositionX[Index],
+				bConstPositionY ? PositionY[0] : PositionY[Index],
+				bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
 
-		const varying float3 NewPosition = RotateVector(OldPosition * Scale, Rotation) + Translation;
+			const varying float3 NewPosition = OldPosition * Scale + Translation;
 
-		OutPositionsX[Index] = NewPosition.x;
-		OutPositionsY[Index] = NewPosition.y;
-		OutPositionsZ[Index] = NewPosition.z;
+			OutPositionsX[Index] = NewPosition.x;
+			OutPositionsY[Index] = NewPosition.y;
+			OutPositionsZ[Index] = NewPosition.z;
+		}
+	}
+	else
+	{
+		FOREACH(Index, 0, Num)
+		{
+			const varying float3 OldPosition = MakeFloat3(
+				bConstPositionX ? PositionX[0] : PositionX[Index],
+				bConstPositionY ? PositionY[0] : PositionY[Index],
+				bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
+
+			const varying float3 NewPosition = RotateVector(OldPosition * Scale, Rotation) + Translation;
+
+			OutPositionsX[Index] = NewPosition.x;
+			OutPositionsY[Index] = NewPosition.y;
+			OutPositionsZ[Index] = NewPosition.z;
+		}
 	}
 }
 
@@ -154,18 +67,37 @@ export void VoxelBufferUtilities_ApplyInverseTransform(
 	InvScale.y = Scale.y != 0 ? 1.f / Scale.y : 1.f;
 	InvScale.z = Scale.z != 0 ? 1.f / Scale.z : 1.f;
 
-	FOREACH(Index, 0, Num)
+	if (IsIdentity(Rotation))
 	{
-		const varying float3 OldPosition = MakeFloat3(
-			bConstPositionX ? PositionX[0] : PositionX[Index],
-			bConstPositionY ? PositionY[0] : PositionY[Index],
-			bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
+		FOREACH(Index, 0, Num)
+		{
+			const varying float3 OldPosition = MakeFloat3(
+				bConstPositionX ? PositionX[0] : PositionX[Index],
+				bConstPositionY ? PositionY[0] : PositionY[Index],
+				bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
 
-		const varying float3 NewPosition = UnrotateVector(OldPosition - Translation, Rotation) * InvScale;
+			const varying float3 NewPosition = (OldPosition - Translation) * InvScale;
 
-		OutPositionsX[Index] = NewPosition.x;
-		OutPositionsY[Index] = NewPosition.y;
-		OutPositionsZ[Index] = NewPosition.z;
+			OutPositionsX[Index] = NewPosition.x;
+			OutPositionsY[Index] = NewPosition.y;
+			OutPositionsZ[Index] = NewPosition.z;
+		}
+	}
+	else
+	{
+		FOREACH(Index, 0, Num)
+		{
+			const varying float3 OldPosition = MakeFloat3(
+				bConstPositionX ? PositionX[0] : PositionX[Index],
+				bConstPositionY ? PositionY[0] : PositionY[Index],
+				bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
+
+			const varying float3 NewPosition = UnrotateVector(OldPosition - Translation, Rotation) * InvScale;
+
+			OutPositionsX[Index] = NewPosition.x;
+			OutPositionsY[Index] = NewPosition.y;
+			OutPositionsZ[Index] = NewPosition.z;
+		}
 	}
 }
 
@@ -212,6 +144,38 @@ export void VoxelBufferUtilities_ApplyTransform_Bulk(
 			bConstScaleZ ? ScaleZ[0] : ScaleZ[Index]);
 
 		const varying float3 NewPosition = RotateVector(OldPosition * Scale, Rotation) + Translation;
+
+		OutPositionsX[Index] = NewPosition.x;
+		OutPositionsY[Index] = NewPosition.y;
+		OutPositionsZ[Index] = NewPosition.z;
+	}
+}
+
+export void VoxelBufferUtilities_ApplyTransform_Matrix(
+	const uniform float PositionX[], const uniform bool bConstPositionX,
+	const uniform float PositionY[], const uniform bool bConstPositionY,
+	const uniform float PositionZ[], const uniform bool bConstPositionZ,
+	const uniform int32 Num,
+	const uniform float3& Translation,
+	const uniform float3& MatrixX,
+	const uniform float3& MatrixY,
+	const uniform float3& MatrixZ,
+	uniform float OutPositionsX[],
+	uniform float OutPositionsY[],
+	uniform float OutPositionsZ[])
+{
+	FOREACH(Index, 0, Num)
+	{
+		const varying float3 OldPosition = MakeFloat3(
+			bConstPositionX ? PositionX[0] : PositionX[Index],
+			bConstPositionY ? PositionY[0] : PositionY[Index],
+			bConstPositionZ ? PositionZ[0] : PositionZ[Index]);
+
+		const varying float3 NewPosition =
+			Translation +
+			MatrixX * OldPosition.x +
+			MatrixY * OldPosition.y +
+			MatrixZ * OldPosition.z;
 
 		OutPositionsX[Index] = NewPosition.x;
 		OutPositionsY[Index] = NewPosition.y;
@@ -387,17 +351,6 @@ export void VoxelBufferUtilities_PointIdToSeed(
 	}
 }
 
-export void VoxelBufferUtilities_BoolToInt32(
-	const uniform bool Bool[],
-	uniform int32 Int32[],
-	const uniform int32 Num)
-{
-	FOREACH(Index, 0, Num)
-	{
-		Int32[Index] = Bool[Index] ? 1 : 0;
-	}
-}
-
 export void VoxelBufferUtilities_Add(
 	const uniform float A[],
 	const uniform bool bConstantA,
@@ -423,6 +376,39 @@ export void VoxelBufferUtilities_Multiply(
 	FOREACH(Index, 0, Num)
 	{
 		Result[Index] = (bConstantA ? A[0] : A[Index]) * (bConstantB ? B[0] : B[Index]);
+	}
+}
+
+export void VoxelBufferUtilities_Less(
+	const uniform float A[],
+	const uniform bool bConstantA,
+	const uniform float B[],
+	const uniform bool bConstantB,
+	uniform uint8 Result[],
+	const uniform int32 Num)
+{
+	FOREACH(Index, 0, Num)
+	{
+		Result[Index] = (bConstantA ? A[0] : A[Index]) < (bConstantB ? B[0] : B[Index]) ? 1 : 0;
+	}
+}
+
+export void VoxelBufferUtilities_Alpha(
+	const uniform float A[],
+	const uniform bool bConstantA,
+	const uniform float B[],
+	const uniform bool bConstantB,
+	const uniform float Alpha[],
+	const uniform bool bConstantAlpha,
+	uniform float Result[],
+	const uniform int32 Num)
+{
+	FOREACH(Index, 0, Num)
+	{
+		Result[Index] = lerp(
+			bConstantA ? A[0] : A[Index],
+			bConstantB ? B[0] : B[Index],
+			bConstantAlpha ? Alpha[0] : Alpha[Index]);
 	}
 }
 

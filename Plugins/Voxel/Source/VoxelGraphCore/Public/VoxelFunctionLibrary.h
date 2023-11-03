@@ -17,8 +17,9 @@
 	} \
 	else \
 	{ \
-		ParamType ParamName##Temp; \
-		ParamType& ParamName = Stack.StepCompiledInRef<PropertyType, ParamType>(&ParamName##Temp); \
+		ParamType* ParamName##Temp = static_cast<ParamType*>(FMemory_Alloca(sizeof(ParamType))); \
+		new (ParamName##Temp) ParamType(); \
+		ParamType& ParamName = Stack.StepCompiledInRef<PropertyType, ParamType>(ParamName##Temp); \
 		ParamName##TempPtr = &ParamName; \
 	} \
 	ParamType& ParamName = *ParamName##TempPtr; \
@@ -84,13 +85,15 @@ public:
 			}
 			else
 			{
-				static_assert(!std::is_reference_v<decltype(DeclVal<FVoxelRuntimePinValue>().Get<NativeType>())>, "NativeType should be passed by ref");
+				static_assert(!FVoxelRuntimePinValue::IsStructValue<NativeType>, "All structs should be passed by ref in voxel functions");
 				*OutData = Value->Get<NativeType>();
 			}
 		}
 		template<typename, typename NativeType>
 		FORCEINLINE NativeType& StepCompiledInRef(void* TemporaryBuffer)
 		{
+			static_assert(!std::is_same_v<NativeType, FName>, "Cannot pass FName by ref in voxel functions: either pass it by value or use FVoxelNameWrapper");
+
 			checkVoxelSlow(!TemporaryBuffer);
 
 			FVoxelRuntimePinValue* Value = Values[Index++];
@@ -102,7 +105,6 @@ public:
 			}
 			else
 			{
-				static_assert(std::is_reference_v<decltype(DeclVal<FVoxelRuntimePinValue>().Get<NativeType>())>, "NativeType should be passed by value");
 				return ConstCast(Value->Get<NativeType>());
 			}
 		}

@@ -2,35 +2,21 @@
 
 #include "VoxelExecNode.h"
 #include "VoxelRuntime.h"
+#include "VoxelExecNodeRuntimeWrapper.h"
 
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelExecNodeRuntime);
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelExecNode, Exec)
 {
-	const TValue<bool> EnableNode = Get(EnableNodePin, Query);
+	const TSharedRef<FVoxelQueryContext> Context = Query.GetSharedContext();
+	const TSharedRef<FVoxelExecNode> Node = SharedNode<FVoxelExecNode>();
 
-	return VOXEL_ON_COMPLETE(EnableNode)
+	FVoxelExec Exec;
+	Exec.MakeRuntime = [=]
 	{
-		if (!EnableNode)
-		{
-			return {};
-		}
-
-		const TSharedRef<FVoxelExecNode> This = SharedNode<FVoxelExecNode>();
-
-		FVoxelExec Exec;
-		Exec.MakeRuntime = [This, Context = Query.GetSharedContext(), NodeId = GetNodeRef().NodeId]() -> TSharedPtr<FVoxelExecNodeRuntime>
-		{
-			const TSharedPtr<FVoxelExecNodeRuntime> NodeRuntime = This->CreateSharedExecRuntime(This);
-			if (!NodeRuntime)
-			{
-				return nullptr;
-			}
-
-			return Context->FindOrAddExecNodeRuntime(NodeId, NodeRuntime.ToSharedRef());
-		};
-		return Exec;
+		return Context->FindOrAddExecNodeRuntimeWrapper(Node);
 	};
+	return Exec;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -58,8 +44,7 @@ TSharedPtr<FVoxelExecNodeRuntime> FVoxelExecNode::CreateSharedExecRuntime(const 
 			{
 				Runtime->CallDestroy();
 			}
-			Runtime->~FVoxelExecNodeRuntime();
-			FVoxelMemory::Free(Runtime);
+			FVoxelMemory::Delete(Runtime);
 		});
 	});
 }
@@ -92,14 +77,19 @@ USceneComponent* FVoxelExecNodeRuntime::GetRootComponent() const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void FVoxelExecNodeRuntime::CallCreate(const TSharedRef<FVoxelQueryContext>& Context)
+void FVoxelExecNodeRuntime::CallCreate(
+	const TSharedRef<FVoxelQueryContext>& Context,
+	TVoxelMap<FName, FVoxelRuntimePinValue>&& ConstantValues)
 {
 	VOXEL_FUNCTION_COUNTER();
 
 	ensure(!bIsCreated);
 	bIsCreated = true;
 
-	PrivateContext = Context->EnterScope(NodeRef->GetNodeRef());
+	PrivateContext = Context;
+	PrivateConstantValues = MoveTemp(ConstantValues);
+
+	const FVoxelQueryScope Scope(nullptr, &GetContext().Get());
 
 	PreCreate();
 	Create();
@@ -112,6 +102,8 @@ void FVoxelExecNodeRuntime::CallDestroy()
 	ensure(bIsCreated);
 	ensure(!bIsDestroyed);
 	bIsDestroyed = true;
+
+	const FVoxelQueryScope Scope(nullptr, &GetContext().Get());
 
 	Destroy();
 }

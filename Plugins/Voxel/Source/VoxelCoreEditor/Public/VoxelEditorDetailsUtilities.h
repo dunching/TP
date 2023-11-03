@@ -210,7 +210,7 @@ public:
 		FProperty* Property = Handle->GetProperty();
 		if (!ensure(Property) ||
 			!ensure(Property->IsA<FStructProperty>()) ||
-			!ensure(CastFieldChecked<FStructProperty>(Property)->Struct == T::StaticStruct()))
+			!ensure(CastFieldChecked<FStructProperty>(Property)->Struct == StaticStructFast<T>()))
 		{
 			return;
 		}
@@ -284,37 +284,94 @@ FORCEINLINE TSharedRef<IPropertyHandle> operator++(const TSharedRef<IPropertyHan
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+template<typename CustomizationType>
+class TVoxelDetailCustomizationWrapper : public IDetailCustomization
+{
+public:
+	const TSharedRef<IDetailCustomization> Customization;
+
+	template<typename... ArgTypes>
+	explicit TVoxelDetailCustomizationWrapper(ArgTypes&&... Args)
+		: Customization(MakeShared<CustomizationType>(Forward<ArgTypes>(Args)...))
+	{
+	}
+
+	virtual void PendingDelete() override
+	{
+		Customization->PendingDelete();
+	}
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override
+	{
+		VOXEL_FUNCTION_COUNTER();
+		Customization->CustomizeDetails(DetailBuilder);
+	}
+	virtual void CustomizeDetails(const TSharedPtr<IDetailLayoutBuilder>& DetailBuilder) override
+	{
+		VOXEL_FUNCTION_COUNTER();
+		Customization->CustomizeDetails(DetailBuilder);
+	}
+};
+
+template<typename CustomizationType>
+class TVoxelPropertyTypeCustomizationWrapper : public IPropertyTypeCustomization
+{
+public:
+	const TSharedRef<IPropertyTypeCustomization> Customization = MakeShared<CustomizationType>();
+
+	virtual void CustomizeHeader(
+		const TSharedRef<IPropertyHandle> PropertyHandle,
+		FDetailWidgetRow& HeaderRow,
+		IPropertyTypeCustomizationUtils& CustomizationUtils) override
+	{
+		VOXEL_FUNCTION_COUNTER();
+		Customization->CustomizeHeader(PropertyHandle, HeaderRow, CustomizationUtils);
+	}
+	virtual void CustomizeChildren(
+		const TSharedRef<IPropertyHandle> PropertyHandle,
+		IDetailChildrenBuilder& ChildBuilder,
+		IPropertyTypeCustomizationUtils& CustomizationUtils) override
+	{
+		VOXEL_FUNCTION_COUNTER();
+		Customization->CustomizeChildren(
+			PropertyHandle,
+			ChildBuilder,
+			CustomizationUtils);
+	}
+	virtual bool ShouldInlineKey() const override
+	{
+		return Customization->ShouldInlineKey();
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 template<typename Class, typename Customization>
 void RegisterVoxelClassLayout()
 {
-	VOXEL_LLM_SCOPE();
-
 	FVoxelEditorUtilities::RegisterClassLayout(Class::StaticClass(), FOnGetDetailCustomizationInstance::CreateLambda([]
 	{
-		return MakeVoxelShared<Customization>();
+		return MakeShared<TVoxelDetailCustomizationWrapper<Customization>>();
 	}));
 }
 
 template<typename Struct, typename Customization, bool bRecursive>
 void RegisterVoxelStructLayout()
 {
-	VOXEL_LLM_SCOPE();
-
 	FVoxelEditorUtilities::RegisterStructLayout(Struct::StaticStruct(), FOnGetPropertyTypeCustomizationInstance::CreateLambda([]
 	{
-		return MakeVoxelShared<Customization>();
+		return MakeShared<TVoxelPropertyTypeCustomizationWrapper<Customization>>();
 	}), bRecursive);
 }
 
 template<typename Struct, typename Customization, bool bRecursive, typename Identifier>
 void RegisterVoxelStructLayout()
 {
-	VOXEL_LLM_SCOPE();
-
 	FVoxelEditorUtilities::RegisterStructLayout(Struct::StaticStruct(), FOnGetPropertyTypeCustomizationInstance::CreateLambda([]
 	{
-		return MakeVoxelShared<Customization>();
-	}), bRecursive, MakeVoxelShared<Identifier>());
+		return MakeShared<TVoxelPropertyTypeCustomizationWrapper<Customization>>();
+	}), bRecursive, MakeShared<Identifier>());
 }
 
 class VOXELCOREEDITOR_API FVoxelDetailCustomization : public IDetailCustomization

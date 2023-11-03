@@ -3,8 +3,8 @@
 #include "Point/VoxelGenerateSurfacePointsNode.h"
 #include "VoxelRuntime.h"
 #include "TransvoxelData.h"
-#include "VoxelGraphNodeStatInterface.h"
 #include "VoxelPositionQueryParameter.h"
+#include "VoxelGenerateSurfacePointsNodeImpl.ispc.generated.h"
 
 void FVoxelGenerateSurfacePointsBuilder::Compute()
 {
@@ -13,13 +13,13 @@ void FVoxelGenerateSurfacePointsBuilder::Compute()
 
 	// / 4 to allow for distance checks
 	//BaseCellSize = MaxResolution / 4; TODO
-	BaseCellSize = TargetCellSize / 4;
+	BaseCellSize = TargetCellSize;
 
 	const double Size = Bounds.Size().GetMax() / BaseCellSize;
 	ensure(Size >= 0);
 
-	const int64 NewDepth = FMath::CeilLogTwo64(FMath::CeilToInt64(Size));
-	if (NewDepth > 20)
+	const int64 NewDepth = FMath::Max<int64>(1, FMath::CeilLogTwo64(FMath::CeilToInt64(Size)));
+	if (NewDepth > 10)
 	{
 		VOXEL_MESSAGE(Error, "{0}: bounds too big", Node);
 		Finalize();
@@ -29,8 +29,10 @@ void FVoxelGenerateSurfacePointsBuilder::Compute()
 	ensure(Depth == -1);
 	Depth = NewDepth;
 
+	Offset = Bounds.Min;
+
 	ensure(Cells.Num() == 0);
-	Cells.Add(FIntVector(Bounds.GetCenter() / BaseCellSize));
+	Cells.Add(FCell(FIntVector::ZeroValue));
 
 	ComputeDistances();
 }
@@ -46,45 +48,46 @@ void FVoxelGenerateSurfacePointsBuilder::ComputeDistances()
 	FVoxelFloatBufferStorage QueryY; QueryY.Allocate(Cells.Num() * 8);
 	FVoxelFloatBufferStorage QueryZ; QueryZ.Allocate(Cells.Num() * 8);
 
-	ensure(CellSize % 4 == 0);
-	const int32 QuarterCellSize = CellSize / 4;
+	ensure(CellSize % 2 == 0);
+	const float HalfCellSize = CellSize / 2.f;
+	const float QuarterCellSize = CellSize / 4.f;
 
 	for (int32 Index = 0; Index < Cells.Num(); Index++)
 	{
-		const FIntVector Cell = Cells[Index];
+		const FIntVector Cell = Cells[Index].Vector();
 
-		QueryX[8 * Index + 0] = (Cell.X - QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 1] = (Cell.X + QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 2] = (Cell.X - QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 3] = (Cell.X + QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 4] = (Cell.X - QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 5] = (Cell.X + QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 6] = (Cell.X - QuarterCellSize) * BaseCellSize;
-		QueryX[8 * Index + 7] = (Cell.X + QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 0] = Offset.X + (Cell.X + 1 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 1] = Offset.X + (Cell.X + 3 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 2] = Offset.X + (Cell.X + 1 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 3] = Offset.X + (Cell.X + 3 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 4] = Offset.X + (Cell.X + 1 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 5] = Offset.X + (Cell.X + 3 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 6] = Offset.X + (Cell.X + 1 * QuarterCellSize) * BaseCellSize;
+		QueryX[8 * Index + 7] = Offset.X + (Cell.X + 3 * QuarterCellSize) * BaseCellSize;
 
-		QueryY[8 * Index + 0] = (Cell.Y - QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 1] = (Cell.Y - QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 2] = (Cell.Y + QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 3] = (Cell.Y + QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 4] = (Cell.Y - QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 5] = (Cell.Y - QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 6] = (Cell.Y + QuarterCellSize) * BaseCellSize;
-		QueryY[8 * Index + 7] = (Cell.Y + QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 0] = Offset.Y + (Cell.Y + 1 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 1] = Offset.Y + (Cell.Y + 1 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 2] = Offset.Y + (Cell.Y + 3 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 3] = Offset.Y + (Cell.Y + 3 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 4] = Offset.Y + (Cell.Y + 1 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 5] = Offset.Y + (Cell.Y + 1 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 6] = Offset.Y + (Cell.Y + 3 * QuarterCellSize) * BaseCellSize;
+		QueryY[8 * Index + 7] = Offset.Y + (Cell.Y + 3 * QuarterCellSize) * BaseCellSize;
 
-		QueryZ[8 * Index + 0] = (Cell.Z - QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 1] = (Cell.Z - QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 2] = (Cell.Z - QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 3] = (Cell.Z - QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 4] = (Cell.Z + QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 5] = (Cell.Z + QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 6] = (Cell.Z + QuarterCellSize) * BaseCellSize;
-		QueryZ[8 * Index + 7] = (Cell.Z + QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 0] = Offset.Z + (Cell.Z + 1 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 1] = Offset.Z + (Cell.Z + 1 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 2] = Offset.Z + (Cell.Z + 1 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 3] = Offset.Z + (Cell.Z + 1 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 4] = Offset.Z + (Cell.Z + 3 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 5] = Offset.Z + (Cell.Z + 3 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 6] = Offset.Z + (Cell.Z + 3 * QuarterCellSize) * BaseCellSize;
+		QueryZ[8 * Index + 7] = Offset.Z + (Cell.Z + 3 * QuarterCellSize) * BaseCellSize;
 	}
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = BaseQuery.CloneParameters();
 	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = BaseCellSize * CellSize;
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(FVoxelVectorBuffer::Make(QueryX, QueryY, QueryZ));
-	Parameters->Add<FVoxelMinExactDistanceQueryParameter>().MinExactDistance = BaseCellSize * CellSize / 4.f * UE_SQRT_2;
+	Parameters->Add<FVoxelPositionQueryParameter>().Initialize(FVoxelVectorBuffer::Make(QueryX, QueryY, QueryZ));
+	Parameters->Add<FVoxelMinExactDistanceQueryParameter>().MinExactDistance = BaseCellSize * HalfCellSize * UE_SQRT_2;
 
 	const TVoxelFutureValue<FVoxelFloatBuffer> Distances = Surface->GetDistance(BaseQuery.MakeNewQuery(Parameters));
 
@@ -109,44 +112,58 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessDistances(const FVoxelFloatBuffe
 	}
 
 	const int32 CellSize = 1 << Depth;
-	ensure(CellSize % 4 == 0);
+	ensure(CellSize % 2 == 0);
 	const int32 HalfCellSize = CellSize / 2;
-	const int32 QuarterCellSize = CellSize / 4;
 	const float MinDistance = CellSize * BaseCellSize / 4.f * UE_SQRT_2 * (1.f + DistanceChecksTolerance);
 
-	const FVoxelIntBox IntBounds = FVoxelIntBox::FromFloatBox_WithPadding(Bounds / BaseCellSize);
+	const FVoxelIntBox IntBounds = FVoxelIntBox::FromFloatBox_WithPadding(Bounds.ShiftBy(-Offset) / BaseCellSize);
 
-	TVoxelChunkedArray<FIntVector> NewCells;
+	TVoxelChunkedArray<FCell> NewCells;
 	{
 		VOXEL_SCOPE_COUNTER("Find new cells");
 
 		for (int32 Index = 0; Index < Cells.Num(); Index++)
 		{
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 0)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 1)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 2)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 3)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 4)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 5)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 6)) < MinDistance) { goto Process; }
-			if (FMath::Abs(Distances.LoadFast(8 * Index + 7)) < MinDistance) { goto Process; }
-			continue;
-
-		Process:
-			const FIntVector Cell = Cells[Index];
-			if (!IntBounds.Intersect(FVoxelIntBox(Cell - HalfCellSize, Cell + HalfCellSize)))
+			const FIntVector Cell = Cells[Index].Vector();
+			if (!IntBounds.Intersect(FVoxelIntBox(
+				Cell,
+				Cell + CellSize)))
 			{
 				continue;
 			}
 
-			NewCells.Add(Cell + FIntVector(-QuarterCellSize, -QuarterCellSize, -QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(+QuarterCellSize, -QuarterCellSize, -QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(-QuarterCellSize, +QuarterCellSize, -QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(+QuarterCellSize, +QuarterCellSize, -QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(-QuarterCellSize, -QuarterCellSize, +QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(+QuarterCellSize, -QuarterCellSize, +QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(-QuarterCellSize, +QuarterCellSize, +QuarterCellSize));
-			NewCells.Add(Cell + FIntVector(+QuarterCellSize, +QuarterCellSize, +QuarterCellSize));
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 0)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(0, 0, 0)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 1)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(HalfCellSize, 0, 0)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 2)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(0, HalfCellSize, 0)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 3)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(HalfCellSize, HalfCellSize, 0)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 4)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(0, 0, HalfCellSize)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 5)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(HalfCellSize, 0, HalfCellSize)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 6)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(0, HalfCellSize, HalfCellSize)));
+			}
+			if (FMath::Abs(Distances.LoadFast(8 * Index + 7)) < MinDistance)
+			{
+				NewCells.Add(FCell(Cell + FIntVector(HalfCellSize, HalfCellSize, HalfCellSize)));
+			}
 		}
 	}
 
@@ -159,7 +176,7 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessDistances(const FVoxelFloatBuffe
 		return;
 	}
 
-	if (Depth > 2)
+	if (Depth > 0)
 	{
 		ComputeDistances();
 		return;
@@ -172,55 +189,107 @@ void FVoxelGenerateSurfacePointsBuilder::ComputeFinalDistances()
 {
 	VOXEL_SCOPE_COUNTER_FORMAT("FVoxelGenerateSurfacePointsBuilder::ComputeFinalDistances Depth=%d NumCells=%d", Depth, Cells.Num());
 	FVoxelNodeStatScope StatScope(Node, 0);
-
-	const int32 CellSize = 1 << Depth;
-	ensure(CellSize % 2 == 0);
-	const int32 HalfCellSize = CellSize / 2;
-
-	int32 NumQueries = 0;
-	FVoxelFloatBufferStorage QueryX;
-	FVoxelFloatBufferStorage QueryY;
-	FVoxelFloatBufferStorage QueryZ;
-
-	TVoxelAddOnlyChunkedMap<FIntVector, int32> KeyToIndex;
-	KeyToIndex.Reserve(8 * Cells.Num());
+	ensure(Depth == 0);
 
 	TVoxelChunkedArray<TVoxelStaticArray<int32, 8>> ValueIndices;
 	ValueIndices.SetNumUninitialized(Cells.Num());
 
-	for (int32 CellIndex = 0; CellIndex < Cells.Num(); CellIndex++)
+	FVoxelFloatBufferStorage QueryX; QueryX.Reserve(8 * Cells.Num());
+	FVoxelFloatBufferStorage QueryY; QueryY.Reserve(8 * Cells.Num());
+	FVoxelFloatBufferStorage QueryZ; QueryZ.Reserve(8 * Cells.Num());
+	int32 NumQueries = 0;
+
+	if (false)
 	{
-		const FIntVector Cell = Cells[CellIndex];
-		TVoxelStaticArray<int32, 8>& CellIndices = ValueIndices[CellIndex];
+		// Naive slow version
 
-		for (int32 ChildIndex = 0; ChildIndex < 8; ChildIndex++)
+		NumQueries = 8 * Cells.Num();
+
+		for (int32 Index = 0; Index < Cells.Num(); Index++)
 		{
-			const FIntVector Key = Cell + FIntVector(
-				ChildIndex & 0x1 ? HalfCellSize : -HalfCellSize,
-				ChildIndex & 0x2 ? HalfCellSize : -HalfCellSize,
-				ChildIndex & 0x4 ? HalfCellSize : -HalfCellSize);
-			const uint32 Hash = KeyToIndex.HashValue(Key);
+			const FIntVector Cell = Cells[Index].Vector();
 
-			if (const int32* IndexPtr = KeyToIndex.FindHashed(Hash, Key))
+			for (int32 ChildIndex = 0; ChildIndex < 8; ChildIndex++)
 			{
-				CellIndices[ChildIndex] = *IndexPtr;
-			}
-			else
-			{
-				const int32 Index = NumQueries++;
-				QueryX.Add(Key.X * BaseCellSize);
-				QueryY.Add(Key.Y * BaseCellSize);
-				QueryZ.Add(Key.Z * BaseCellSize);
+				QueryX.Add(Offset.X + (Cell.X + bool(ChildIndex & 0x1)) * BaseCellSize);
+				QueryY.Add(Offset.Y + (Cell.Y + bool(ChildIndex & 0x2)) * BaseCellSize);
+				QueryZ.Add(Offset.Z + (Cell.Z + bool(ChildIndex & 0x4)) * BaseCellSize);
 
-				KeyToIndex.AddHashed_CheckNew_NoRehash(Hash, Key) = Index;
-				CellIndices[ChildIndex] = Index;
+				ValueIndices[Index][ChildIndex] = 8 * Index + ChildIndex;
 			}
+		}
+	}
+	else
+	{
+		constexpr int32 HashSize = GVoxelDefaultAllocationSize / sizeof(int32);
+		constexpr int32 MaxNumElements = HashSize;
+
+		TVoxelArray<int32> HashTable;
+		FVoxelUtilities::SetNumFast(HashTable, HashSize);
+
+		// Needed to allow querying [-1],
+		constexpr int32 Padding = 1;
+
+		TVoxelArray<uint32> Elements_Values_Padded;
+		TVoxelArray<int32> Elements_NextIndices_Padded;
+		FVoxelUtilities::SetNumFast(Elements_Values_Padded, MaxNumElements);
+		FVoxelUtilities::SetNumFast(Elements_NextIndices_Padded, MaxNumElements);
+
+		const TVoxelArrayView<uint32> Elements_Values = MakeVoxelArrayView(Elements_Values_Padded).Slice(Padding, MaxNumElements - Padding);
+		const TVoxelArrayView<int32> Elements_NextIndices = MakeVoxelArrayView(Elements_NextIndices_Padded).Slice(Padding, MaxNumElements - Padding);
+
+		for (int32 CellIndex = 0; CellIndex < Cells.Num(); CellIndex += ValueIndices.NumPerChunk)
+		{
+			FVoxelUtilities::LargeMemset(HashTable, 0xFF);
+
+			checkStatic(ValueIndices.NumPerChunk < TVoxelChunkedArray<FCell>::NumPerChunk);
+			const int32 NumToProcess = FMath::Min(ValueIndices.NumPerChunk, Cells.Num() - CellIndex);
+			ensure(NumToProcess * 8 <= MaxNumElements);
+
+			checkVoxelSlow(&Cells[CellIndex + NumToProcess - 1] - &Cells[CellIndex] == NumToProcess - 1);
+			checkVoxelSlow(ValueIndices[CellIndex + NumToProcess - 1].GetData() - ValueIndices[CellIndex].GetData() == 8 * (NumToProcess - 1));
+
+			const int32 NumElements = ispc::GenerateSurfacePointsBuilder_ComputeFinalDistances_ComputeIndices(
+				ReinterpretCastPtr<uint32>(&Cells[CellIndex]),
+				ValueIndices[CellIndex].GetData(),
+				HashSize,
+				HashTable.GetData(),
+				Elements_Values.GetData(),
+				Elements_NextIndices.GetData(),
+				NumQueries,
+				NumToProcess);
+			ensure(NumElements <= Elements_Values.Num());
+			ensure(NumElements <= Elements_NextIndices.Num());
+
+			QueryX.AddUninitialized(NumElements);
+			QueryY.AddUninitialized(NumElements);
+			QueryZ.AddUninitialized(NumElements);
+
+			FVoxelBufferIterator Iterator;
+			Iterator.Initialize(NumQueries + NumElements, NumQueries);
+			for (; Iterator; ++Iterator)
+			{
+				checkVoxelSlow(Elements_Values.IsValidIndex(Iterator.GetIndex() - NumQueries + Iterator.Num() - 1));
+
+				ispc::GenerateSurfacePointsBuilder_ComputeFinalDistances_WriteIndices(
+					&Elements_Values[Iterator.GetIndex() - NumQueries],
+					QueryX.GetData(Iterator),
+					QueryY.GetData(Iterator),
+					QueryZ.GetData(Iterator),
+					Offset.X,
+					Offset.Y,
+					Offset.Z,
+					BaseCellSize,
+					Iterator.Num());
+			}
+
+			NumQueries += NumElements;
 		}
 	}
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = BaseQuery.CloneParameters();
-	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = BaseCellSize * CellSize;
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(FVoxelVectorBuffer::Make(QueryX, QueryY, QueryZ));
+	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = BaseCellSize;
+	Parameters->Add<FVoxelPositionQueryParameter>().Initialize(FVoxelVectorBuffer::Make(QueryX, QueryY, QueryZ));
 
 	const TVoxelFutureValue<FVoxelFloatBuffer> SparseDistances = Surface->GetDistance(BaseQuery.MakeNewQuery(Parameters));
 
@@ -243,16 +312,14 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessFinalDistances(
 	VOXEL_SCOPE_COUNTER_FORMAT("FVoxelGenerateSurfacePointsBuilder::ProcessFinalDistances Depth=%d NumCells=%d", Depth, Cells.Num());
 	FVoxelNodeStatScope StatScope(Node, 0);
 
+	ensure(Depth == 0);
+
 	if (SparseDistances.IsConstant() ||
 		!ensure(SparseDistances.Num() == NumQueries))
 	{
 		Finalize();
 		return;
 	}
-
-	const int32 CellSize = 1 << Depth;
-	ensure(CellSize % 2 == 0);
-	const int32 HalfCellSize = CellSize / 2;
 
 	for (int32 CellIndex = 0; CellIndex < Cells.Num(); CellIndex++)
 	{
@@ -311,13 +378,13 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessFinalDistances(
 			continue;
 		}
 
-		const FIntVector Cell = Cells[CellIndex];
-		const FVector3f CellRelativeOffset = FVector3f(Cell - HalfCellSize) / CellSize;
+		const FCell Cell = Cells[CellIndex];
+		const FVector CellRelativeOffset = Offset + FVector(Cell.Vector()) * BaseCellSize;
 
 		const Voxel::Transvoxel::FCellVertices CellVertices = Voxel::Transvoxel::CellCodeToCellVertices[CellCode];
 		checkVoxelSlow(CellVertices.NumVertices() > 0);
 
-		FVector3f PositionSum = FVector3f(ForceInit);
+		FVector RelativePositionSum = FVector(ForceInit);
 		for (int32 CellVertexIndex = 0; CellVertexIndex < CellVertices.NumVertices(); CellVertexIndex++)
 		{
 			const Voxel::Transvoxel::FVertexData VertexData = CellVertices.GetVertexData(CellVertexIndex);
@@ -335,16 +402,16 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessFinalDistances(
 			const int32 EdgeIndex = VertexData.EdgeIndex;
 			checkVoxelSlow(0 <= EdgeIndex && EdgeIndex < 3);
 
-			FVector3f Position = CellRelativeOffset + FVector3f(
+			FVector Position = FVector(
 				bool(IndexA & 1),
 				bool(IndexA & 2),
 				bool(IndexA & 4));
 			Position[EdgeIndex] += DistanceA / (DistanceA - DistanceB);
-			PositionSum += Position;
+			RelativePositionSum += Position;
 		}
 
-		PositionSum /= CellVertices.NumVertices();
-		const FVector3f Position = PositionSum * CellSize * BaseCellSize;
+		RelativePositionSum /= CellVertices.NumVertices();
+		const FVector Position = CellRelativeOffset + RelativePositionSum * BaseCellSize;
 
 		// Extend otherwise plane at Z=0 is broken
 		if (!Bounds.Extend(KINDA_SMALL_NUMBER).Contains(Position))
@@ -352,7 +419,7 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessFinalDistances(
 			continue;
 		}
 
-		const FVector3f Alpha = PositionSum - CellRelativeOffset;
+		const FVector Alpha = RelativePositionSum;
 		ensureVoxelSlow(-KINDA_SMALL_NUMBER < Alpha.X && Alpha.X < 1.f + KINDA_SMALL_NUMBER);
 		ensureVoxelSlow(-KINDA_SMALL_NUMBER < Alpha.Y && Alpha.Y < 1.f + KINDA_SMALL_NUMBER);
 		ensureVoxelSlow(-KINDA_SMALL_NUMBER < Alpha.Z && Alpha.Z < 1.f + KINDA_SMALL_NUMBER);
@@ -410,7 +477,13 @@ void FVoxelGenerateSurfacePointsBuilder::ProcessFinalDistances(
 			MaxY - MinY,
 			MaxZ - MinZ).GetSafeNormal();
 
-		Id.Add(FVoxelUtilities::MurmurHashMulti(Cell.X, Cell.Y, Cell.Z, CellSize));
+		Id.Add(FVoxelUtilities::MurmurHashMulti(
+			Cell.X,
+			Cell.Y,
+			Cell.Z,
+			FVoxelUtilities::RoundToInt32(Offset.X),
+			FVoxelUtilities::RoundToInt32(Offset.Y),
+			FVoxelUtilities::RoundToInt32(Offset.Z)));
 
 		PositionX.Add(Position.X);
 		PositionY.Add(Position.Y);

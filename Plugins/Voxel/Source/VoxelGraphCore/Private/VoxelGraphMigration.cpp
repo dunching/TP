@@ -2,12 +2,7 @@
 
 #include "VoxelGraphMigration.h"
 
-FVoxelGraphMigration* GVoxelGraphMigration = nullptr;
-
-VOXEL_RUN_ON_STARTUP(CreateVoxelGraphMigration, Game, 999)
-{
-	GVoxelGraphMigration = new FVoxelGraphMigration();
-}
+FVoxelGraphMigration* GVoxelGraphMigration = MakeVoxelSingleton(FVoxelGraphMigration);
 
 UFunction* FVoxelGraphMigration::FindNewFunction(const FName CachedName) const
 {
@@ -15,7 +10,7 @@ UFunction* FVoxelGraphMigration::FindNewFunction(const FName CachedName) const
 	if (!Migration ||
 		!ensure(Migration->NewFunction))
 	{
-		LOG_VOXEL(Error, "No redirector for '%s'", *CachedName.ToString());
+		LOG_VOXEL(Warning, "No redirector for '%s'", *CachedName.ToString());
 		return nullptr;
 	}
 
@@ -25,10 +20,15 @@ UFunction* FVoxelGraphMigration::FindNewFunction(const FName CachedName) const
 
 FName FVoxelGraphMigration::FindNewPinName(UObject* Outer, const FName OldName) const
 {
+	if (OldName.ToString().StartsWith("ORPHANED_"))
+	{
+		return {};
+	}
+
 	const FPinMigration* Migration = PinMigrations.Find({ Outer, OldName });
 	if (!Migration)
 	{
-		LOG_VOXEL(Error, "No redirector for %s.%s", *Outer->GetName(), *OldName.ToString());
+		LOG_VOXEL(Warning, "No redirector for %s.%s", *Outer->GetName(), *OldName.ToString());
 		return {};
 	}
 

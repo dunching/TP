@@ -5,8 +5,22 @@
 #include "VoxelGraphInterface.h"
 #include "VoxelParameterContainer.h"
 #include "Point/VoxelPointStorage.h"
+#include "Sculpt/VoxelSculptStorage.h"
+#include "Sculpt/VoxelEditSculptSurfaceExecNode.h"
 #include "Engine/Texture2D.h"
 #include "Components/BillboardComponent.h"
+
+bool UVoxelActorRootComponent::MoveComponentImpl(const FVector& Delta, const FQuat& NewRotation, bool bSweep, FHitResult* Hit, EMoveComponentFlags MoveFlags, ETeleportType Teleport)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	const bool bResult = Super::MoveComponentImpl(Delta, NewRotation, bSweep, Hit, MoveFlags, Teleport);
+
+	// Update transform ref so that queries or sculpt tools are accurate
+	FVoxelTransformRef::NotifyTransformChanged(*this);
+
+	return bResult;
+}
 
 AVoxelActor::AVoxelActor()
 {
@@ -22,7 +36,24 @@ AVoxelActor::AVoxelActor()
 		}
 	});
 
-	PointStorageComponent = CreateDefaultSubobject<UVoxelPointStorageComponent>("VoxelPointStorageComponent");
+	PointStorageComponent = CreateDefaultSubobject<UVoxelPointStorage>("VoxelPointStorage");
+	SculptStorageComponent = CreateDefaultSubobject<UVoxelSculptStorage>("VoxelSculptStorage");
+
+	if (PointStorageComponent)
+	{
+		const TSharedRef<FVoxelRuntimeParameter_PointStorage> Parameter = MakeVoxelShared<FVoxelRuntimeParameter_PointStorage>();
+		Parameter->Data = PointStorageComponent->GetData();
+		DefaultRuntimeParameters.Add(Parameter);
+	}
+
+	if (SculptStorageComponent)
+	{
+		const TSharedRef<FVoxelRuntimeParameter_SculptStorage> Parameter = MakeVoxelShared<FVoxelRuntimeParameter_SculptStorage>();
+		Parameter->Data = SculptStorageComponent->GetData();
+		DefaultRuntimeParameters.Add(Parameter);
+	}
+
+	DefaultRuntimeParameters.Add(MakeVoxelShared<FVoxelRuntimeParameter_EditSculptSurface>());
 
 	PrimaryActorTick.bCanEverTick = true;
 
@@ -57,7 +88,7 @@ AVoxelActor::~AVoxelActor()
 
 void AVoxelActor::BeginPlay()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::BeginPlay();
 
@@ -70,7 +101,7 @@ void AVoxelActor::BeginPlay()
 
 void AVoxelActor::BeginDestroy()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (IsRuntimeCreated())
 	{
@@ -82,7 +113,7 @@ void AVoxelActor::BeginDestroy()
 
 void AVoxelActor::EndPlay(EEndPlayReason::Type EndPlayReason)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	// In the editor, Destroyed is called but EndPlay isn't
 
@@ -96,7 +127,7 @@ void AVoxelActor::EndPlay(EEndPlayReason::Type EndPlayReason)
 
 void AVoxelActor::Destroyed()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (IsRuntimeCreated())
 	{
@@ -108,7 +139,7 @@ void AVoxelActor::Destroyed()
 
 void AVoxelActor::OnConstruction(const FTransform& Transform)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::OnConstruction(Transform);
 
@@ -127,13 +158,21 @@ void AVoxelActor::OnConstruction(const FTransform& Transform)
 
 void AVoxelActor::PostLoad()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::PostLoad();
 
-	if (!ensure(ParameterContainer))
+	if (!ParameterContainer)
 	{
 		ParameterContainer = NewObject<UVoxelParameterContainer>(this, "ParameterContainerComponent");
+	}
+	if (!PointStorageComponent)
+	{
+		PointStorageComponent = NewObject<UVoxelPointStorage>(this, "VoxelPointStorage");
+	}
+	if (!SculptStorageComponent)
+	{
+		SculptStorageComponent = NewObject<UVoxelSculptStorage>(this, "VoxelSculptStorage");
 	}
 
 	if (UVoxelGraphInterface* Graph = Graph_DEPRECATED.LoadSynchronous())
@@ -148,7 +187,7 @@ void AVoxelActor::PostLoad()
 
 void AVoxelActor::PostEditImport()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::PostEditImport();
 
@@ -175,7 +214,7 @@ bool AVoxelActor::Modify(const bool bAlwaysMarkDirty)
 
 void AVoxelActor::PostEditUndo()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::PostEditUndo();
 
@@ -250,7 +289,7 @@ void AVoxelActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedE
 
 void AVoxelActor::Tick(const float DeltaTime)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	// We don't want to tick the BP in preview
 	if (GetWorld()->IsGameWorld())
@@ -302,13 +341,7 @@ void AVoxelActor::AddReferencedObjects(UObject* InThis, FReferenceCollector& Col
 
 FVoxelRuntimeParameters AVoxelActor::GetRuntimeParameters() const
 {
-	FVoxelRuntimeParameters Parameters = DefaultRuntimeParameters;
-
-	const TSharedRef<FVoxelRuntimeParameter_PointStorage> Parameter = MakeVoxelShared<FVoxelRuntimeParameter_PointStorage>();
-	Parameter->Data = PointStorageComponent->GetData();
-	Parameters.Add(Parameter);
-
-	return Parameters;
+	return DefaultRuntimeParameters;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -317,7 +350,7 @@ FVoxelRuntimeParameters AVoxelActor::GetRuntimeParameters() const
 
 void AVoxelActor::QueueCreateRuntime()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (FVoxelRuntime::CanBeCreated(false))
 	{
@@ -331,7 +364,7 @@ void AVoxelActor::QueueCreateRuntime()
 
 void AVoxelActor::CreateRuntime()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (!FVoxelRuntime::CanBeCreated(true))
 	{
@@ -357,11 +390,13 @@ void AVoxelActor::CreateRuntime()
 		*Component,
 		GetRuntimeParameters(),
 		*ParameterContainer);
+
+	OnRuntimeCreated.Broadcast();
 }
 
 void AVoxelActor::DestroyRuntime()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	// Clear RuntimeRecreate queue
 	bRuntimeRecreateQueued = false;
@@ -370,6 +405,8 @@ void AVoxelActor::DestroyRuntime()
 	{
 		return;
 	}
+
+	OnRuntimeDestroyed.Broadcast();
 
 	Runtime->Destroy();
 	Runtime.Reset();

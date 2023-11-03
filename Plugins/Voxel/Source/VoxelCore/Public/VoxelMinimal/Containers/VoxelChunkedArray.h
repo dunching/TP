@@ -57,6 +57,8 @@ public:
 		}
 		else
 		{
+			VOXEL_FUNCTION_COUNTER_NUM(Number, 16384);
+
 			Chunks.Reserve(NumChunks);
 
 			while (Chunks.Num() < NumChunks)

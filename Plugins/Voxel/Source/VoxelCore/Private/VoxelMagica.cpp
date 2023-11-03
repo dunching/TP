@@ -22,7 +22,8 @@
 
 ------------------------------------------------------------------------------------------------------------------------------------------------- */
 
-BEGIN_VOXEL_NAMESPACE(Magica)
+namespace Voxel::Magica
+{
 
 // Some older .vox files will not store a palette, in which case the following palette will be used!
 static const uint8_t DefaultPalette[256 * 4] = {
@@ -729,4 +730,4 @@ bool ReadScene(const TVoxelArrayView<const uint8>& Data, FMagicaScene& OutScene)
 
 #undef CHUNK_ID
 
-END_VOXEL_NAMESPACE(Magica)
+}

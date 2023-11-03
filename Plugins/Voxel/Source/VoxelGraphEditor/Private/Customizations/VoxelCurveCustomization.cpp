@@ -240,7 +240,7 @@ TSharedRef<SWidget> FVoxelCurveCustomization::MakeToolbar()
 	ToolBarBuilder.SetStyle(&FAppStyle::Get(), "SlimToolbar");
 
 	ToolBarBuilder.AddComboButton(
-		FUIAction(), 
+		FUIAction(),
 		FOnGetContent::CreateLambda([this]
 		{
 			FAssetPickerConfig AssetPickerConfig;
@@ -320,8 +320,13 @@ void FVoxelCurveCustomization::SaveCurveToAsset() const
 {
 	const FAssetToolsModule& AssetToolsModule = FAssetToolsModule::GetModule();
 
-	UCurveFloatFactory* CurveFloatFactory = NewObject<UCurveFloatFactory>();
-	UCurveFloat* NewCurve = CastChecked<UCurveFloat>(AssetToolsModule.Get().CreateAssetWithDialog(UCurveFloat::StaticClass(), CurveFloatFactory));
+	UCurveFloatFactory* Factory = NewObject<UCurveFloatFactory>();
+	UCurveFloat* NewCurve = Cast<UCurveFloat>(AssetToolsModule.Get().CreateAssetWithDialog(UCurveFloat::StaticClass(), Factory));
+	if (!NewCurve)
+	{
+		return;
+	}
+
 	NewCurve->FloatCurve = FVoxelEditorUtilities::GetStructPropertyValue<FRichCurve>(CurveHandle);
 	NewCurve->PostEditChange();
 }

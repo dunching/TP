@@ -4,7 +4,6 @@
 
 #include "VoxelMinimal.h"
 #include "VoxelQuery.h"
-#include "Editor/EditorEngine.h"
 #include "VoxelChunkSpawner.generated.h"
 
 class FVoxelRuntime;
@@ -44,20 +43,12 @@ struct FVoxelChunkActionQueue
 
 	void Enqueue(const FVoxelChunkAction& Action)
 	{
-		const auto WorldPtr = GEditor->GetEditorWorldContext().World();
-
 		switch (Action.Action)
 		{
 		default: ensure(false);
 		case EVoxelChunkAction::Compute:
-		{
-			const auto WorldPtr221 = GEditor->GetEditorWorldContext().World();
-            const auto WorldPtr21 = GEditor->GetEditorWorldContext().World();
-        }
 		case EVoxelChunkAction::BeginDestroy:
 		{
-			const auto WorldPtr1 = GEditor->GetEditorWorldContext().World();
-
 			AsyncQueue.Enqueue(Action);
 		}
 		break;
@@ -107,37 +98,36 @@ struct VOXELGRAPHCORE_API FVoxelChunkRef
 	}
 };
 
-class VOXELGRAPHCORE_API FVoxelChunkSpawnerImpl : public TSharedFromThis<FVoxelChunkSpawnerImpl>
+USTRUCT()
+struct VOXELGRAPHCORE_API FVoxelChunkSpawner
+	: public FVoxelVirtualStruct
+	, public TSharedFromThis<FVoxelChunkSpawner>
 {
-public:
-	float VoxelSize = 0.f;
-	TFunction<void(
-		int32 LOD,
-		int32 ChunkSize,
-		const FVoxelBox& Bounds,
-		TSharedPtr<FVoxelChunkRef>& OutChunkRef)> CreateChunkLambda;
+	GENERATED_BODY()
+	GENERATED_VIRTUAL_STRUCT_BODY()
 
-	FVoxelChunkSpawnerImpl() = default;
-	virtual ~FVoxelChunkSpawnerImpl() = default;
+public:
+	FORCEINLINE float GetVoxelSize() const
+	{
+		return PrivateVoxelSize;
+	}
 
 	TSharedRef<FVoxelChunkRef> CreateChunk(
 		int32 LOD,
 		int32 ChunkSize,
 		const FVoxelBox& Bounds) const;
 
-	virtual void Tick(FVoxelRuntime& Runtime) = 0;
-	virtual void Refresh() = 0;
-	virtual void Recreate() = 0;
-};
+	virtual void Initialize(FVoxelRuntime& Runtime) {}
+	virtual void Tick(FVoxelRuntime& Runtime) {}
 
-USTRUCT()
-struct VOXELGRAPHCORE_API FVoxelChunkSpawner : public FVoxelVirtualStruct
-{
-	GENERATED_BODY()
-	GENERATED_VIRTUAL_STRUCT_BODY()
+private:
+	using FCreateChunk = TFunction<TSharedPtr<FVoxelChunkRef>(
+		int32 LOD,
+		int32 ChunkSize,
+		const FVoxelBox& Bounds)>;
 
-	virtual TSharedPtr<FVoxelChunkSpawnerImpl> MakeImpl() const
-	{
-		return nullptr;
-	}
+	float PrivateVoxelSize = 0.f;
+	FCreateChunk PrivateCreateChunkLambda;
+
+	friend class FVoxelMarchingCubeExecNodeRuntime;
 };

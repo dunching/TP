@@ -4,8 +4,8 @@
 #include "VoxelSurface.h"
 #include "VoxelSettings.h"
 #include "VoxelDependency.h"
-#include "VoxelGraphExecutor.h"
 #include "VoxelQueryChannelNode.h"
+#include "Point/VoxelChunkedPointSet.h"
 #include "VoxelPositionQueryParameter.h"
 #include "Engine/Engine.h"
 #include "Engine/AssetManager.h"
@@ -17,23 +17,13 @@
 DEFINE_VOXEL_FACTORY(UVoxelChannelRegistry);
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelBrush);
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelRuntimeChannel);
-DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelRuntimeChannelCache);
 
-FVoxelChannelManager* GVoxelChannelManager;
+FVoxelChannelManager* GVoxelChannelManager = MakeVoxelSingleton(FVoxelChannelManager);
 
-VOXEL_RUN_ON_STARTUP_GAME(CreateVoxelChannelManager)
-{
-	GVoxelChannelManager = new FVoxelChannelManager();
-
-	GetMutableDefault<UVoxelSettings>()->UpdateChannels();
-
-	// Nothing should depend on channels so early, don't trigger a refresh
-	GVoxelChannelManager->ClearQueuedRefresh();
-	// Force a tick now in case assets are loaded
-	GVoxelChannelManager->Tick();
-	// Nothing should depend on channels so early, don't trigger a refresh
-	GVoxelChannelManager->ClearQueuedRefresh();
-}
+VOXEL_CONSOLE_VARIABLE(
+	VOXELGRAPHCORE_API, bool, GVoxelShowBrushBounds, false,
+	"voxel.ShowBrushBounds",
+	"");
 
 VOXEL_CONSOLE_COMMAND(
 	LogAllBrushes,
@@ -193,6 +183,8 @@ TSharedPtr<const FVoxelBrush> FVoxelRuntimeChannel::GetNextBrush(
 		const FRuntimeBrush& Brush = *It.Value;
 
 		if (Brush.Priority >= Priority ||
+			// Can happen due to race condition in FVoxelRuntimeChannel::AddBrush
+			!ensureVoxelSlow(Brush.RuntimeBounds_RequiresLock.IsSet()) ||
 			!Brush.RuntimeBounds_RequiresLock.GetValue().Intersect(Bounds))
 		{
 			continue;
@@ -220,9 +212,13 @@ FVoxelFutureValue FVoxelRuntimeChannel::Get(const FVoxelQuery& Query) const
 		{
 			return PositionQueryParameter->GetBounds();
 		}
-		if (const FVoxelSpawnableBoundsQueryParameter* PointBoundsQueryParameter = Query.GetParameters().Find<FVoxelSpawnableBoundsQueryParameter>())
+		if (const FVoxelQueryChannelBoundsQueryParameter* QueryChannelBoundsQueryParameter = Query.GetParameters().Find<FVoxelQueryChannelBoundsQueryParameter>())
 		{
-			return PointBoundsQueryParameter->Bounds;
+			return QueryChannelBoundsQueryParameter->Bounds;
+		}
+		if (const FVoxelPointChunkRefQueryParameter* PointChunkRefQueryParameter = Query.GetParameters().Find<FVoxelPointChunkRefQueryParameter>())
+		{
+			return PointChunkRefQueryParameter->ChunkRef.GetBounds();
 		}
 
 		ensure(false);
@@ -323,7 +319,11 @@ void FVoxelRuntimeChannel::AddBrush(
 		}
 
 		RuntimeBrush.RuntimeBounds_RequiresLock = RuntimeBrush.Brush->LocalBounds.TransformBy(NewTransform);
-		ensure(RuntimeBrush.Brush->LocalBounds.IsInfinite() == RuntimeBrush.RuntimeBounds_RequiresLock->IsInfinite());
+
+		if (RuntimeBrush.Brush->LocalBounds.IsInfinite())
+		{
+			RuntimeBrush.RuntimeBounds_RequiresLock = FVoxelBox::Infinite;
+		}
 
 		FVoxelDependency::FInvalidationParameters Parameters;
 		Parameters.Bounds = RuntimeBrush.RuntimeBounds_RequiresLock.GetValue();
@@ -351,6 +351,20 @@ void FVoxelRuntimeChannel::RemoveBrush(
 	Parameters.Bounds = RuntimeBrush->RuntimeBounds_RequiresLock.GetValue();
 	Parameters.LessOrEqualTag = Brush->Priority.Raw;
 	Dependency->Invalidate(Parameters);
+}
+
+TSharedRef<FVoxelRuntimeChannelCache> FVoxelRuntimeChannelCache::Create()
+{
+	ensure(IsInGameThread());
+
+	const TSharedRef<FVoxelRuntimeChannelCache> Cache = MakeVoxelShareable(new (GVoxelMemory) FVoxelRuntimeChannelCache());
+	GVoxelChannelManager->OnChannelDefinitionsChanged_GameThread.Add(MakeWeakPtrDelegate(Cache, [&Cache = *Cache]
+	{
+		ensure(IsInGameThread());
+		VOXEL_SCOPE_LOCK(Cache.CriticalSection);
+		Cache.Channels_RequiresLock.Reset();
+	}));
+	return Cache;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -441,6 +455,21 @@ TSharedRef<FVoxelRuntimeChannel> FVoxelWorldChannel::GetRuntimeChannel(
 	return Channel;
 }
 
+void FVoxelWorldChannel::DrawBrushBounds(const FObjectKey World) const
+{
+	VOXEL_FUNCTION_COUNTER();
+	VOXEL_SCOPE_LOCK(CriticalSection);
+
+	for (const TSharedPtr<const FVoxelBrush>& Brush : Brushes_RequiresLock)
+	{
+		FVoxelGameUtilities::DrawBox(World, Brush->LocalBounds, Brush->LocalToWorld.Get_NoDependency());
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void FVoxelWorldChannel::RemoveBrush_RequiresLock(const FVoxelBrushId BrushId)
 {
 	VOXEL_FUNCTION_COUNTER();
@@ -522,6 +551,27 @@ TArray<FName> FVoxelWorldChannelManager::GetValidChannelNames() const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+void FVoxelWorldChannelManager::Tick()
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!GVoxelShowBrushBounds)
+	{
+		return;
+	}
+
+	VOXEL_SCOPE_LOCK(CriticalSection);
+
+	for (const auto& It : Channels_RequiresLock)
+	{
+		It.Value->DrawBrushBounds(GetWorld_AnyThread());
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 bool FVoxelChannelManager::IsReady(const bool bLog) const
 {
 	if (!bChannelRegistriesLoaded)
@@ -594,23 +644,13 @@ TOptional<FVoxelChannelDefinition> FVoxelChannelManager::FindChannelDefinition(c
 	}
 	if (!Definition)
 	{
+		if (!IsReady(true))
+		{
+			VOXEL_MESSAGE(Error, "Querying channels before channel registry assets are done loading");
+		}
 		return {};
 	}
 	return *Definition;
-}
-
-TSharedRef<FVoxelWorldChannelManager> FVoxelChannelManager::GetWorldChannelManager(const FObjectKey World)
-{
-	VOXEL_SCOPE_LOCK(CriticalSection);
-
-	if (const TSharedPtr<FVoxelWorldChannelManager>* ChannelManagerPtr = WorldToChannelManager_RequiresLock.Find(World))
-	{
-		return ChannelManagerPtr->ToSharedRef();
-	}
-
-	const TSharedRef<FVoxelWorldChannelManager> ChannelManager = MakeVoxelShareable(new (GVoxelMemory) FVoxelWorldChannelManager(World));
-	WorldToChannelManager_RequiresLock.Add_CheckNew(World, ChannelManager);
-	return ChannelManager;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -622,11 +662,13 @@ void FVoxelChannelManager::LogAllBrushes_GameThread()
 	VOXEL_FUNCTION_COUNTER();
 	VOXEL_SCOPE_LOCK(CriticalSection);
 
-	for (const auto& WorldIt : WorldToChannelManager_RequiresLock)
+	for (const UWorld* World : TObjectRange<UWorld>())
 	{
-		VOXEL_SCOPE_LOCK(WorldIt.Value->CriticalSection);
+		const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(World);
 
-		for (const auto& ChannelIt : WorldIt.Value->Channels_RequiresLock)
+		VOXEL_SCOPE_LOCK(ChannelManager->CriticalSection);
+
+		for (const auto& ChannelIt : ChannelManager->Channels_RequiresLock)
 		{
 			const FVoxelWorldChannel& Channel = *ChannelIt.Value;
 
@@ -634,11 +676,11 @@ void FVoxelChannelManager::LogAllBrushes_GameThread()
 			for (const TSharedPtr<const FVoxelBrush>& Brush : Channel.Brushes_RequiresLock)
 			{
 				LOG_VOXEL(Log, "World: %s: Channel %s: Brush %s: Priority=%llu LocalBounds=%s",
-					WorldIt.Key.ResolveObjectPtr() ? *WorldIt.Key.ResolveObjectPtr()->GetPathName() : TEXT("<null>"),
+					*World->GetPathName(),
 					*Channel.Definition.Name.ToString(),
 					*Brush->DebugName.ToString(),
-					Brush->Priority,
-					*Brush->LocalBounds.ToString());
+					Brush->Priority.Raw,
+					Brush->LocalBounds.IsInfinite() ? TEXT("Infinite") : *Brush->LocalBounds.ToString());
 			}
 		}
 	}
@@ -661,12 +703,14 @@ void FVoxelChannelManager::LogAllChannels_GameThread()
 	}
 
 	LOG_VOXEL(Log, "World channels:");
-	for (const auto& WorldIt : WorldToChannelManager_RequiresLock)
+	for (const UWorld* World : TObjectRange<UWorld>())
 	{
-		VOXEL_SCOPE_LOCK(WorldIt.Value->CriticalSection);
-		LOG_VOXEL(Log, "\t%s:", WorldIt.Key.ResolveObjectPtr() ? *WorldIt.Key.ResolveObjectPtr()->GetPathName() : TEXT(""));
+		const TSharedRef<FVoxelWorldChannelManager> ChannelManager = FVoxelWorldChannelManager::Get(World);
 
-		for (const auto& ChannelIt : WorldIt.Value->Channels_RequiresLock)
+		VOXEL_SCOPE_LOCK(ChannelManager->CriticalSection);
+		LOG_VOXEL(Log, "\t%s:", *World->GetPathName());
+
+		for (const auto& ChannelIt : ChannelManager->Channels_RequiresLock)
 		{
 			LOG_VOXEL(Log, "\t\t%s (%d brushes)",
 				*ChannelIt.Value->Definition.ToString(),
@@ -747,6 +791,24 @@ void FVoxelChannelManager::RemoveChannelsFromAsset_GameThread(const UObject* Ass
 	bRefreshQueued = true;
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelChannelManager::Initialize()
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	GetMutableDefault<UVoxelSettings>()->UpdateChannels();
+
+	// Nothing should depend on channels so early, don't trigger a refresh
+	ClearQueuedRefresh();
+	// Force a tick now in case assets are loaded
+	Tick();
+	// Nothing should depend on channels so early, don't trigger a refresh
+	ClearQueuedRefresh();
+}
+
 void FVoxelChannelManager::Tick()
 {
 	VOXEL_FUNCTION_COUNTER();
@@ -755,10 +817,13 @@ void FVoxelChannelManager::Tick()
 	{
 		bRefreshQueued = false;
 
-		OnChannelDefinitionsChanged.Broadcast();
+		OnChannelDefinitionsChanged_GameThread.Broadcast();
 
-		// Reconstruct all nodes to have valid types on Sample/Write channel
-		GVoxelGraphExecutorManager->ForceTranslateAll();
+		for (const TSharedRef<FVoxelWorldChannelManager>& Subsystem : FVoxelWorldChannelManager::GetAll())
+		{
+			VOXEL_SCOPE_LOCK(Subsystem->CriticalSection);
+			Subsystem->Channels_RequiresLock.Reset();
+		}
 
 		if (ensure(GEngine))
 		{
@@ -770,7 +835,15 @@ void FVoxelChannelManager::Tick()
 		// No engine in commandlets
 		GEngine)
 	{
-		const IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+
+		if (!FPlatformProperties::RequiresCookedData() &&
+			!AssetRegistry.IsSearchAllAssets())
+		{
+			// Force search all assets in standalone
+			AssetRegistry.SearchAllAssets(false);
+		}
+
 		if (!AssetRegistry.IsLoadingAssets())
 		{
 			bChannelRegistriesLoaded = true;
@@ -779,6 +852,18 @@ void FVoxelChannelManager::Tick()
 			FARFilter Filter;
 			Filter.ClassPaths.Add(UVoxelChannelRegistry::StaticClass()->GetClassPathName());
 			AssetRegistry.GetAssets(Filter, AssetDatas);
+
+			AssetRegistry.OnAssetAdded().AddLambda([](const FAssetData& AssetData)
+			{
+				ensure(GIsEditor);
+
+				if (AssetData.GetClass() != StaticClassFast<UVoxelChannelRegistry>())
+				{
+					return;
+				}
+
+				ensure(TSoftObjectPtr<UVoxelChannelRegistry>(AssetData.GetSoftObjectPath()).LoadSynchronous());
+			});
 
 			FStreamableManager& StreamableManager = UAssetManager::GetStreamableManager();
 			for (const FAssetData& AssetData : AssetDatas)
@@ -805,22 +890,10 @@ void FVoxelChannelManager::Tick()
 	}
 }
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
 void FVoxelChannelManager::AddReferencedObjects(FReferenceCollector& Collector)
 {
 	VOXEL_FUNCTION_COUNTER();
 	VOXEL_SCOPE_LOCK(CriticalSection);
-
-	for (auto It = WorldToChannelManager_RequiresLock.CreateIterator(); It; ++It)
-	{
-		if (!It.Key().ResolveObjectPtr())
-		{
-			It.RemoveCurrent();
-		}
-	}
 
 	for (auto& It : AssetToChannelDefinitions_RequiresLock)
 	{
@@ -828,9 +901,4 @@ void FVoxelChannelManager::AddReferencedObjects(FReferenceCollector& Collector)
 		Collector.AddReferencedObject(It.Key);
 		ensure(It.Key);
 	}
-}
-
-FString FVoxelChannelManager::GetReferencerName() const
-{
-	return "FVoxelChannelManager";
 }

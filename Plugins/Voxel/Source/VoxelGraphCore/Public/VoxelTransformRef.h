@@ -20,13 +20,15 @@ public:
 class VOXELGRAPHCORE_API FVoxelTransformRef
 {
 public:
-	static FVoxelTransformRef Identity()
+	FORCEINLINE static FVoxelTransformRef Identity()
 	{
 		return {};
 	}
 	static FVoxelTransformRef Make(const AActor& Actor);
 	static FVoxelTransformRef Make(const USceneComponent& Component);
 	static FVoxelTransformRef Make(const TSharedRef<const IVoxelTransformProvider>& Provider);
+
+	static void NotifyTransformChanged(const USceneComponent& Component);
 
 public:
 	FVoxelTransformRef() = default;

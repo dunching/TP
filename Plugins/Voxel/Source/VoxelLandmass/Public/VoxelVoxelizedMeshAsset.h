@@ -18,10 +18,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Voxel", AssetRegistrySearchable)
 	TSoftObjectPtr<UStaticMesh> Mesh;
 
-	// BaseVoxelSize, set in the project settings, is multiplied by this
-	// to get the final voxel size used during voxelization
 	UPROPERTY(EditAnywhere, Category = "Voxel", meta = (ClampMin = 0.00001))
-	float VoxelSizeMultiplier = 1.f;
+	float VoxelSize = 20.f;
 
 	// Relative to the size
 	// Bigger = higher memory usage but more accurate when using smooth min
@@ -31,7 +29,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Voxel", meta = (ShowOnlyInnerProperties))
 	FVoxelMeshVoxelizerSettings VoxelizerSettings;
 
-	float GetVoxelSize() const;
 	TSharedPtr<const FVoxelVoxelizedMeshData> GetMeshData() const;
 
 public:

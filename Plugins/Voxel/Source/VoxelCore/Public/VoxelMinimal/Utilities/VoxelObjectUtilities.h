@@ -41,8 +41,12 @@ template<typename Class>
 FORCEINLINE FName GetClassFName()
 {
 	// StaticClass is a few instructions for FProperties
-	static const FName Name = Class::StaticClass()->GetFName();
-	return Name;
+	static FName StaticName;
+	if (StaticName.IsNone())
+	{
+		StaticName = Class::StaticClass()->GetFName();
+	}
+	return StaticName;
 }
 template<typename Class>
 FORCEINLINE FString GetClassName()
@@ -53,20 +57,29 @@ FORCEINLINE FString GetClassName()
 template<typename Enum>
 FORCEINLINE UEnum* StaticEnumFast()
 {
-	static UEnum* Value = StaticEnum<typename TDecay<Enum>::Type>();
-	return Value;
+	VOXEL_STATIC_HELPER(UEnum*)
+	{
+		StaticValue = StaticEnum<typename TDecay<Enum>::Type>();
+	}
+	return StaticValue;
 }
 template<typename Struct>
 FORCEINLINE UScriptStruct* StaticStructFast()
 {
-	static UScriptStruct* Value = TBaseStructure<typename TDecay<Struct>::Type>::Get();
-	return Value;
+	VOXEL_STATIC_HELPER(UScriptStruct*)
+	{
+		StaticValue = TBaseStructure<typename TDecay<Struct>::Type>::Get();
+	}
+	return StaticValue;
 }
 template<typename Class>
 FORCEINLINE UClass* StaticClassFast()
 {
-	static UClass* Value = Class::StaticClass();
-	return Value;
+	VOXEL_STATIC_HELPER(UClass*)
+	{
+		StaticValue = Class::StaticClass();
+	}
+	return StaticValue;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -225,6 +238,7 @@ public:
 
 public:
 	static uint32 HashProperty(const FProperty& Property, const void* DataPtr);
+	static void DestroyStruct_Safe(const UScriptStruct* Struct, void* StructMemory);
 	static void AddStructReferencedObjects(FReferenceCollector& Collector, const UScriptStruct* Struct, void* StructMemory);
 
 	template<typename T>
@@ -389,7 +403,7 @@ void ForEachObjectOfClass_Copy(LambdaType&& Operation, bool bIncludeDerivedClass
 template<typename T = void, typename ArrayType = typename TChooseClass<std::is_same_v<T, void>, UClass*, TSubclassOf<T>>::Result>
 TArray<ArrayType> GetDerivedClasses(const UClass* Class = T::StaticClass(), bool bRecursive = true, bool bRemoveDeprecated = true)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	TArray<UClass*> Result;
 	GetDerivedClasses(Class, Result, bRecursive);
@@ -419,6 +433,36 @@ VOXELCORE_API TArray<UFunction*> GetClassFunctions(const UClass* Class, bool bIn
 #if WITH_EDITOR
 VOXELCORE_API FString GetStringMetaDataHierarchical(const UStruct* Struct, FName Name);
 #endif
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+class VOXELCORE_API FVoxelNullCheckReferenceCollector : public FReferenceCollector
+{
+public:
+	FReferenceCollector& ReferenceCollector;
+
+	explicit FVoxelNullCheckReferenceCollector(FReferenceCollector& ReferenceCollector)
+		: ReferenceCollector(ReferenceCollector)
+	{
+	}
+
+	virtual void AddStableReference(UObject** Object) override;
+	virtual void AddStableReferenceArray(TArray<UObject*>* Objects) override;
+	virtual void AddStableReferenceSet(TSet<UObject*>* Objects) override;
+	virtual bool NeedsPropertyReferencer() const override;
+	virtual bool IsIgnoringArchetypeRef() const override;
+	virtual bool IsIgnoringTransient() const override;
+	virtual void AllowEliminatingReferences(bool bAllow) override;
+	virtual void SetSerializedProperty(FProperty* InProperty) override;
+	virtual FProperty* GetSerializedProperty() const override;
+	virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference) override;
+	virtual void SetIsProcessingNativeReferences(bool bIsNative) override;
+	virtual bool IsProcessingNativeReferences() const override;
+	virtual bool NeedsInitialReferences() const override;
+	virtual void HandleObjectReference(UObject*& InObject, const UObject* InReferencingObject, const FProperty* InReferencingProperty) override;
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////

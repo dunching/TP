@@ -2,17 +2,17 @@
 
 #include "SVoxelGraphPreview.h"
 #include "VoxelGraph.h"
+#include "VoxelRuntimeGraph.h"
 #include "VoxelParameterValues.h"
 #include "Preview/VoxelPreviewNode.h"
+#include "Preview/VoxelPreviewHandler.h"
 #include "Widgets/SVoxelGraphPreviewImage.h"
-#include "Widgets/SVoxelGraphDepthSlider.h"
 #include "Widgets/SVoxelGraphPreviewStats.h"
 #include "Widgets/SVoxelGraphPreviewRuler.h"
 #include "Widgets/SVoxelGraphPreviewScale.h"
+#include "Widgets/SVoxelGraphPreviewDepthSlider.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SPreview::Construct(const FArguments& Args)
+void SVoxelGraphPreview::Construct(const FArguments& Args)
 {
 	WeakGraph = Args._Graph;
 	check(WeakGraph.IsValid());
@@ -216,7 +216,7 @@ void SPreview::Construct(const FArguments& Args)
 
 	TSharedPtr<SImage> Image;
 	TSharedPtr<SScaleBox> PreviewScaleBox;
-	TSharedPtr<SPreviewScale> PreviewScale;
+	TSharedPtr<SVoxelGraphPreviewScale> PreviewScale;
 
 	ChildSlot
 	[
@@ -233,7 +233,7 @@ void SPreview::Construct(const FArguments& Args)
 					SNew(SOverlay)
 					+ SOverlay::Slot()
 					[
-						SAssignNew(PreviewImage, SPreviewImage)
+						SAssignNew(PreviewImage, SVoxelGraphPreviewImage)
 						.Width_Lambda([this]() -> float
 						{
 							const UVoxelGraph* Graph = WeakGraph.Get();
@@ -270,7 +270,7 @@ void SPreview::Construct(const FArguments& Args)
 						SNew(SBox)
 						.Visibility(EVisibility::HitTestInvisible)
 						[
-							SAssignNew(PreviewScale, SPreviewScale)
+							SAssignNew(PreviewScale, SVoxelGraphPreviewScale)
 							.Resolution_Lambda([this]
 							{
 								const UVoxelGraph* Graph = WeakGraph.Get();
@@ -294,7 +294,7 @@ void SPreview::Construct(const FArguments& Args)
 						SNew(SBox)
 						.Visibility(EVisibility::HitTestInvisible)
 						[
-							SAssignNew(PreviewRuler, SPreviewRuler)
+							SAssignNew(PreviewRuler, SVoxelGraphPreviewRuler)
 							.SizeWidget_Lambda([PreviewScaleBox]
 							{
 								return PreviewScaleBox;
@@ -407,7 +407,7 @@ void SPreview::Construct(const FArguments& Args)
 				.VAlign(VAlign_Fill)
 				.WidthOverride(150.f)
 				[
-					SAssignNew(DepthSlider, SDepthSlider)
+					SAssignNew(DepthSlider, SVoxelGraphPreviewDepthSlider)
 					.ValueText(INVTEXT("Depth"))
 					.ToolTipText(INVTEXT("Depth along the axis being previewed"))
 					.Value(WeakGraph->Preview.GetAxisLocation())
@@ -434,7 +434,7 @@ void SPreview::Construct(const FArguments& Args)
 
 	PreviewScale->SizeWidget = PreviewScaleBox;
 
-	PreviewStats = SNew(SPreviewStats);
+	PreviewStats = SNew(SVoxelGraphPreviewStats);
 
 	Image->SetOnMouseMove(FPointerEventHandler::CreateLambda([this](const FGeometry&, const FPointerEvent) -> FReply
 	{
@@ -456,12 +456,12 @@ void SPreview::Construct(const FArguments& Args)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedRef<SWidget> SPreview::GetPreviewStats() const
+TSharedRef<SWidget> SVoxelGraphPreview::GetPreviewStats() const
 {
 	return PreviewStats.ToSharedRef();
 }
 
-void SPreview::AddReferencedObjects(FReferenceCollector& Collector) const
+void SVoxelGraphPreview::AddReferencedObjects(FReferenceCollector& Collector) const
 {
 	if (PreviewHandler)
 	{
@@ -473,8 +473,10 @@ void SPreview::AddReferencedObjects(FReferenceCollector& Collector) const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void SPreview::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+void SVoxelGraphPreview::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 
 	TransformProvider->Transform = GetPixelToWorld();
@@ -499,7 +501,7 @@ void SPreview::Tick(const FGeometry& AllottedGeometry, const double InCurrentTim
 	}
 }
 
-FReply SPreview::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+FReply SVoxelGraphPreview::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
 	if (MouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
 	{
@@ -518,7 +520,7 @@ FReply SPreview::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEv
 	return SCompoundWidget::OnMouseButtonDown(MyGeometry, MouseEvent);
 }
 
-FReply SPreview::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+FReply SVoxelGraphPreview::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
 	if (MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
@@ -566,7 +568,7 @@ FReply SPreview::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEven
 	return SCompoundWidget::OnMouseButtonUp(MyGeometry, MouseEvent);
 }
 
-FReply SPreview::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+FReply SVoxelGraphPreview::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
 	const bool bIsMouseButtonDown =
 		MouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton) ||
@@ -614,7 +616,7 @@ FReply SPreview::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& M
 	return FReply::Handled();
 }
 
-FReply SPreview::OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+FReply SVoxelGraphPreview::OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
 	const double Delta = MouseEvent.GetWheelDelta();
 	if (FMath::IsNearlyZero(Delta))
@@ -640,7 +642,7 @@ FReply SPreview::OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void SPreview::Update()
+void SVoxelGraphPreview::Update()
 {
 	VOXEL_FUNCTION_COUNTER();
 
@@ -649,30 +651,19 @@ void SPreview::Update()
 		Message = {};
 		return;
 	}
+	const FVoxelRuntimeGraphData& RuntimeData = WeakGraph->GetRuntimeGraph().GetData();
 
-	const FVoxelCompiledNode* PreviewNode = nullptr;
-	for (const auto& It : WeakGraph->CompiledGraph.Nodes)
-	{
-		if (It.Value.Type == EVoxelCompiledNodeType::Struct &&
-			It.Value.Struct.IsA<FVoxelPreviewNode>())
-		{
-			ensure(!PreviewNode);
-			PreviewNode = &It.Value;
-		}
-	}
-
-	if (!PreviewNode ||
-		!ensureVoxelSlow(PreviewNode->Struct.Get<FVoxelPreviewNode>().PreviewHandler.IsValid()))
+	if (!RuntimeData.PreviewHandler.IsValid())
 	{
 		PreviewHandler.Reset();
 
-		Message = "Press D to preview the selected node";
+		Message = "Press R to preview the selected node";
 		return;
 	}
 
 	Message = {};
 
-	const TSharedRef<FVoxelPreviewHandler> NewPreviewHandler = PreviewNode->Struct.Get<FVoxelPreviewNode>().PreviewHandler.MakeSharedCopy();
+	const TSharedRef<FVoxelPreviewHandler> NewPreviewHandler = RuntimeData.PreviewHandler.Get<FVoxelPreviewHandler>().MakeSharedCopy();
 
 	if (PreviewHandler &&
 		PreviewHandler->PreviewSize != WeakGraph->Preview.Resolution)
@@ -681,7 +672,7 @@ void SPreview::Update()
 	}
 
 	FVoxelGraphPinRef PinRef;
-	PinRef.Node = PreviewNode->Ref;
+	PinRef.Node = FVoxelGraphNodeRef(WeakGraph, FVoxelNodeNames::PreviewNodeId);
 	PinRef.PinName = VOXEL_PIN_NAME(FVoxelPreviewNode, ValuePin);
 	if (PreviewHandler &&
 		PreviewHandler->PinRef != PinRef)
@@ -702,12 +693,6 @@ void SPreview::Update()
 
 	PreviewHandler = NewPreviewHandler;
 
-	const FVoxelCompiledPin* Pin = PreviewNode->InputPins.Find(VOXEL_PIN_NAME(FVoxelPreviewNode, ValuePin));
-	if (!ensure(Pin))
-	{
-		return;
-	}
-
 	FVoxelRuntimeInfoBase RuntimeInfoBase = FVoxelRuntimeInfoBase::MakePreview();
 	RuntimeInfoBase.LocalToWorld = TransformRef;
 	RuntimeInfoBase.bParallelTasks = true;
@@ -719,7 +704,7 @@ void SPreview::Update()
 	PreviewHandler->PreviewSize = WeakGraph->Preview.Resolution;
 	PreviewHandler->PinRef = PinRef;
 	PreviewHandler->QueryContext = QueryContext;
-	PreviewHandler->Create(Pin->Type);;
+	PreviewHandler->Create(RuntimeData.PreviewedPinType);
 
 	PreviewStats->Rows.Reset();
 	PreviewHandler->BuildStats([&](
@@ -727,7 +712,7 @@ void SPreview::Update()
 		const FString& Tooltip,
 		const TFunction<FString()>& GetValue)
 	{
-		const TSharedRef<FStatsRow> StatsRow = MakeVoxelShared<FStatsRow>();
+		const TSharedRef<SVoxelGraphPreviewStats::FRow> StatsRow = MakeVoxelShared<SVoxelGraphPreviewStats::FRow>();
 		StatsRow->Header = FText::FromString(Name);
 		StatsRow->Tooltip = FText::FromString(Tooltip);
 		StatsRow->Value = MakeAttributeLambda([=]
@@ -742,7 +727,7 @@ void SPreview::Update()
 	UpdateStats();
 }
 
-void SPreview::UpdateStats()
+void SVoxelGraphPreview::UpdateStats()
 {
 	if (!PreviewHandler)
 	{
@@ -770,7 +755,7 @@ void SPreview::UpdateStats()
 	PreviewHandler->UpdateStats(LocalMousePosition);
 }
 
-FMatrix SPreview::GetPixelToWorld() const
+FMatrix SVoxelGraphPreview::GetPixelToWorld() const
 {
 	const UVoxelGraph* Graph = WeakGraph.Get();
 	if (!ensure(Graph))
@@ -801,5 +786,3 @@ FMatrix SPreview::GetPixelToWorld() const
 		FRotationMatrix(Matrix.Rotator()) *
 		FTranslationMatrix(Graph->Preview.Position);
 }
-
-END_VOXEL_NAMESPACE(Graph)

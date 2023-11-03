@@ -7,13 +7,9 @@
 #include "VoxelGraphToolkit.generated.h"
 
 class SVoxelGraphSearch;
-class IMessageLogListing;
-
-VOXEL_FWD_NAMESPACE_CLASS(SVoxelGraphMembers, Graph, SMembers);
-VOXEL_FWD_NAMESPACE_CLASS(SVoxelGraphPreview, Graph, SPreview);
-VOXEL_FWD_NAMESPACE_CLASS(SVoxelGraphPreviewStats, Graph, SPreviewStats);
-
-extern VOXELGRAPHEDITOR_API bool GIsVoxelGraphCompiling;
+class SVoxelGraphMembers;
+class SVoxelGraphPreview;
+class SVoxelGraphMessages;
 
 USTRUCT()
 struct VOXELGRAPHEDITOR_API FVoxelGraphToolkit : public FVoxelGraphToolkitBase
@@ -27,7 +23,7 @@ struct VOXELGRAPHEDITOR_API FVoxelGraphToolkit : public FVoxelGraphToolkitBase
 	bool bIsMacroLibrary = false;
 
 public:
-	TObjectPtr<UEdGraph> CreateGraph(UVoxelGraph* Owner);
+	void FixupGraph(UVoxelGraph* Graph);
 
 public:
 	TSharedRef<SVoxelGraphMembers> GetGraphMembers() const
@@ -43,7 +39,7 @@ public:
 		NodesToReconstruct.Add(Node);
 	}
 
-	//~ Begin FVoxelGraphToolkit Interface
+	//~ Begin FVoxelToolkit Interface
 	virtual void Initialize() override;
 	virtual void Tick() override;
 	virtual void BuildMenu(FMenuBarBuilder& MenuBarBuilder) override;
@@ -63,10 +59,9 @@ public:
 	virtual void SaveTabState(const FVoxelEditedDocumentInfo& EditedDocumentInfo) override;
 	virtual void ClearSavedDocuments() override;
 
-	virtual TArray<UEdGraph*> GetAllEdGraphs() const override;
-
+	virtual void PostUndo() override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	//~ End FVoxelGraphToolkit Interface
+	//~ End FVoxelToolkit Interface
 
 	void FlushNodesToReconstruct();
 
@@ -76,11 +71,12 @@ public:
 	void ToggleSearchTab() const;
 	void ToggleGlobalSearchWindow() const;
 	void ReconstructAllNodes() const;
+	void ToggleDebug() const;
 	void TogglePreview() const;
 	void UpdateDetailsView(UObject* Object);
 	void SelectMember(UObject* Object, bool bRequestRename, bool bRefreshMembers) const;
 	void SelectParameter(UVoxelGraph* Graph, FGuid Guid, bool bRequestRename, bool bRefreshMembers);
-	void UpdateParameterGraph(UVoxelGraph* Graph);
+	void UpdateParameterGraph(const UVoxelGraph* Graph);
 	void RefreshPreviewSettings() const;
 
 public:
@@ -99,14 +95,13 @@ private:
 	TSharedPtr<SSplitter> ParametersBoxSplitter;
 	TSharedPtr<SBox> ParameterGraphEditorBox;
 	TSharedPtr<IDetailsView> PreviewDetailsView;
-	TSharedPtr<SWidget> MessagesWidget;
-	TSharedPtr<IMessageLogListing> MessagesListing;
 	TSharedPtr<SVoxelGraphPreview> GraphPreview;
+	TSharedPtr<SVoxelGraphMessages> GraphMessages;
 	TSharedPtr<SWidget> GraphPreviewStats;
 	TSharedPtr<SVoxelGraphMembers> GraphMembers;
 	TSharedPtr<SVoxelGraphSearch> SearchWidget;
 
-	TSet<FString> MessageListingMessages;
+	bool bMessageUpdateQueued = false;
 	TSet<TWeakObjectPtr<UEdGraphNode>> NodesToReconstruct;
 	TSet<TWeakObjectPtr<UVoxelGraph>> GraphsToCompile;
 };

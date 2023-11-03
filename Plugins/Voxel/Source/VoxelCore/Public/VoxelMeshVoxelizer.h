@@ -5,7 +5,8 @@
 #include "VoxelMinimal.h"
 #include "VoxelMeshVoxelizerLibrary.h"
 
-BEGIN_VOXEL_NAMESPACE(MeshVoxelizer)
+namespace Voxel::MeshVoxelizer
+{
 
 FORCEINLINE void GetTriangleBarycentrics(
 	const FVector3f& P,
@@ -208,4 +209,4 @@ VOXELCORE_API void Voxelize(
 	TVoxelArray<FVector3f>* VoxelNormals = nullptr,
 	int32* OutNumLeaks = nullptr);
 
-END_VOXEL_NAMESPACE(MeshVoxelizer)
+}

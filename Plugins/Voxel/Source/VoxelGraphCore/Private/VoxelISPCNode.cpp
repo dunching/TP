@@ -4,7 +4,6 @@
 #include "VoxelISPCNodeImpl.h"
 #include "VoxelBuffer.h"
 #include "VoxelQueryCache.h"
-#include "VoxelGraphNodeStatInterface.h"
 
 void FVoxelISPCNode::PreCompile()
 {

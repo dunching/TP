@@ -5,154 +5,6 @@
 #include "VoxelPositionQueryParameter.h"
 #include "VoxelBufferUtilitiesImpl.ispc.generated.h"
 
-void FVoxelBufferUtilities::WritePositions2D(
-	FVoxelFloatBufferStorage& OutPositionX,
-	FVoxelFloatBufferStorage& OutPositionY,
-	const FVector2f& Start,
-	const float Step,
-	const FIntPoint& Size)
-{
-	VOXEL_FUNCTION_COUNTER_NUM(Size.X * Size.Y, 1024);
-
-	ensure(Size % 2 == 0);
-	ensure(OutPositionX.Num() == Size.X * Size.Y);
-	ensure(OutPositionY.Num() == Size.X * Size.Y);
-
-	if (!ensure(Size.X < 256) ||
-		!ensure(Size.Y < 256))
-	{
-		return;
-	}
-
-	const FIntPoint BlockSize = Size / 2;
-
-	ForeachVoxelBufferChunk(Size.X * Size.Y, [&](const FVoxelBufferIterator& Iterator)
-	{
-		ispc::VoxelBufferUtilities_WritePositions2D(
-			OutPositionX.GetData(Iterator),
-			OutPositionY.GetData(Iterator),
-			Iterator.GetIndex(),
-			Iterator.Num(),
-			BlockSize.X,
-			Start.X,
-			Start.Y,
-			Step);
-	});
-}
-
-void FVoxelBufferUtilities::WritePositions3D(
-	FVoxelFloatBufferStorage& OutPositionX,
-	FVoxelFloatBufferStorage& OutPositionY,
-	FVoxelFloatBufferStorage& OutPositionZ,
-	const FVector3f& Start,
-	const float Step,
-	const FIntVector& Size)
-{
-	VOXEL_FUNCTION_COUNTER_NUM(Size.X * Size.Y * Size.Z, 1024);
-
-	ensure(Size % 2 == 0);
-	ensure(OutPositionX.Num() == Size.X * Size.Y * Size.Z);
-	ensure(OutPositionY.Num() == Size.X * Size.Y * Size.Z);
-	ensure(OutPositionZ.Num() == Size.X * Size.Y * Size.Z);
-
-	if (!ensure(Size.X < 256) ||
-		!ensure(Size.Y < 256) ||
-		!ensure(Size.Z < 256))
-	{
-		return;
-	}
-
-	const FIntVector BlockSize = Size / 2;
-
-	ForeachVoxelBufferChunk(Size.X * Size.Y * Size.Z, [&](const FVoxelBufferIterator& Iterator)
-	{
-		ispc::VoxelBufferUtilities_WritePositions3D(
-			OutPositionX.GetData(Iterator),
-			OutPositionY.GetData(Iterator),
-			OutPositionZ.GetData(Iterator),
-			Iterator.GetIndex(),
-			Iterator.Num(),
-			BlockSize.X,
-			BlockSize.Y,
-			Start.X,
-			Start.Y,
-			Start.Z,
-			Step);
-	});
-}
-
-void FVoxelBufferUtilities::WritePositions_Unpacked(
-	FVoxelFloatBufferStorage& OutPositionX,
-	FVoxelFloatBufferStorage& OutPositionY,
-	FVoxelFloatBufferStorage& OutPositionZ,
-	const FVector3f& Start,
-	const float Step,
-	const FIntVector& Size)
-{
-	VOXEL_FUNCTION_COUNTER_NUM(Size.X * Size.Y * Size.Z, 1024);
-
-	ensure(Size % 2 == 0);
-	ensure(OutPositionX.Num() == Size.X * Size.Y * Size.Z);
-	ensure(OutPositionY.Num() == Size.X * Size.Y * Size.Z);
-	ensure(OutPositionZ.Num() == Size.X * Size.Y * Size.Z);
-
-	int32 Index = 0;
-	for (int32 Z = 0; Z < Size.Z; Z++)
-	{
-		for (int32 Y = 0; Y < Size.Y; Y++)
-		{
-			for (int32 X = 0; X < Size.X; X++)
-			{
-				checkVoxelSlow(Index == FVoxelUtilities::Get3DIndex<int32>(Size, X, Y, Z));
-
-				OutPositionX[Index] = Start.X + X * Step;
-				OutPositionY[Index] = Start.Y + Y * Step;
-				OutPositionZ[Index] = Start.Z + Z * Step;
-
-				Index++;
-			}
-		}
-	}
-}
-
-void FVoxelBufferUtilities::WriteIntPositions_Unpacked(
-	FVoxelInt32BufferStorage& OutPositionX,
-	FVoxelInt32BufferStorage& OutPositionY,
-	FVoxelInt32BufferStorage& OutPositionZ,
-	const FIntVector& Start,
-	const int32 Step,
-	const FIntVector& Size)
-{
-	VOXEL_FUNCTION_COUNTER_NUM(Size.X * Size.Y * Size.Z, 1024);
-
-	ensure(Size % 2 == 0);
-	ensure(OutPositionX.Num() == Size.X * Size.Y * Size.Z);
-	ensure(OutPositionY.Num() == Size.X * Size.Y * Size.Z);
-	ensure(OutPositionZ.Num() == Size.X * Size.Y * Size.Z);
-
-	int32 Index = 0;
-	for (int32 Z = 0; Z < Size.Z; Z++)
-	{
-		for (int32 Y = 0; Y < Size.Y; Y++)
-		{
-			for (int32 X = 0; X < Size.X; X++)
-			{
-				checkVoxelSlow(Index == FVoxelUtilities::Get3DIndex<int32>(Size, X, Y, Z));
-
-				OutPositionX[Index] = Start.X + X * Step;
-				OutPositionY[Index] = Start.Y + Y * Step;
-				OutPositionZ[Index] = Start.Z + Z * Step;
-
-				Index++;
-			}
-		}
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
 FVoxelVectorBuffer FVoxelBufferUtilities::ApplyTransform(const FVoxelVectorBuffer& Buffer, const FTransform& Transform)
 {
 	if (Transform.Equals(FTransform::Identity))
@@ -277,8 +129,51 @@ FVoxelVectorBuffer FVoxelBufferUtilities::ApplyTransform(
 FVoxelVectorBuffer FVoxelBufferUtilities::ApplyTransform(const FVoxelVectorBuffer& Buffer, const FMatrix& Matrix)
 {
 	const FTransform Transform(Matrix);
-	ensure(Transform.ToMatrixWithScale().Equals(Matrix));
-	return ApplyTransform(Buffer, Transform);
+	if (Transform.ToMatrixWithScale().Equals(Matrix))
+	{
+		return ApplyTransform(Buffer, Transform);
+	}
+
+	ensure(!Matrix.GetScaleVector().IsUniform());
+	VOXEL_SCOPE_COUNTER_NUM("Non-Uniform Scale", Buffer.Num(), 1024);
+
+	const FVector Translation = Matrix.GetOrigin();
+	const FMatrix BaseMatrix = Matrix.RemoveTranslation();
+	ensure(Matrix.Equals(BaseMatrix * FTranslationMatrix(Translation)));
+
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[0][3], 0));
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[1][3], 0));
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[2][3], 0));
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[3][0], 0));
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[3][1], 0));
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[3][2], 0));
+	ensure(FMath::IsNearlyEqual(BaseMatrix.M[3][3], 1));
+
+	FVoxelFloatBufferStorage ResultX; ResultX.Allocate(Buffer.Num());
+	FVoxelFloatBufferStorage ResultY; ResultY.Allocate(Buffer.Num());
+	FVoxelFloatBufferStorage ResultZ; ResultZ.Allocate(Buffer.Num());
+
+	ForeachVoxelBufferChunk(Buffer.Num(), [&](const FVoxelBufferIterator& Iterator)
+	{
+		ispc::VoxelBufferUtilities_ApplyTransform_Matrix(
+			Buffer.X.GetData(Iterator), Buffer.X.IsConstant(),
+			Buffer.Y.GetData(Iterator), Buffer.Y.IsConstant(),
+			Buffer.Z.GetData(Iterator), Buffer.Z.IsConstant(),
+			Iterator.Num(),
+			GetISPCValue(FVector3f(Translation)),
+			GetISPCValue(FVector3f(BaseMatrix.M[0][0], BaseMatrix.M[0][1], BaseMatrix.M[0][2])),
+			GetISPCValue(FVector3f(BaseMatrix.M[1][0], BaseMatrix.M[1][1], BaseMatrix.M[1][2])),
+			GetISPCValue(FVector3f(BaseMatrix.M[2][0], BaseMatrix.M[2][1], BaseMatrix.M[2][2])),
+			ResultX.GetData(Iterator),
+			ResultY.GetData(Iterator),
+			ResultZ.GetData(Iterator));
+	});
+
+	FVoxelVectorBuffer Result;
+	Result.X = FVoxelFloatBuffer::Make(ResultX);
+	Result.Y = FVoxelFloatBuffer::Make(ResultY);
+	Result.Z = FVoxelFloatBuffer::Make(ResultZ);
+	return Result;
 }
 
 FVoxelFloatBuffer FVoxelBufferUtilities::TransformDistance(const FVoxelFloatBuffer& Distance, const FMatrix& Transform)
@@ -532,24 +427,6 @@ FVoxelSeedBuffer FVoxelBufferUtilities::PointIdToSeed(const FVoxelPointIdBuffer&
 	return FVoxelSeedBuffer::Make(Result);
 }
 
-FVoxelInt32Buffer FVoxelBufferUtilities::BoolToInt32(const FVoxelBoolBuffer& Buffer)
-{
-	VOXEL_FUNCTION_COUNTER_NUM(Buffer.Num(), 1024);
-
-	FVoxelInt32BufferStorage Result;
-	Result.Allocate(Buffer.Num());
-
-	ForeachVoxelBufferChunk(Buffer.Num(), [&](const FVoxelBufferIterator& Iterator)
-	{
-		ispc::VoxelBufferUtilities_BoolToInt32(
-			Buffer.GetData(Iterator),
-			Result.GetData(Iterator),
-			Iterator.Num());
-	});
-
-	return FVoxelInt32Buffer::Make(Result);
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -608,6 +485,37 @@ FVoxelFloatBuffer FVoxelBufferUtilities::Multiply(const FVoxelFloatBuffer& A, co
 	return FVoxelFloatBuffer::Make(Result);
 }
 
+FVoxelBoolBuffer FVoxelBufferUtilities::Less(const FVoxelFloatBuffer& A, const FVoxelFloatBuffer& B)
+{
+	const FVoxelBufferAccessor BufferAccessor(A, B);
+	if (!ensure(BufferAccessor.IsValid()))
+	{
+		return {};
+	}
+
+	VOXEL_FUNCTION_COUNTER_NUM(BufferAccessor.Num(), 1024);
+
+	FVoxelBoolBufferStorage Result;
+	Result.Allocate(BufferAccessor.Num());
+
+	ForeachVoxelBufferChunk(BufferAccessor.Num(), [&](const FVoxelBufferIterator& Iterator)
+	{
+		ispc::VoxelBufferUtilities_Less(
+			A.GetData(Iterator),
+			A.IsConstant(),
+			B.GetData(Iterator),
+			B.IsConstant(),
+			Result.GetData(Iterator),
+			Iterator.Num());
+	});
+
+	return FVoxelBoolBuffer::Make(Result);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 FVoxelVectorBuffer FVoxelBufferUtilities::Add(const FVoxelVectorBuffer& A, const FVoxelVectorBuffer& B)
 {
 	FVoxelVectorBuffer Result;
@@ -625,6 +533,70 @@ FVoxelVectorBuffer FVoxelBufferUtilities::Multiply(const FVoxelVectorBuffer& A, 
 	Result.Z = Multiply(A.Z, B.Z);
 	return Result;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+FVoxelFloatBuffer FVoxelBufferUtilities::Lerp(const FVoxelFloatBuffer& A, const FVoxelFloatBuffer& B, const FVoxelFloatBuffer& Alpha)
+{
+	const FVoxelBufferAccessor BufferAccessor(A, B, Alpha);
+	if (!ensure(BufferAccessor.IsValid()))
+	{
+		return {};
+	}
+
+	VOXEL_FUNCTION_COUNTER_NUM(BufferAccessor.Num(), 1024);
+
+	FVoxelFloatBufferStorage Result;
+	Result.Allocate(BufferAccessor.Num());
+
+	ForeachVoxelBufferChunk(BufferAccessor.Num(), [&](const FVoxelBufferIterator& Iterator)
+	{
+		ispc::VoxelBufferUtilities_Alpha(
+			A.GetData(Iterator),
+			A.IsConstant(),
+			B.GetData(Iterator),
+			B.IsConstant(),
+			Alpha.GetData(Iterator),
+			Alpha.IsConstant(),
+			Result.GetData(Iterator),
+			Iterator.Num());
+	});
+
+	return FVoxelFloatBuffer::Make(Result);
+}
+
+FVoxelVector2DBuffer FVoxelBufferUtilities::Lerp(const FVoxelVector2DBuffer& A, const FVoxelVector2DBuffer& B, const FVoxelFloatBuffer& Alpha)
+{
+	FVoxelVector2DBuffer Result;
+	Result.X = Lerp(A.X, B.X, Alpha);
+	Result.Y = Lerp(A.Y, B.Y, Alpha);
+	return Result;
+}
+
+FVoxelVectorBuffer FVoxelBufferUtilities::Lerp(const FVoxelVectorBuffer& A, const FVoxelVectorBuffer& B, const FVoxelFloatBuffer& Alpha)
+{
+	FVoxelVectorBuffer Result;
+	Result.X = Lerp(A.X, B.X, Alpha);
+	Result.Y = Lerp(A.Y, B.Y, Alpha);
+	Result.Z = Lerp(A.Z, B.Z, Alpha);
+	return Result;
+}
+
+FVoxelLinearColorBuffer FVoxelBufferUtilities::Lerp(const FVoxelLinearColorBuffer& A, const FVoxelLinearColorBuffer& B, const FVoxelFloatBuffer& Alpha)
+{
+	FVoxelLinearColorBuffer Result;
+	Result.R = Lerp(A.R, B.R, Alpha);
+	Result.G = Lerp(A.G, B.G, Alpha);
+	Result.B = Lerp(A.B, B.B, Alpha);
+	Result.A = Lerp(A.A, B.A, Alpha);
+	return Result;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 FVoxelQuaternionBuffer FVoxelBufferUtilities::Combine(const FVoxelQuaternionBuffer& A, const FVoxelQuaternionBuffer& B)
 {
@@ -747,6 +719,259 @@ void FVoxelBufferUtilities::MakePalette(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+void FVoxelBufferUtilities::Select(
+	FVoxelTerminalBuffer& OutBuffer,
+	const FVoxelBuffer& Indices,
+	const TConstVoxelArrayView<const FVoxelTerminalBuffer*> Buffers)
+{
+	VOXEL_SCOPE_COUNTER_FORMAT_COND(Indices.Num() > 1024, "Select Num=%d", Indices.Num());
+
+	if (!ensure(Indices.Num() >= 2) ||
+		!ensure(Buffers.Num() > 0))
+	{
+		return;
+	}
+
+	const FVoxelPinType InnerType = OutBuffer.GetInnerType();
+	for (const FVoxelTerminalBuffer* Buffer : Buffers)
+	{
+		if (!ensure(Buffer->GetInnerType() == InnerType) ||
+			!ensure(Buffer->Num() == 1 || Buffer->Num() == Indices.Num()))
+		{
+			return;
+		}
+	}
+
+	if (OutBuffer.IsA<FVoxelSimpleTerminalBuffer>())
+	{
+		FVoxelSimpleTerminalBuffer& OutSimpleBuffer = CastChecked<FVoxelSimpleTerminalBuffer>(OutBuffer);
+		const TConstVoxelArrayView<const FVoxelSimpleTerminalBuffer*> SimpleBuffers = ReinterpretCastVoxelArrayView<const FVoxelSimpleTerminalBuffer*>(Buffers);
+
+		const TSharedRef<FVoxelBufferStorage> Storage = OutSimpleBuffer.MakeNewStorage();
+		Storage->Allocate(Indices.Num());
+
+		if (Indices.IsA<FVoxelBoolBuffer>())
+		{
+			ForeachVoxelBufferChunk(Indices.Num(), [&](const FVoxelBufferIterator& Iterator)
+			{
+				const TConstVoxelArrayView<bool> ConditionView = Indices.AsChecked<FVoxelBoolBuffer>().GetRawView_NotConstant(Iterator);
+
+				VOXEL_SWITCH_TERMINAL_TYPE_SIZE(Storage->GetTypeSize())
+				{
+					using Type = VOXEL_GET_TYPE(TypeInstance);
+
+					const TVoxelArrayView<Type> WriteView = Storage->As<Type>().GetRawView_NotConstant(Iterator);
+					checkVoxelSlow(Buffers.Num() == 2);
+
+					const TVoxelBufferStorage<Type>& FalseBuffer = SimpleBuffers[0]->GetStorage<Type>();
+					const TVoxelBufferStorage<Type>& TrueBuffer = SimpleBuffers[1]->GetStorage<Type>();
+
+					if (FalseBuffer.IsConstant() ||
+						TrueBuffer.IsConstant())
+					{
+						for (int32 Index = 0; Index < Iterator.Num(); Index++)
+						{
+							WriteView[Index] = ConditionView[Index] ? TrueBuffer[Index] : FalseBuffer[Index];
+						}
+					}
+					else
+					{
+						const TConstVoxelArrayView<Type> False = FalseBuffer.GetRawView_NotConstant(Iterator);
+						const TConstVoxelArrayView<Type> True = TrueBuffer.GetRawView_NotConstant(Iterator);
+
+						for (int32 Index = 0; Index < Iterator.Num(); Index++)
+						{
+							WriteView[Index] = ConditionView[Index] ? True[Index] : False[Index];
+						}
+					}
+				};
+			});
+		}
+		else if (Indices.IsA<FVoxelByteBuffer>())
+		{
+			ForeachVoxelBufferChunk(Indices.Num(), [&](const FVoxelBufferIterator& Iterator)
+			{
+				const TConstVoxelArrayView<uint8> IndicesView = Indices.AsChecked<FVoxelByteBuffer>().GetRawView_NotConstant(Iterator);
+
+				VOXEL_SWITCH_TERMINAL_TYPE_SIZE(Storage->GetTypeSize())
+				{
+					using Type = VOXEL_GET_TYPE(TypeInstance);
+					const TVoxelArrayView<Type> WriteView = Storage->As<Type>().GetRawView_NotConstant(Iterator);
+
+					for (int32 Index = 0; Index < Iterator.Num(); Index++)
+					{
+						const int32 BufferIndex = IndicesView[Index];
+
+						if (!SimpleBuffers.IsValidIndex(BufferIndex))
+						{
+							WriteView[Index] = 0;
+							continue;
+						}
+
+						const FVoxelSimpleTerminalBuffer* SimpleBuffer = SimpleBuffers[BufferIndex];
+						WriteView[Index] = SimpleBuffer->GetStorage<Type>()[Iterator.GetIndex() + Index];
+					}
+				};
+			});
+		}
+		else
+		{
+			ForeachVoxelBufferChunk(Indices.Num(), [&](const FVoxelBufferIterator& Iterator)
+			{
+				const TConstVoxelArrayView<int32> IndicesView = Indices.AsChecked<FVoxelInt32Buffer>().GetRawView_NotConstant(Iterator);
+
+				VOXEL_SWITCH_TERMINAL_TYPE_SIZE(Storage->GetTypeSize())
+				{
+					using Type = VOXEL_GET_TYPE(TypeInstance);
+					const TVoxelArrayView<Type> WriteView = Storage->As<Type>().GetRawView_NotConstant(Iterator);
+
+					for (int32 Index = 0; Index < Iterator.Num(); Index++)
+					{
+						const int32 BufferIndex = IndicesView[Index];
+
+						if (!SimpleBuffers.IsValidIndex(BufferIndex))
+						{
+							WriteView[Index] = 0;
+							continue;
+						}
+
+						const FVoxelSimpleTerminalBuffer* SimpleBuffer = SimpleBuffers[BufferIndex];
+						WriteView[Index] = SimpleBuffer->GetStorage<Type>()[Iterator.GetIndex() + Index];
+					}
+				};
+			});
+		}
+
+		OutSimpleBuffer.SetStorage(Storage);
+	}
+	else
+	{
+		FVoxelComplexTerminalBuffer& OutComplexBuffer = CastChecked<FVoxelComplexTerminalBuffer>(OutBuffer);
+		const TConstVoxelArrayView<const FVoxelComplexTerminalBuffer*> ComplexBuffers = ReinterpretCastVoxelArrayView<const FVoxelComplexTerminalBuffer*>(Buffers);
+
+		const TSharedRef<FVoxelComplexBufferStorage> Storage = OutComplexBuffer.MakeNewStorage();
+		Storage->Allocate(Indices.Num());
+
+		if (Indices.IsA<FVoxelBoolBuffer>())
+		{
+			check(Buffers.Num() == 2);
+
+			for (int32 Index = 0; Index < Indices.Num(); Index++)
+			{
+				ComplexBuffers[Indices.AsChecked<FVoxelBoolBuffer>()[Index] ? 1 : 0]->GetStorage()[Index].CopyTo((*Storage)[Index]);
+			}
+		}
+		else if (Indices.IsA<FVoxelByteBuffer>())
+		{
+			for (int32 Index = 0; Index < Indices.Num(); Index++)
+			{
+				const int32 BufferIndex = Indices.AsChecked<FVoxelByteBuffer>()[Index];
+				if (!ComplexBuffers.IsValidIndex(BufferIndex))
+				{
+					continue;
+				}
+
+				ComplexBuffers[BufferIndex]->GetStorage()[Index].CopyTo((*Storage)[Index]);
+			}
+		}
+		else
+		{
+			for (int32 Index = 0; Index < Indices.Num(); Index++)
+			{
+				const int32 BufferIndex = Indices.AsChecked<FVoxelInt32Buffer>()[Index];
+				if (!ComplexBuffers.IsValidIndex(BufferIndex))
+				{
+					continue;
+				}
+
+				ComplexBuffers[BufferIndex]->GetStorage()[Index].CopyTo((*Storage)[Index]);
+			}
+		}
+
+		OutComplexBuffer.SetStorage(Storage);
+	}
+}
+
+TSharedRef<const FVoxelBuffer> FVoxelBufferUtilities::Select(
+	const FVoxelPinType& InnerType,
+	const FVoxelBuffer& Indices,
+	const TConstVoxelArrayView<const FVoxelBuffer*> Buffers)
+{
+	check(Buffers.Num() > 0);
+
+	if (!ensure(
+		Indices.IsA<FVoxelBoolBuffer>() ||
+		Indices.IsA<FVoxelByteBuffer>() ||
+		Indices.IsA<FVoxelInt32Buffer>()))
+	{
+		return FVoxelBuffer::Make(InnerType);
+	}
+
+	if (Indices.IsA<FVoxelBoolBuffer>() &&
+		!ensure(Buffers.Num() == 2))
+	{
+		return FVoxelBuffer::Make(InnerType);
+	}
+
+	int32 Num = Indices.Num();
+	for (const FVoxelBuffer* Buffer : Buffers)
+	{
+		if (!ensure(Buffer->GetInnerType().CanBeCastedTo(InnerType)) ||
+			!ensure(FVoxelBufferAccessor::MergeNum(Num, *Buffer)))
+		{
+			return FVoxelBuffer::Make(InnerType);
+		}
+	}
+
+	VOXEL_FUNCTION_COUNTER_NUM(Num, 1024);
+
+	if (Indices.IsConstant())
+	{
+		if (Indices.IsA<FVoxelBoolBuffer>())
+		{
+			return Buffers[Indices.AsChecked<FVoxelBoolBuffer>().GetConstant() ? 1 : 0]->MakeSharedCopy();
+		}
+		else if (Indices.IsA<FVoxelByteBuffer>())
+		{
+			const int32 Index = Indices.AsChecked<FVoxelByteBuffer>().GetConstant();
+			if (!Buffers.IsValidIndex(Index))
+			{
+				return FVoxelBuffer::Make(InnerType);
+			}
+			return Buffers[Index]->MakeSharedCopy();
+		}
+		else
+		{
+			const int32 Index = Indices.AsChecked<FVoxelInt32Buffer>().GetConstant();
+			if (!Buffers.IsValidIndex(Index))
+			{
+				return FVoxelBuffer::Make(InnerType);
+			}
+			return Buffers[Index]->MakeSharedCopy();
+		}
+	}
+
+	const TSharedRef<FVoxelBuffer> NewBuffer = FVoxelBuffer::Make(InnerType);
+	for (int32 Index = 0; Index < NewBuffer->NumTerminalBuffers(); Index++)
+	{
+		TVoxelArray<const FVoxelTerminalBuffer*> TerminalBuffers;
+		TerminalBuffers.Reserve(Buffers.Num());
+
+		for (const FVoxelBuffer* Buffer : Buffers)
+		{
+			checkVoxelSlow(Buffer->NumTerminalBuffers() == NewBuffer->NumTerminalBuffers());
+			TerminalBuffers.Add(&Buffer->GetTerminalBuffer(Index));
+		}
+
+		Select(NewBuffer->GetTerminalBuffer(Index), Indices, TerminalBuffers);
+	}
+	return NewBuffer;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 void FVoxelBufferUtilities::Gather(
 	FVoxelTerminalBuffer& OutBuffer,
 	const FVoxelTerminalBuffer& Buffer,
@@ -839,7 +1064,7 @@ TSharedRef<const FVoxelBuffer> FVoxelBufferUtilities::Gather(
 {
 	VOXEL_FUNCTION_COUNTER_NUM(Indices.Num(), 1024);
 
-	const TSharedRef<FVoxelBuffer> NewBuffer = MakeSharedStruct<FVoxelBuffer>(Buffer.GetStruct());
+	const TSharedRef<FVoxelBuffer> NewBuffer = FVoxelBuffer::Make(Buffer.GetInnerType());
 	check(Buffer.NumTerminalBuffers() == NewBuffer->NumTerminalBuffers());
 	for (int32 Index = 0; Index < Buffer.NumTerminalBuffers(); Index++)
 	{
@@ -960,7 +1185,7 @@ TSharedRef<const FVoxelBuffer> FVoxelBufferUtilities::Replicate(
 		check(NewNum == NewNumCheck);
 	}
 
-	const TSharedRef<FVoxelBuffer> NewBuffer = MakeSharedStruct<FVoxelBuffer>(Buffer.GetStruct());
+	const TSharedRef<FVoxelBuffer> NewBuffer = FVoxelBuffer::Make(Buffer.GetInnerType());
 
 	for (int32 Index = 0; Index < NewBuffer->NumTerminalBuffers(); Index++)
 	{
@@ -972,183 +1197,4 @@ TSharedRef<const FVoxelBuffer> FVoxelBufferUtilities::Replicate(
 	}
 
 	return NewBuffer;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-FVoxelFutureValue FVoxelBufferUtilities::Query2D(
-	const FVoxelComputeValue& ComputeValue,
-	const FVoxelQuery& Query,
-	const FVoxelPinType& BufferType)
-{
-	const FVoxelPositionQueryParameter* PositionQueryParameter = Query.GetParameters().Find<FVoxelPositionQueryParameter>();
-	if (!PositionQueryParameter ||
-		!PositionQueryParameter->IsGrid3D())
-	{
-		return ComputeValue(Query);
-	}
-
-	const FVoxelPositionQueryParameter::FGrid3D Grid3D = PositionQueryParameter->GetGrid3D();
-	if (Grid3D.Size.Z <= 1)
-	{
-		return ComputeValue(Query);
-	}
-
-	const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid2D(
-		FVector2f(Grid3D.Start),
-		Grid3D.Step,
-		FIntPoint(Grid3D.Size.X, Grid3D.Size.Y));
-
-	const FVoxelFutureValue FutureDataBuffer = ComputeValue(Query.MakeNewQuery(Parameters));
-	if (!ensure(FutureDataBuffer.GetParentType().IsBuffer()))
-	{
-		return ComputeValue(Query);
-	}
-
-	return
-		MakeVoxelTask(STATIC_FNAME("Query2D"))
-		.Dependency(FutureDataBuffer)
-		.Execute(FutureDataBuffer.GetParentType(), [=]
-		{
-			const FVoxelBuffer& DataBuffer = FutureDataBuffer.Get_CheckCompleted<FVoxelBuffer>();
-			if (DataBuffer.IsConstant())
-			{
-				return FVoxelRuntimePinValue::Make(FutureDataBuffer.GetShared_CheckCompleted<FVoxelBuffer>(), BufferType);
-			}
-
-			const TSharedRef<FVoxelBuffer> Result = MakeSharedStruct<FVoxelBuffer>(DataBuffer.GetStruct());
-			check(DataBuffer.NumTerminalBuffers() == Result->NumTerminalBuffers());
-			for (int32 Index = 0; Index < DataBuffer.NumTerminalBuffers(); Index++)
-			{
-				ExpandQuery2D(
-					Result->GetTerminalBuffer(Index),
-					DataBuffer.GetTerminalBuffer(Index),
-					Grid3D.Size.Z);
-			}
-			return FVoxelRuntimePinValue::Make(Result, BufferType);
-		});
-}
-
-void FVoxelBufferUtilities::ExpandQuery2D(
-	FVoxelTerminalBuffer& OutBuffer,
-	const FVoxelTerminalBuffer& Buffer,
-	const int32 Count)
-{
-	VOXEL_FUNCTION_COUNTER_NUM(Buffer.Num() * Count, 1024);
-	check(OutBuffer.GetStruct() == Buffer.GetStruct());
-
-	if (Buffer.IsConstant())
-	{
-		Buffer.CopyTo(OutBuffer);
-		return;
-	}
-	ensure(Count >= 2);
-	ensure(Count % 2 == 0);
-
-	if (Buffer.IsA<FVoxelSimpleTerminalBuffer>())
-	{
-		FVoxelSimpleTerminalBuffer& OutSimpleBuffer = CastChecked<FVoxelSimpleTerminalBuffer>(OutBuffer);
-		const FVoxelSimpleTerminalBuffer& SimpleBuffer = CastChecked<FVoxelSimpleTerminalBuffer>(Buffer);
-		const int32 TypeSize = SimpleBuffer.GetTypeSize();
-
-		const int32 Num = Buffer.Num();
-		ensure(Num % 4 == 0);
-
-		const TSharedRef<FVoxelBufferStorage> Storage = OutSimpleBuffer.MakeNewStorage();
-		Storage->Allocate(Num * Count);
-
-		if (TypeSize == sizeof(float))
-		{
-			ForeachVoxelBufferChunk(Num * 2, [&](const FVoxelBufferIterator& Iterator)
-			{
-				ensure(Iterator.Num() % 8 == 0);
-
-				ispc::VoxelBufferUtilities_ReplicatePacked(
-					SimpleBuffer.GetStorage<float>().GetData(Iterator.GetHalfIterator()),
-					Storage->As<float>().GetData(Iterator),
-					Iterator.Num() / 2);
-			});
-		}
-		else
-		{
-			ForeachVoxelBufferChunk(Num * 2, [&](const FVoxelBufferIterator& Iterator)
-			{
-				VOXEL_SWITCH_TERMINAL_TYPE_SIZE(TypeSize)
-				{
-					using Type = VOXEL_GET_TYPE(TypeInstance);
-
-					const TVoxelArrayView<Type> WriteView = Storage->As<Type>().GetRawView_NotConstant(Iterator);
-					const TConstVoxelArrayView<Type> ReadView = SimpleBuffer.GetStorage<Type>().GetRawView_NotConstant(Iterator.GetHalfIterator());
-
-					ensure(Iterator.Num() % 8 == 0);
-					for (int32 Index = 0; Index < Iterator.Num() / 8; Index++)
-					{
-						WriteView[8 * Index + 0] = ReadView[4 * Index + 0];
-						WriteView[8 * Index + 1] = ReadView[4 * Index + 1];
-						WriteView[8 * Index + 2] = ReadView[4 * Index + 2];
-						WriteView[8 * Index + 3] = ReadView[4 * Index + 3];
-
-						WriteView[8 * Index + 4] = ReadView[4 * Index + 0];
-						WriteView[8 * Index + 5] = ReadView[4 * Index + 1];
-						WriteView[8 * Index + 6] = ReadView[4 * Index + 2];
-						WriteView[8 * Index + 7] = ReadView[4 * Index + 3];
-					}
-				};
-			});
-		}
-
-		for (int32 Index = 2; Index < Count; Index += 2)
-		{
-			VOXEL_SCOPE_COUNTER_COND(Num > 4096, "Memcpy");
-
-			TVoxelBufferMultiIterator<2> Iterator((Index + 2) * Num, 2 * Num);
-			Iterator.SetIndex<0>(Index * Num);
-
-			for (; Iterator; ++Iterator)
-			{
-				FVoxelUtilities::Memcpy(
-					Storage->GetByteRawView_NotConstant(Iterator.Get<0>()),
-					Storage->GetByteRawView_NotConstant(Iterator.Get<1>()));
-			}
-		}
-
-		OutSimpleBuffer.SetStorage(Storage);
-	}
-	else
-	{
-		FVoxelComplexTerminalBuffer& OutComplexBuffer = CastChecked<FVoxelComplexTerminalBuffer>(OutBuffer);
-		const FVoxelComplexTerminalBuffer& ComplexBuffer = CastChecked<FVoxelComplexTerminalBuffer>(Buffer);
-
-		const int32 Num = Buffer.Num();
-		ensure(Num % 4 == 0);
-
-		const TSharedRef<FVoxelComplexBufferStorage> Storage = OutComplexBuffer.MakeNewStorage();
-		Storage->Allocate(Num * Count);
-
-		for (int32 Index = 0; Index < Num / 4; Index++)
-		{
-			const FConstVoxelStructView Value0 = ComplexBuffer.GetStorage()[4 * Index + 0];
-			const FConstVoxelStructView Value1 = ComplexBuffer.GetStorage()[4 * Index + 1];
-			const FConstVoxelStructView Value2 = ComplexBuffer.GetStorage()[4 * Index + 2];
-			const FConstVoxelStructView Value3 = ComplexBuffer.GetStorage()[4 * Index + 3];
-
-			for (int32 Layer = 0; Layer < Count; Layer += 2)
-			{
-				Value0.CopyTo((*Storage)[Layer * Num + 8 * Index + 0]);
-				Value1.CopyTo((*Storage)[Layer * Num + 8 * Index + 1]);
-				Value2.CopyTo((*Storage)[Layer * Num + 8 * Index + 2]);
-				Value3.CopyTo((*Storage)[Layer * Num + 8 * Index + 3]);
-
-				Value0.CopyTo((*Storage)[Layer * Num + 8 * Index + 4]);
-				Value1.CopyTo((*Storage)[Layer * Num + 8 * Index + 5]);
-				Value2.CopyTo((*Storage)[Layer * Num + 8 * Index + 6]);
-				Value3.CopyTo((*Storage)[Layer * Num + 8 * Index + 7]);
-			}
-		}
-
-		OutComplexBuffer.SetStorage(Storage);
-	}
 }

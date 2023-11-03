@@ -30,6 +30,9 @@ class UVoxelGraphNodeBase : public UEdGraphNode
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(Transient)
+	bool bEnableDebug = false;
+
 	UPROPERTY()
 	bool bEnablePreview = false;
 

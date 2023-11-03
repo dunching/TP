@@ -37,6 +37,11 @@ VOXEL_RUN_ON_STARTUP(FVoxelBufferStatics_Initialize, Game, 999)
 		GVoxelBufferStatics.InnerToBuffer.Add_CheckNew(InnerType, Struct);
 		GVoxelBufferStatics.BufferToInner.Add_CheckNew(Struct, InnerType);
 	}
+
+	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
+	{
+		GVoxelBufferStatics = {};
+	});
 }
 
 TSharedRef<FVoxelBuffer> FVoxelBuffer::Make(const FVoxelPinType& InnerType)
@@ -170,7 +175,7 @@ FVoxelRuntimePinValue FVoxelBuffer::GetGenericConstant() const
 
 void FVoxelBuffer::ComputeBuffers(
 	const FVoxelBuffer* Template,
-	TVoxelArray<int64>& BufferOffsets)
+	TArray<int64>& BufferOffsets)
 {
 	for (const FProperty& Property : GetStructProperties(Template->GetStruct()))
 	{
@@ -187,12 +192,13 @@ void FVoxelBuffer::ComputeBuffers(
 			check(Struct->GetSuperStruct() == StaticStructFast<FVoxelBuffer>());
 
 			const FVoxelBuffer& Buffer = *Property.ContainerPtrToValuePtr<FVoxelBuffer>(Template);
-			for (const int64 BufferOffset : *Buffer.PrivateBufferOffsets)
+			for (const int64 BufferOffset : Buffer.PrivateBufferOffsets)
 			{
 				BufferOffsets.Add(reinterpret_cast<const uint8*>(&Buffer) + BufferOffset - reinterpret_cast<const uint8*>(Template));
 			}
 		}
 	}
+	BufferOffsets.Shrink();
 	check(BufferOffsets.Num() > 0);
 }
 
@@ -274,8 +280,8 @@ void FVoxelSimpleTerminalBuffer::SetStorage(const TSharedRef<const FVoxelBufferS
 
 FVoxelComplexTerminalBuffer::FVoxelComplexTerminalBuffer()
 {
-	static const TVoxelArray<int64> BufferOffsets = { 0 };
-	PrivateBufferOffsets = &BufferOffsets;
+	static const TArray<int64> BufferOffsets = { 0 };
+	PrivateBufferOffsets = BufferOffsets;
 }
 
 void FVoxelComplexTerminalBuffer::SetAsEmpty()
@@ -328,22 +334,41 @@ TSharedRef<FVoxelComplexBufferStorage> FVoxelComplexTerminalBuffer::MakeNewStora
 	return MakeVoxelShared<FVoxelComplexBufferStorage>(GetInnerStruct());
 }
 
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+struct FVoxelComplexTerminalBufferStatics
+{
+	FVoxelFastCriticalSection CriticalSection;
+	TVoxelAddOnlyMap<FVoxelPinType, TSharedPtr<FVoxelComplexBufferStorage>> InnerTypeToStorage;
+};
+FVoxelComplexTerminalBufferStatics GVoxelComplexTerminalBufferStatics;
+
+VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelComplexTerminalBufferStaticsCleanup)
+{
+	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
+	{
+		VOXEL_SCOPE_LOCK(GVoxelComplexTerminalBufferStatics.CriticalSection);
+
+		for (auto& It : GVoxelComplexTerminalBufferStatics.InnerTypeToStorage)
+		{
+			check(It.Value.GetSharedReferenceCount() == 0);
+			FVoxelMemory::Delete(It.Value.Get());
+		}
+		GVoxelComplexTerminalBufferStatics.InnerTypeToStorage.Empty();
+	});
+}
+
 void FVoxelComplexTerminalBuffer::Initialize(const FVoxelPinType& InnerType)
 {
 	checkVoxelSlow(!PrivateStorage.ToSharedPtr().IsValid());
 
 	const TSharedRef<FVoxelComplexBufferStorage> NewStorage = INLINE_LAMBDA
 	{
-		struct FStatics
-		{
-			FVoxelFastCriticalSection CriticalSection;
-			TVoxelAddOnlyMap<FVoxelPinType, TSharedPtr<FVoxelComplexBufferStorage>> InnerTypeToStorage;
-		};
-		static FStatics Statics;
+		VOXEL_SCOPE_LOCK(GVoxelComplexTerminalBufferStatics.CriticalSection);
 
-		VOXEL_SCOPE_LOCK(Statics.CriticalSection);
-
-		TSharedPtr<FVoxelComplexBufferStorage>& Storage = Statics.InnerTypeToStorage.FindOrAdd(InnerType);
+		TSharedPtr<FVoxelComplexBufferStorage>& Storage = GVoxelComplexTerminalBufferStatics.InnerTypeToStorage.FindOrAdd(InnerType);
 		if (!Storage)
 		{
 			Storage = MakeVoxelShared<FVoxelComplexBufferStorage>(InnerType.GetStruct());
@@ -361,6 +386,10 @@ void FVoxelComplexTerminalBuffer::Initialize(const FVoxelPinType& InnerType)
 
 	checkVoxelSlow(IsDefault());
 }
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 void FVoxelComplexTerminalBuffer::SetStorage(const TSharedRef<const FVoxelComplexBufferStorage>& Storage)
 {

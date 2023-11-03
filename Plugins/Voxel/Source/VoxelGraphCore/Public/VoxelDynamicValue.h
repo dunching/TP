@@ -115,6 +115,7 @@ public:
 class VOXELGRAPHCORE_API FVoxelDynamicValueFactoryBase
 {
 public:
+	FVoxelDynamicValueFactoryBase() = default;
 	FVoxelDynamicValueFactoryBase(
 		const TSharedRef<const FVoxelComputeValue>& Compute,
 		const FVoxelPinType& Type,
@@ -122,15 +123,20 @@ public:
 		: Compute(Compute)
 		, Type(Type)
 		, Name(Name)
-		, Referencer(MakeVoxelShared<FVoxelTaskReferencer>(FVoxelUtilities::AppendName(TEXT("FVoxelDynamicValue"), Name)))
+		, Referencer(MakeVoxelShared<FVoxelTaskReferencer>(FVoxelUtilities::AppendName(TEXT("FVoxelDynamicValue - "), Name)))
 	{
 	}
 
+	FORCEINLINE bool IsValid() const
+	{
+		return Compute.IsValid();
+	}
+
 protected:
-	const TSharedRef<const FVoxelComputeValue> Compute;
-	const FVoxelPinType Type;
-	const FName Name;
-	const TSharedRef<FVoxelTaskReferencer> Referencer;
+	TSharedPtr<const FVoxelComputeValue> Compute;
+	FVoxelPinType Type;
+	FName Name;
+	TSharedPtr<FVoxelTaskReferencer> Referencer;
 
 	EVoxelTaskThread PrivateThread = EVoxelTaskThread::AsyncThread;
 	FVoxelTaskPriority PrivatePriority;
@@ -175,11 +181,14 @@ template<typename T>
 class TVoxelDynamicValueFactory : public FVoxelDynamicValueFactoryBase
 {
 public:
+	TVoxelDynamicValueFactory() = default;
+
 	explicit TVoxelDynamicValueFactory(const FVoxelDynamicValueFactory& Factory)
 		: FVoxelDynamicValueFactoryBase(Factory)
 	{
 		checkVoxelSlow(Type.CanBeCastedTo<T>());
 	}
+
 	TVoxelDynamicValueFactory(const FName Name, TVoxelComputeValue<T>&& Compute)
 		: FVoxelDynamicValueFactoryBase(
 			MakeVoxelShared<FVoxelComputeValue>([Compute = MoveTemp(Compute)](const FVoxelQuery& Query) -> FVoxelFutureValue

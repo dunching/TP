@@ -19,8 +19,10 @@ struct VOXELGRAPHCORE_API FVoxelObjectPinType
 	virtual UClass* GetClass() const VOXEL_PURE_VIRTUAL({});
 	virtual UScriptStruct* GetStruct() const VOXEL_PURE_VIRTUAL({});
 
-	virtual UObject* GetObject(FConstVoxelStructView Struct) const VOXEL_PURE_VIRTUAL({});
+	virtual TWeakObjectPtr<UObject> GetWeakObject(FConstVoxelStructView Struct) const VOXEL_PURE_VIRTUAL({});
 	virtual FVoxelInstancedStruct GetStruct(UObject* Object) const VOXEL_PURE_VIRTUAL({});
+
+	UObject* GetObject(FConstVoxelStructView Struct) const;
 
 	static const TVoxelMap<const UScriptStruct*, const FVoxelObjectPinType*>& StructToPinType();
 };
@@ -37,7 +39,7 @@ struct VOXELGRAPHCORE_API FVoxelObjectPinType
 	void Dummy2() { static_assert(TIsVoxelObjectStruct<StructType>::Value, "Object pin type not declared: use DECLARE_VOXEL_OBJECT_PIN_TYPE(YourType);"); } \
 	virtual UClass* GetClass() const override { return ObjectType::StaticClass(); } \
 	virtual UScriptStruct* GetStruct() const override { return StructType::StaticStruct(); } \
-	UObject* GetObject(const FConstVoxelStructView Struct) const override \
+	virtual TWeakObjectPtr<UObject> GetWeakObject(const FConstVoxelStructView Struct) const override \
 	{ \
 		if (!ensure(Struct.IsValid()) || \
 			!ensure(Struct.IsA<StructType>())) \
@@ -45,20 +47,20 @@ struct VOXELGRAPHCORE_API FVoxelObjectPinType
 			return nullptr; \
 		} \
 		\
-		ObjectType* Object = nullptr; \
-		StructType StructCopy = Struct.Get<StructType>(); \
-		Convert(true, Object, StructCopy); \
+		TWeakObjectPtr<ObjectType> Object; \
+		Convert(true, Object, ConstCast(Struct.Get<StructType>())); \
 		return Object; \
 	} \
-	FVoxelInstancedStruct GetStruct(UObject* Object) const \
+	virtual FVoxelInstancedStruct GetStruct(UObject* Object) const override \
 	{ \
+		check(IsInGameThread()); \
 		FVoxelInstancedStruct Struct = FVoxelInstancedStruct::Make<StructType>(); \
 		if (!Object) \
 		{ \
 			return Struct; \
 		} \
-		ObjectType* TypedObject = Cast<ObjectType>(Object); \
-		if (!ensure(TypedObject)) \
+		TWeakObjectPtr<ObjectType> TypedObject = Cast<ObjectType>(Object); \
+		if (!ensure(TypedObject.IsValid())) \
 		{ \
 			return Struct; \
 		} \
@@ -66,4 +68,4 @@ struct VOXELGRAPHCORE_API FVoxelObjectPinType
 		ensure(TypedObject == Object); \
 		return Struct; \
 	} \
-	void Convert(const bool bSetObject, ObjectType*& Object, StructType& Struct) const
+	void Convert(const bool bSetObject, TWeakObjectPtr<ObjectType>& Object, StructType& Struct) const

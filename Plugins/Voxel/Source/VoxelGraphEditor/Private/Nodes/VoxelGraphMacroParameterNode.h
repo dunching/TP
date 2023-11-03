@@ -7,7 +7,45 @@
 #include "VoxelGraphMacroParameterNode.generated.h"
 
 UCLASS()
-class UVoxelGraphMacroParameterNode : public UVoxelGraphParameterNodeBase
+class UVoxelGraphMacroParameterInputNode : public UVoxelGraphParameterNodeBase
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, Category = "Config")
+	bool bExposeDefaultPin = false;
+
+	//~ Begin UVoxelGraphParameterNodeBase Interface
+	virtual EVoxelGraphParameterType GetParameterType() const override
+	{
+		return EVoxelGraphParameterType::Input;
+	}
+
+	virtual void AllocateParameterPins(const FVoxelGraphParameter& Parameter) override;
+	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	//~ End UVoxelGraphParameterNodeBase Interface
+};
+
+UCLASS()
+class UVoxelGraphMacroParameterOutputNode : public UVoxelGraphParameterNodeBase
+{
+	GENERATED_BODY()
+
+public:
+	//~ Begin UVoxelGraphParameterNodeBase Interface
+	virtual EVoxelGraphParameterType GetParameterType() const override
+	{
+		return EVoxelGraphParameterType::Output;
+	}
+
+	virtual void AllocateParameterPins(const FVoxelGraphParameter& Parameter) override;
+	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	//~ End UVoxelGraphParameterNodeBase Interface
+};
+
+UCLASS(Deprecated)
+class UDEPRECATED_VoxelGraphMacroParameterNode : public UVoxelGraphParameterNodeBase
 {
 	GENERATED_BODY()
 
@@ -15,14 +53,10 @@ public:
 	UPROPERTY()
 	EVoxelGraphParameterType Type;
 
-	//~ Begin UVoxelGraphNode Interface
-	virtual void PostPasteNode() override;
-
-	virtual void AllocateParameterPins(const FVoxelGraphParameter& Parameter) override;
-	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
-	virtual FLinearColor GetNodeTitleColor() const override;
-	virtual void PinDefaultValueChanged(UEdGraphPin* Pin) override;
-	virtual void PinConnectionListChanged(UEdGraphPin* Pin) override;
-	virtual void PostReconstructNode() override;
-	//~ End UVoxelGraphNode Interface
+	//~ Begin UVoxelGraphParameterNodeBase Interface
+	virtual EVoxelGraphParameterType GetParameterType() const override
+	{
+		return Type;
+	}
+	//~ End UVoxelGraphParameterNodeBase Interface
 };

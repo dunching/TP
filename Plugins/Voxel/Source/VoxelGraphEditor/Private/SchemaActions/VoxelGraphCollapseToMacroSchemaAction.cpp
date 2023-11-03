@@ -3,12 +3,14 @@
 #include "VoxelGraphCollapseToMacroSchemaAction.h"
 
 #include "VoxelGraphSchema.h"
-#include "VoxelGraphNodeBase.h"
 #include "VoxelGraphToolkit.h"
+#include "VoxelGraphNodeBase.h"
 #include "Nodes/VoxelGraphLocalVariableNode.h"
 #include "Nodes/VoxelGraphParameterNodeBase.h"
 
 #include "SNodePanel.h"
+#include "Nodes/VoxelGraphMacroNode.h"
+#include "Nodes/VoxelGraphParameterNode.h"
 
 UEdGraphNode* FVoxelGraphSchemaAction_CollapseToMacro::PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2D Location, bool bSelectNewNode)
 {
@@ -24,10 +26,14 @@ UEdGraphNode* FVoxelGraphSchemaAction_CollapseToMacro::PerformAction(UEdGraph* P
 		return nullptr;
 	}
 
-	UVoxelGraph* NewMacroGraph = nullptr;
+	const FVoxelTransaction Transaction(Toolkit->Asset, "Collapse nodes to Macro");
+
+	UVoxelGraph* NewMacroGraph;
 	{
 		FVoxelGraphSchemaAction_NewInlineMacro Action;
-		Action.PerformAction(Toolkit->GetActiveEdGraph(), nullptr, Toolkit->FindLocationInGraph());
+		// If we open newly created macro graph, undo action break parent graph and does not show recreated nodes
+		Action.bOpenNewGraph = false;
+		Action.PerformAction(Toolkit->GetActiveEdGraph(), nullptr, FVector2D::ZeroVector);
 		NewMacroGraph = Action.NewMacro;
 	}
 
@@ -36,194 +42,250 @@ UEdGraphNode* FVoxelGraphSchemaAction_CollapseToMacro::PerformAction(UEdGraph* P
 		return nullptr;
 	}
 
-	TMap<UEdGraphNode*, TArray<UEdGraphPin*>> NodesToCopy;
-	TMap<FGuid, TArray<UVoxelGraphParameterNodeBase*>> Parameters;
-
-	TSet<UObject*> SelectedNodes = GraphEditor->GetSelectedNodes();
-	for (UObject* SelectedNode : SelectedNodes)
-	{
-		if (UVoxelGraphParameterNodeBase* ParameterNode = Cast<UVoxelGraphParameterNodeBase>(SelectedNode))
-		{
-			Parameters.FindOrAdd(ParameterNode->GetParameter()->Guid, {}).Add(ParameterNode);
-		}
-		else if (UEdGraphNode* Node = Cast<UEdGraphNode>(SelectedNode))
-		{
-			TArray<UEdGraphPin*> OuterPins;
-
-			for (UEdGraphPin* Pin : Node->Pins)
-			{
-				if (!Pin->HasAnyConnections())
-				{
-					continue;
-				}
-
-				for (const UEdGraphPin* LinkedTo : Pin->LinkedTo)
-				{
-					if (!ensure(LinkedTo))
-					{
-						continue;
-					}
-
-					const UEdGraphNode* Owner = LinkedTo->GetOwningNode();
-					if (!ensure(Owner))
-					{
-						continue;
-					}
-
-					if (!SelectedNodes.Contains(Owner) ||
-						Owner->IsA<UVoxelGraphParameterNodeBase>())
-					{
-						OuterPins.Add(Pin);
-						break;
-					}
-				}
-			}
-
-			NodesToCopy.Add(Node, OuterPins);
-		}
-		else
-		{
-			ensure(false);
-		}
-	}
-
-	TMap<FGuid, UEdGraphNode*> NewNodes;
-	FVector2D AvgNodePosition;
+	const FGraphPanelSelectionSet& SelectedNodes = GraphEditor->GetSelectedNodes();
+	GroupSelectedNodes(SelectedNodes);
 
 	// Copy and Paste
 	{
 		FString ExportedText;
-		ExportNodes(NodesToCopy, ExportedText);
-		ImportNodes(Toolkit->FindGraphEditor(NewMacroGraph->MainEdGraph), NewMacroGraph->MainEdGraph, ExportedText, NewNodes, AvgNodePosition);
+		ExportNodes(ExportedText);
+		ImportNodes(NewMacroGraph, ExportedText);
 	}
 
-	TMap<UEdGraphPin*, UVoxelGraphParameterNodeBase*> MappedLocalVariables;
-	FixupParameterInputsPass(NewMacroGraph, Parameters, MappedLocalVariables);
-	FixupLocalVariableDeclarationsPass(NewMacroGraph, Parameters, NewNodes);
+	UpdateParameters(NewMacroGraph);
+	AddParameterInputs(NewMacroGraph);
+	AddDeclarationOutputs(NewMacroGraph);
+	AddOuterParameters(NewMacroGraph);
 
-	for (const auto& It : NodesToCopy)
+	UVoxelGraphMacroNode* NewMacroNode;
 	{
-		UEdGraphNode* NewNode = NewNodes.FindRef(It.Key->NodeGuid);
-		if (!ensure(NewNode))
-		{
-			continue;
-		}
-
-		for (UEdGraphPin* Pin : It.Value)
-		{
-			UEdGraphPin* NewNodePin = NewNode->FindPin(Pin->PinName, Pin->Direction);
-			if (!ensure(NewNodePin))
-			{
-				continue;
-			}
-
-			if (Pin->Direction == EGPD_Input)
-			{
-				if (NewNodePin->LinkedTo.Num() != 0)
-				{
-					continue;
-				}
-
-				FVector2D Position;
-				Position.X = NewNodePin->Direction == EGPD_Input ? NewNode->NodePosX - 200 : NewNode->NodePosX + 400;
-				Position.Y = NewNode->NodePosY + 75;
-
-				for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
-				{
-					if (!ensure(LinkedPin))
-					{
-						continue;
-					}
-
-					UEdGraphNode* OwningNode = LinkedPin->GetOwningNode();
-					if (!ensure(OwningNode))
-					{
-						continue;
-					}
-
-					Position.X = OwningNode->NodePosX - AvgNodePosition.X;
-					Position.Y = OwningNode->NodePosY - AvgNodePosition.Y;
-				}
-
-				if (UVoxelGraphParameterNodeBase* LocalVariableNode = MappedLocalVariables.FindRef(Pin))
-				{
-					FVoxelGraphSchemaAction_NewParameterUsage Action;
-					Action.bDeclaration = false;
-					Action.Guid = LocalVariableNode->Guid;
-					Action.ParameterType = EVoxelGraphParameterType::LocalVariable;
-					Action.PinType = LocalVariableNode->GetParameter()->Type;
-					Action.PerformAction(NewNode->GetGraph(), NewNodePin, Position, false);
-					continue;
-				}
-
-				FVoxelGraphSchemaAction_NewParameter Action;
-				Action.ParameterType = EVoxelGraphParameterType::Input;
-				Action.PerformAction(NewNode->GetGraph(), NewNodePin, Position, false);
-				continue;
-			}
-
-			FVector2D Position;
-			Position.X = NewNode->NodePosX + 400;
-			Position.Y = NewNode->NodePosY + 75;
-
-			FVoxelGraphSchemaAction_NewParameter Action;
-			Action.ParameterType = EVoxelGraphParameterType::Output;
-			Action.PerformAction(NewNode->GetGraph(), NewNodePin, Position, false);
-		}
+		FVoxelGraphSchemaAction_NewMacroNode Action;
+		Action.Graph = NewMacroGraph;
+		NewMacroNode = Cast<UVoxelGraphMacroNode>(Action.PerformAction(ParentGraph, nullptr, AvgNodePosition));
 	}
 
-	return nullptr;
+	if (!ensure(NewMacroNode))
+	{
+		return nullptr;
+	}
+
+	FixupMainGraph(NewMacroNode, ParentGraph);
+
+	GraphEditor->NotifyGraphChanged();
+	Toolkit->OnGraphChanged(ParentGraph);
+
+	return NewMacroNode;
 }
 
-void FVoxelGraphSchemaAction_CollapseToMacro::FixupParameterInputsPass(const UVoxelGraph* Graph, const TMap<FGuid, TArray<UVoxelGraphParameterNodeBase*>>& Parameters, TMap<UEdGraphPin*, UVoxelGraphParameterNodeBase*>& OutMappedLocalVariables) const
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelGraphSchemaAction_CollapseToMacro::GroupSelectedNodes(const TSet<UObject*>& SelectedNodes)
 {
-	FVector2D DeclarationsPos = FVector2D::ZeroVector;
-	for (const UEdGraphNode* Node : Graph->MainEdGraph->Nodes)
+	for (UObject* SelectedNode : SelectedNodes)
 	{
-		DeclarationsPos.X = FMath::Min(Node->NodePosX, DeclarationsPos.X);
-		DeclarationsPos.Y = FMath::Min(Node->NodePosY, DeclarationsPos.Y);
-	}
-
-	DeclarationsPos.X -= 500.f;
-
-	for (const auto& It : Parameters)
-	{
-		if (It.Value.Num() == 1)
+		UEdGraphNode* Node = Cast<UEdGraphNode>(SelectedNode);
+		if (!ensure(Node))
 		{
 			continue;
 		}
 
-		bool bSkip = false;
-		for (const UVoxelGraphParameterNodeBase* ParameterNode : It.Value)
+		TMap<FEdGraphPinReference, TSet<FEdGraphPinReference>> OuterPins;
+		for (UEdGraphPin* Pin : Node->Pins)
 		{
-			if (ParameterNode->GetParameter()->ParameterType == EVoxelGraphParameterType::Output)
+			if (!Pin->HasAnyConnections())
 			{
-				bSkip = true;
-				break;
+				continue;
+			}
+
+			for (const UEdGraphPin* LinkedTo : Pin->LinkedTo)
+			{
+				if (!ensure(LinkedTo))
+				{
+					continue;
+				}
+
+				const UEdGraphNode* LinkedToNode = LinkedTo->GetOwningNode();
+				if (!ensure(LinkedToNode))
+				{
+					continue;
+				}
+
+				if (!SelectedNodes.Contains(LinkedToNode))
+				{
+					OuterPins.FindOrAdd(Pin).Add(LinkedTo);
+				}
+			}
+		}
+
+		TSharedRef<FCopiedNode> CopiedNode = MakeShared<FCopiedNode>(Node, OuterPins);
+		CopiedNodes.Add(Node->NodeGuid, CopiedNode);
+
+		if (const UVoxelGraphParameterNodeBase* ParameterNode = Cast<UVoxelGraphParameterNodeBase>(Node))
+		{
+			TSharedPtr<FCopiedParameter> CopiedParameter = CopiedParameters.FindRef(ParameterNode->Guid);
+			if (!CopiedParameter)
+			{
+				FVoxelGraphParameter* Parameter = ParameterNode->GetParameter();
+				if (!ensure(Parameter))
+				{
+					continue;
+				}
+
+				CopiedParameter = MakeShared<FCopiedParameter>(Parameter->ParameterType, ParameterNode->Guid);
+				CopiedParameters.Add(ParameterNode->Guid, CopiedParameter);
 			}
 
 			if (ParameterNode->IsA<UVoxelGraphLocalVariableDeclarationNode>())
 			{
-				bSkip = true;
-				break;
+				CopiedParameter->DeclarationNode = CopiedNode;
+			}
+			else
+			{
+				CopiedParameter->UsageNodes.Add(CopiedNode);
 			}
 		}
+	}
+}
 
-		if (bSkip)
+void FVoxelGraphSchemaAction_CollapseToMacro::UpdateParameters(UVoxelGraph* Graph)
+{
+	for (const auto& It : CopiedParameters)
+	{
+		if (!ensure(It.Value->NewParameterId.IsValid()))
 		{
 			continue;
 		}
 
-		UVoxelGraphNodeBase* MacroInput;
+		if (It.Value->ParameterType != EVoxelGraphParameterType::Parameter)
+		{
+			continue;
+		}
+
+		FGuid OldParameterId = It.Value->NewParameterId;
+
+		{
+			FVoxelGraphParameter* ExistingParameter = Graph->FindParameterByGuid(OldParameterId);
+			if (!ensure(ExistingParameter))
+			{
+				continue;
+			}
+
+			const FVoxelTransaction Transaction(Graph, "Change parameter to local variable");
+
+			FVoxelGraphParameter NewParameter = *ExistingParameter;
+			NewParameter.ParameterType = EVoxelGraphParameterType::LocalVariable;
+			NewParameter.Guid = FGuid::NewGuid();
+
+			ExistingParameter->Name.SetNumber(ExistingParameter->Name.GetNumber() + 1);
+
+			Graph->Parameters.Add(NewParameter);
+
+			It.Value->NewParameterId = NewParameter.Guid;
+		}
+
+		const FVoxelGraphParameter* Parameter = Graph->FindParameterByGuid(It.Value->NewParameterId);
+		if (!ensure(Parameter))
+		{
+			continue;
+		}
+
+		for (const TSharedPtr<FCopiedNode>& UsageNode : It.Value->UsageNodes)
+		{
+			UVoxelGraphParameterNodeBase* Node = UsageNode->GetNewNode<UVoxelGraphParameterNodeBase>();
+			if (!ensure(Node))
+			{
+				continue;
+			}
+
+			FVoxelGraphSchemaAction_NewParameterUsage Action;
+			Action.bLocalVariable_IsDeclaration = false;
+			Action.Guid = Parameter->Guid;
+			Action.ParameterType = EVoxelGraphParameterType::LocalVariable;
+			Action.PinType = Parameter->Type;
+
+			UVoxelGraphNodeBase* NewLocalVariableNode = Cast<UVoxelGraphNodeBase>(Action.PerformAction(Graph->MainEdGraph, nullptr, FVector2D(Node->NodePosX, Node->NodePosY), false));
+			if (!ensure(NewLocalVariableNode))
+			{
+				continue;
+			}
+
+			UsageNode->NewNode = NewLocalVariableNode;
+
+			const FVoxelTransaction Transaction(NewLocalVariableNode, "Fixup Local Variable node");
+
+			if (Node->Pins.Num() > 1)
+			{
+				if (ensure(NewLocalVariableNode->CanSplitPin(*NewLocalVariableNode->GetPinAt(0))))
+				{
+					NewLocalVariableNode->SplitPin(*NewLocalVariableNode->GetPinAt(0));
+				}
+			}
+
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				const FName TargetPinName = Pin->PinName == STATIC_FNAME("Value") ? STATIC_FNAME("OutputPin") : Pin->PinName;
+				UEdGraphPin* NewPin = NewLocalVariableNode->FindPin(TargetPinName, Pin->Direction);
+
+				for (UEdGraphPin* LinkedToPin : Pin->LinkedTo)
+				{
+					if (!ensure(LinkedToPin))
+					{
+						continue;
+					}
+
+					NewPin->MakeLinkTo(LinkedToPin);
+				}
+			}
+
+			NewLocalVariableNode->bCommentBubblePinned = Node->bCommentBubblePinned;
+			NewLocalVariableNode->bCommentBubbleVisible = Node->bCommentBubbleVisible;
+			NewLocalVariableNode->bCommentBubbleMakeVisible = Node->bCommentBubbleMakeVisible;
+			NewLocalVariableNode->NodeComment = Node->NodeComment;
+
+			Node->DestroyNode();
+		}
+
+		const int32 Index = Graph->Parameters.IndexOfByKey(OldParameterId);
+		if (Index != -1)
+		{
+			const FVoxelTransaction Transaction(Graph, "Remove parameter");
+			Graph->Parameters.RemoveAt(Index);
+		}
+	}
+}
+
+void FVoxelGraphSchemaAction_CollapseToMacro::AddParameterInputs(UVoxelGraph* Graph)
+{
+	for (const auto& It : CopiedParameters)
+	{
+		if (It.Value->ParameterType == EVoxelGraphParameterType::Input ||
+			It.Value->ParameterType == EVoxelGraphParameterType::Output ||
+			It.Value->DeclarationNode)
+		{
+			continue;
+		}
+
+		FVoxelGraphParameter* Parameter = Graph->FindParameterByGuid(It.Value->NewParameterId);
+		if (!ensure(Parameter))
+		{
+			continue;
+		}
+
+		FVector2D Position = InputDeclarationPosition;
+		InputDeclarationPosition.Y += 250.f;
+
+		// We create macro inputs for local variables / parameters and assign them to newly created local variables, to use them in multiple places
+		UVoxelGraphParameterNodeBase* MacroInput;
 		{
 			FVoxelGraphSchemaAction_NewParameter Action;
 			Action.ParameterType = EVoxelGraphParameterType::Input;
+			Action.PinType = Parameter->Type;
+			Action.ParameterName = Parameter->Name;
+			Parameter->Name = *(Parameter->Name.ToString() + "_Local");
 
-			FVector2D Position;
-			Position.X = DeclarationsPos.X;
-			Position.Y = DeclarationsPos.Y;
-
-			MacroInput = Cast<UVoxelGraphNodeBase>(Action.PerformAction(Graph->MainEdGraph, It.Value[0]->GetOutputPin(0), Position, true));
+			MacroInput = Cast<UVoxelGraphParameterNodeBase>(Action.PerformAction(Graph->MainEdGraph, nullptr, Position, false));
 		}
 
 		if (!ensure(MacroInput))
@@ -231,16 +293,16 @@ void FVoxelGraphSchemaAction_CollapseToMacro::FixupParameterInputsPass(const UVo
 			continue;
 		}
 
-		UVoxelGraphParameterNodeBase* LocalVariableDeclaration;
+		UVoxelGraphLocalVariableDeclarationNode* LocalVariableDeclaration;
 		{
-			FVoxelGraphSchemaAction_NewParameter Action;
+			FVoxelGraphSchemaAction_NewParameterUsage Action;
 			Action.ParameterType = EVoxelGraphParameterType::LocalVariable;
+			Action.Guid = It.Value->NewParameterId;
+			Action.bLocalVariable_IsDeclaration = true;
 
-			FVector2D Position;
-			Position.X = DeclarationsPos.X + 200.f;
-			Position.Y = DeclarationsPos.Y;
+			Position.X += 350.f;
 
-			LocalVariableDeclaration = Cast<UVoxelGraphParameterNodeBase>(Action.PerformAction(Graph->MainEdGraph, MacroInput->GetOutputPin(0), Position, true));
+			LocalVariableDeclaration = Cast<UVoxelGraphLocalVariableDeclarationNode>(Action.PerformAction(Graph->MainEdGraph, MacroInput->GetOutputPin(0), Position, false));
 		}
 
 		if (!ensure(LocalVariableDeclaration))
@@ -249,207 +311,372 @@ void FVoxelGraphSchemaAction_CollapseToMacro::FixupParameterInputsPass(const UVo
 			continue;
 		}
 
-		DeclarationsPos.Y += 200.f;
-
-		for (const UVoxelGraphParameterNodeBase* ParameterNode : It.Value)
-		{
-			if (ParameterNode->IsA<UVoxelGraphLocalVariableDeclarationNode>())
-			{
-				continue;
-			}
-
-			UEdGraphPin* OutputPin = ParameterNode->GetOutputPin(0);
-			if (!ensure(OutputPin))
-			{
-				continue;
-			}
-
-			for (UEdGraphPin* LinkedPin : OutputPin->LinkedTo)
-			{
-				OutMappedLocalVariables.Add(LinkedPin, LocalVariableDeclaration);
-			}
-		}
+		It.Value->InputId = MacroInput->Guid;
 	}
 }
 
-void FVoxelGraphSchemaAction_CollapseToMacro::FixupLocalVariableDeclarationsPass(const UVoxelGraph* Graph, const TMap<FGuid, TArray<UVoxelGraphParameterNodeBase*>>& Parameters, const TMap<FGuid, UEdGraphNode*>& NewNodes)
+void FVoxelGraphSchemaAction_CollapseToMacro::AddDeclarationOutputs(UVoxelGraph* Graph)
 {
-	for (const auto& It : Parameters)
+	for (const auto& It : CopiedParameters)
 	{
-		const UVoxelGraphParameterNodeBase* LocalVariableNode = nullptr;
-		for (const UVoxelGraphParameterNodeBase* ParameterNode : It.Value)
-		{
-			if (ParameterNode->IsA<UVoxelGraphLocalVariableDeclarationNode>())
-			{
-				LocalVariableNode = ParameterNode;
-				break;
-			}
-		}
-
-		if (!LocalVariableNode)
+		if (!It.Value->DeclarationNode)
 		{
 			continue;
 		}
 
-		UEdGraphPin* InputPin = nullptr;
-
-		{
-			const UEdGraphPin* Pin = LocalVariableNode->GetInputPin(0);
-			if (!ensure(Pin))
-			{
-				continue;
-			}
-
-			if (Pin->LinkedTo.Num() == 0)
-			{
-				// TODO: What to do if 0?
-				continue;
-			}
-
-			for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
-			{
-				if (!ensure(LinkedPin))
-				{
-					continue;
-				}
-
-				const UEdGraphNode* OwningNode = LinkedPin->GetOwningNode();
-				if (!ensure(OwningNode))
-				{
-					continue;
-				}
-
-				if (const UEdGraphNode* NewNode = NewNodes.FindRef(OwningNode->NodeGuid))
-				{
-					if (UEdGraphPin* NewPin = NewNode->FindPin(LinkedPin->PinName, EGPD_Output))
-					{
-						InputPin = NewPin;
-					}
-					break;
-				}
-			}
-
-			if (!InputPin)
-			{
-				// TODO: Connected to outer node...
-				continue;
-			}
-		}
-
-		if (!InputPin)
-		{
-			continue; // TODO: Figure this out
-		}
-
-		{
-			const UEdGraphPin* Pin = LocalVariableNode->GetOutputPin(0);
-			if (!ensure(Pin))
-			{
-				continue;
-			}
-
-			for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
-			{
-				if (!ensure(LinkedPin))
-				{
-					continue;
-				}
-
-				const UEdGraphNode* OwningNode = LinkedPin->GetOwningNode();
-				if (!ensure(OwningNode))
-				{
-					continue;
-				}
-
-				if (const UEdGraphNode* NewNode = NewNodes.FindRef(OwningNode->NodeGuid))
-				{
-					if (UEdGraphPin* NewPin = NewNode->FindPin(LinkedPin->PinName, EGPD_Input))
-					{
-						InputPin->MakeLinkTo(NewPin);
-					}
-				}
-			}
-		}
-
-		if (It.Value.Num() > 1)
-		{
-
-		}
-	}
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-void FVoxelGraphSchemaAction_CollapseToMacro::ExportNodes(const TMap<UEdGraphNode*, TArray<UEdGraphPin*>>& Nodes, FString& ExportText) const
-{
-	TSet<UEdGraphNode*> NodesToCopy;
-	for (auto& It : Nodes)
-	{
-		if (!It.Key->CanDuplicateNode())
+		if (!ensure(It.Value->ParameterType == EVoxelGraphParameterType::LocalVariable))
 		{
 			continue;
 		}
 
-		It.Key->PrepareForCopying();
-		NodesToCopy.Add(It.Key);
-	}
+		const FVoxelGraphParameter* Parameter = Graph->FindParameterByGuid(It.Value->NewParameterId);
+		if (!ensure(Parameter))
+		{
+			continue;
+		}
 
-	FEdGraphUtilities::ExportNodesToText(reinterpret_cast<TSet<UObject*>&>(NodesToCopy), ExportText);
+		FVector2D Position = OutputDeclarationPosition;
+		OutputDeclarationPosition.Y += 250.f;
+
+		UVoxelGraphLocalVariableUsageNode* LocalVariableUsage;
+		{
+			FVoxelGraphSchemaAction_NewParameterUsage Action;
+			Action.ParameterType = EVoxelGraphParameterType::LocalVariable;
+			Action.Guid = It.Value->NewParameterId;
+			Action.bLocalVariable_IsDeclaration = false;
+
+			LocalVariableUsage = Cast<UVoxelGraphLocalVariableUsageNode>(Action.PerformAction(Graph->MainEdGraph, nullptr, Position, false));
+		}
+
+		if (!ensure(LocalVariableUsage))
+		{
+			continue;
+		}
+
+		// We create macro inputs for local variables / parameters and assign them to newly created local variables, to use them in multiple places
+		UVoxelGraphParameterNodeBase* MacroOutput;
+		{
+			FVoxelGraphSchemaAction_NewParameter Action;
+			Action.ParameterType = EVoxelGraphParameterType::Output;
+			Action.PinType = Parameter->Type;
+			Action.ParameterName = Parameter->Name;
+
+			Position.X += 350.f;
+
+			MacroOutput = Cast<UVoxelGraphParameterNodeBase>(Action.PerformAction(Graph->MainEdGraph, LocalVariableUsage->GetOutputPin(0), Position, false));
+		}
+
+		if (!ensure(MacroOutput))
+		{
+			LocalVariableUsage->DestroyNode();
+			continue;
+		}
+
+		It.Value->OutputId = MacroOutput->Guid;
+	}
 }
 
-void FVoxelGraphSchemaAction_CollapseToMacro::ImportNodes(const TSharedPtr<SGraphEditor>& GraphEditor, UEdGraph* EdGraph, const FString& ExportText, TMap<FGuid, UEdGraphNode*>& NewNodes, FVector2D& OutAvgNodePosition) const
+void FVoxelGraphSchemaAction_CollapseToMacro::AddOuterParameters(UVoxelGraph* Graph)
 {
-	const FVoxelTransaction Transaction(EdGraph, "Paste nodes");
-	FVoxelGraphDelayOnGraphChangedScope OnGraphChangedScope;
+	for (const auto& It : CopiedNodes)
+	{
+		const UVoxelGraphNodeBase* NewNode = It.Value->GetNewNode<UVoxelGraphNodeBase>();
+		const UVoxelGraphNodeBase* OriginalNode = It.Value->GetOriginalNode<UVoxelGraphNodeBase>();
+		if (!ensure(NewNode) ||
+			!ensure(OriginalNode))
+		{
+			continue;
+		}
 
-	// Clear the selection set (newly pasted stuff will be selected)
-	GraphEditor->ClearSelectionSet();
+		for (auto& OuterPinIt : It.Value->OutsideConnectedPins)
+		{
+			const UEdGraphPin* OriginalPin = OuterPinIt.Key.Get();
+			if (!ensure(OriginalPin))
+			{
+				continue;
+			}
+
+			FName TargetPin = OriginalPin->PinName;
+
+			// Parameter node pin is named Value and since we reconstruct parameter
+			// nodes as Local Variable nodes, latter ones has OutputPin instead of Value
+			if (OriginalNode->IsA<UVoxelGraphParameterNode>() &&
+				TargetPin == STATIC_FNAME("Value"))
+			{
+				TargetPin = STATIC_FNAME("OutputPin");
+			}
+
+			UEdGraphPin* NewPin = NewNode->FindPin(TargetPin, OriginalPin->Direction);
+			if (!ensure(NewPin))
+			{
+				continue;
+			}
+
+			// We create macro inputs/outputs for pins which were connected to outer nodes
+			const UVoxelGraphParameterNodeBase* MacroInputOutput = nullptr;
+			for (const FEdGraphPinReference& WeakOuterPin : OuterPinIt.Value)
+			{
+				const UEdGraphPin* OuterPin = WeakOuterPin.Get();
+				if (!ensure(OuterPin))
+				{
+					continue;
+				}
+
+				UEdGraphNode* OuterNode = OuterPin->GetOwningNode();
+				if (!ensure(OuterNode))
+				{
+					continue;
+				}
+
+				// If pin is input and does reference already created parameter, connect it to its usage
+				if (NewPin->Direction == EGPD_Input)
+				{
+					if (const UVoxelGraphParameterNodeBase* OuterParameterNode = Cast<UVoxelGraphParameterNodeBase>(OuterNode))
+					{
+						if (const TSharedPtr<FCopiedParameter>& CopiedParameter = CopiedParameters.FindRef(OuterParameterNode->Guid))
+						{
+							FVoxelGraphSchemaAction_NewParameterUsage Action;
+							Action.bLocalVariable_IsDeclaration = false;
+							Action.Guid = CopiedParameter->NewParameterId;
+							Action.ParameterType = EVoxelGraphParameterType::LocalVariable;
+							Action.PerformAction(Graph->MainEdGraph, NewPin, GetNodePosition(OuterParameterNode), false);
+							continue;
+						}
+					}
+				}
+
+				if (!MacroInputOutput)
+				{
+					FVoxelGraphSchemaAction_NewParameter Action;
+					FVector2D Position(NewNode->NodePosX, NewNode->NodePosY - 200.f);
+					if (NewPin->Direction == EGPD_Input)
+					{
+						Action.ParameterType = EVoxelGraphParameterType::Input;
+						Position.X -= 350.f;
+						Position.Y += NewNode->GetInputPins().IndexOfByKey(NewPin) * 100.f;
+					}
+					else
+					{
+						Action.ParameterType = EVoxelGraphParameterType::Output;
+						Position.X += 350.f;
+						Position.Y += NewNode->GetOutputPins().IndexOfByKey(NewPin) * 100.f;
+					}
+					Action.PinType = NewPin->PinType;
+					MacroInputOutput = Cast<UVoxelGraphParameterNodeBase>(Action.PerformAction(Graph->MainEdGraph, NewPin, Position, false));
+				}
+
+				if (!ensure(MacroInputOutput))
+				{
+					continue;
+				}
+
+				It.Value->MappedInputsOutputs.FindOrAdd(MacroInputOutput->Guid, {}).Add(WeakOuterPin);
+			}
+		}
+	}
+}
+
+void FVoxelGraphSchemaAction_CollapseToMacro::FixupMainGraph(const UVoxelGraphMacroNode* MacroNode, UEdGraph* EdGraph)
+{
+	// Remove all original nodes
+	{
+		for (const auto& It : CopiedNodes)
+		{
+			UEdGraphNode* Node = It.Value->GetOriginalNode<UEdGraphNode>();
+			if (!ensure(Node))
+			{
+				continue;
+			}
+
+			Node->DestroyNode();
+		}
+	}
+
+	// Create outer node links
+	{
+		for (const auto& It : CopiedNodes)
+		{
+			for (auto& OuterLinkIt : It.Value->MappedInputsOutputs)
+			{
+				UEdGraphPin* MacroPin = MacroNode->FindPin(OuterLinkIt.Key.ToString());
+				if (!ensure(MacroPin))
+				{
+					continue;
+				}
+
+				for (const FEdGraphPinReference& WeakOuterPin : OuterLinkIt.Value)
+				{
+					UEdGraphPin* OuterPin = WeakOuterPin.Get();
+					if (!ensure(OuterPin))
+					{
+						continue;
+					}
+
+					MacroPin->MakeLinkTo(OuterPin);
+				}
+			}
+		}
+	}
+
+	// Link parameters/local variables
+	{
+		for (const auto& It : CopiedParameters)
+		{
+			if (It.Value->InputId.IsValid())
+			{
+				UEdGraphPin* InputPin = MacroNode->FindPin(It.Value->InputId.ToString());
+				if (!ensure(InputPin))
+				{
+					continue;
+				}
+
+				if (InputPin->LinkedTo.Num() > 0)
+				{
+					continue;
+				}
+
+				FVoxelGraphSchemaAction_NewParameterUsage Action;
+				Action.ParameterType = It.Value->ParameterType;
+				Action.Guid = It.Value->OriginalParameterId;
+				Action.bLocalVariable_IsDeclaration = false;
+
+				FVector2D Position(AvgNodePosition.X - 200.f, AvgNodePosition.Y);
+				Position.Y += MacroNode->GetInputPins().IndexOfByKey(InputPin) * 100.f;
+
+				ensure(Action.PerformAction(EdGraph, InputPin, Position, false));
+			}
+
+			if (It.Value->OutputId.IsValid())
+			{
+				UEdGraphPin* OutputPin = MacroNode->FindPin(It.Value->OutputId.ToString());
+				if (!ensure(OutputPin))
+				{
+					continue;
+				}
+
+				if (OutputPin->LinkedTo.Num() > 0)
+				{
+					continue;
+				}
+
+				ensure(It.Value->ParameterType == EVoxelGraphParameterType::LocalVariable);
+
+				FVoxelGraphSchemaAction_NewParameterUsage Action;
+				Action.ParameterType = It.Value->ParameterType;
+				Action.Guid = It.Value->OriginalParameterId;
+				Action.bLocalVariable_IsDeclaration = true;
+
+				FVector2D Position(AvgNodePosition.X + 200.f, AvgNodePosition.Y);
+				Position.Y += MacroNode->GetInputPins().IndexOfByKey(OutputPin) * 100.f;
+
+				ensure(Action.PerformAction(EdGraph, OutputPin, Position, false));
+			}
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelGraphSchemaAction_CollapseToMacro::ExportNodes(FString& ExportText) const
+{
+	TSet<UObject*> Nodes;
+	for (const auto& It : CopiedNodes)
+	{
+		UEdGraphNode* Node = It.Value->OriginalNode.Get();
+		if (!ensure(Node) ||
+			!Node->CanDuplicateNode())
+		{
+			continue;
+		}
+
+		Node->PrepareForCopying();
+		Nodes.Add(Node);
+	}
+
+	FEdGraphUtilities::ExportNodesToText(Nodes, ExportText);
+}
+
+void FVoxelGraphSchemaAction_CollapseToMacro::ImportNodes(UVoxelGraph* Graph, const FString& ExportText)
+{
+	const FVoxelTransaction Transaction(Graph, "Paste nodes");
 
 	TSet<UEdGraphNode*> PastedNodes;
-	// Import the nodes
-	FEdGraphUtilities::ImportNodesFromText(EdGraph, ExportText, PastedNodes);
 
-	TSet<UEdGraphNode*> CopyPastedNodes = PastedNodes;
-	for (UEdGraphNode* Node : CopyPastedNodes)
-	{
-		if (UVoxelGraphNodeBase* VoxelNode = Cast<UVoxelGraphNodeBase>(Node))
-		{
-			if (!VoxelNode->CanPasteVoxelNode(PastedNodes))
-			{
-				Node->DestroyNode();
-				PastedNodes.Remove(Node);
-			}
-		}
-	}
+	// Import the nodes
+	FEdGraphUtilities::ImportNodesFromText(Graph->MainEdGraph, ExportText, PastedNodes);
 
 	// Average position of nodes so we can move them while still maintaining relative distances to each other
-	OutAvgNodePosition = FVector2D::ZeroVector;
+	AvgNodePosition = FVector2D::ZeroVector;
 
-	for (const UEdGraphNode* Node : PastedNodes)
+	for (auto It = PastedNodes.CreateIterator(); It; ++It)
 	{
-		OutAvgNodePosition.X += Node->NodePosX;
-		OutAvgNodePosition.Y += Node->NodePosY;
+		UEdGraphNode* Node = *It;
+		if (!ensure(Node))
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		AvgNodePosition.X += Node->NodePosX;
+		AvgNodePosition.Y += Node->NodePosY;
+
+		UVoxelGraphNodeBase* VoxelNode = Cast<UVoxelGraphNodeBase>(Node);
+		if (!VoxelNode ||
+			VoxelNode->CanPasteVoxelNode(PastedNodes))
+		{
+			continue;
+		}
+
+		VoxelNode->DestroyNode();
+		It.RemoveCurrent();
 	}
 
 	if (PastedNodes.Num() > 0)
 	{
-		OutAvgNodePosition.X /= PastedNodes.Num();
-		OutAvgNodePosition.Y /= PastedNodes.Num();
+		AvgNodePosition.X /= PastedNodes.Num();
+		AvgNodePosition.Y /= PastedNodes.Num();
 	}
+
+	// Top left corner of all nodes
+	InputDeclarationPosition.X = MAX_FLT;
+	InputDeclarationPosition.Y = MAX_FLT;
+
+	// Top right corner of all nodes
+	OutputDeclarationPosition.X = -MAX_FLT;
+	OutputDeclarationPosition.Y = MAX_FLT;
 
 	for (UEdGraphNode* Node : PastedNodes)
 	{
-		// Select the newly pasted stuff
-		GraphEditor->SetNodeSelection(Node, true);
+		const FVector2D NodePosition = GetNodePosition(Node);
+		Node->NodePosX = NodePosition.X;
+		Node->NodePosY = NodePosition.Y;
 
-		Node->NodePosX = (Node->NodePosX - OutAvgNodePosition.X);
-		Node->NodePosY = (Node->NodePosY - OutAvgNodePosition.Y);
+		InputDeclarationPosition.X = FMath::Min(Node->NodePosX, InputDeclarationPosition.X);
+		InputDeclarationPosition.Y = FMath::Min(Node->NodePosY, InputDeclarationPosition.Y);
+
+		OutputDeclarationPosition.X = FMath::Max(Node->NodePosX, OutputDeclarationPosition.X);
+		OutputDeclarationPosition.Y = FMath::Min(Node->NodePosY, OutputDeclarationPosition.Y);
 
 		Node->SnapToGrid(SNodePanel::GetSnapGridSize());
 
-		NewNodes.Add(Node->NodeGuid, Node);
+		const TSharedPtr<FCopiedNode> CopiedNode = CopiedNodes.FindRef(Node->NodeGuid);
+		if (ensure(CopiedNode))
+		{
+			CopiedNode->NewNode = Node;
+
+			if (const UVoxelGraphParameterNodeBase* OriginalNode = CopiedNode->GetOriginalNode<UVoxelGraphParameterNodeBase>())
+			{
+				const TSharedPtr<FCopiedParameter> CopiedParameter = CopiedParameters.FindRef(OriginalNode->Guid);
+				const UVoxelGraphParameterNodeBase* NewParameterNode = Cast<UVoxelGraphParameterNodeBase>(Node);
+				if (ensure(CopiedParameter) &&
+					ensure(NewParameterNode))
+				{
+					CopiedParameter->NewParameterId = NewParameterNode->Guid;
+				}
+			}
+		}
 
 		// Give new node a different Guid from the old one
 		Node->CreateNewGuid();
@@ -464,6 +691,11 @@ void FVoxelGraphSchemaAction_CollapseToMacro::ImportNodes(const TSharedPtr<SGrap
 		}
 	}
 
-	// Update UI
-	GraphEditor->NotifyGraphChanged();
+	InputDeclarationPosition.X -= 800.f;
+	OutputDeclarationPosition.X += 800.f;
+}
+
+FVector2D FVoxelGraphSchemaAction_CollapseToMacro::GetNodePosition(const UEdGraphNode* Node) const
+{
+	return FVector2D(Node->NodePosX - AvgNodePosition.X, Node->NodePosY - AvgNodePosition.Y);
 }

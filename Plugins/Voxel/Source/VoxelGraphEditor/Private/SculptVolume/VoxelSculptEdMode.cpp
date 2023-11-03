@@ -2,15 +2,9 @@
 
 #include "VoxelSculptEdMode.h"
 #include "VoxelSculptToolkit.h"
-#include "VoxelRuntime.h"
-#include "VoxelTaskGroup.h"
-#include "VoxelDependency.h"
-#include "VoxelBufferUtilities.h"
 #include "VoxelParameterContainer.h"
-#include "Buffer/VoxelFloatBuffers.h"
-#include "VoxelPositionQueryParameter.h"
-#include "SculptVolume/VoxelSculptVolumeStorage.h"
-#include "SculptVolume/VoxelSculptVolumeStorageData.h"
+#include "Sculpt/VoxelSculptStorage.h"
+#include "Sculpt/VoxelSculptFunctionLibrary.h"
 #include "EdModeInteractiveToolsContext.h"
 #include "BaseBehaviors/ClickDragBehavior.h"
 #include "BaseBehaviors/MouseHoverBehavior.h"
@@ -19,51 +13,7 @@ DEFINE_VOXEL_COMMANDS(FVoxelSculptCommands);
 
 void FVoxelSculptCommands::RegisterCommands()
 {
-	VOXEL_UI_COMMAND(Select, "Select", "Select", EUserInterfaceActionType::ToggleButton, {});
 	VOXEL_UI_COMMAND(Sculpt, "Sculpt", "Sculpt", EUserInterfaceActionType::ToggleButton, {});
-}
-
-void UVoxelSelectTool::Setup()
-{
-	Super::Setup();
-
-	Properties = NewObject<UVoxelSelectToolProperties>(this);
-	Properties->RestoreProperties(this);
-	AddToolPropertySource(Properties);
-}
-
-void UVoxelSelectTool::Shutdown(EToolShutdownType ShutdownType)
-{
-	Properties->SaveProperties(this);
-}
-
-FInputRayHit UVoxelSelectTool::IsHitByClick(const FInputDeviceRay& ClickPos)
-{
-	FViewport* FocusedViewport = GetToolManager()->GetContextQueriesAPI()->GetFocusedViewport();
-	if (!FocusedViewport)
-	{
-		return {};
-	}
-
-	HHitProxy* HitProxy = FocusedViewport->GetHitProxy(ClickPos.ScreenPosition.X, ClickPos.ScreenPosition.Y);
-	if (!HitProxy)
-	{
-		return {};
-	}
-
-	HActor* ActorHitProxy = HitProxyCast<HActor>(HitProxy);
-	if (!ActorHitProxy)
-	{
-		return {};
-	}
-
-	UE_DEBUG_BREAK();
-	return {};
-}
-
-void UVoxelSelectTool::OnClicked(const FInputDeviceRay& ClickPos)
-{
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -93,32 +43,31 @@ void UVoxelSculptTool::Setup()
 	PreviewActor = GetWorld()->SpawnActor<AVoxelPreviewActor>(SpawnParameters);
 	PreviewActor->SetActorLabel("VoxelSculptActor");
 	PreviewActor->bCreateRuntimeOnBeginPlay = false;
-	PreviewActor->DefaultRuntimeParameters.Add(NewSurfaceParameter);
 	PreviewActor->DefaultRuntimeParameters.Add<FVoxelRuntimeParameter_DisableCollision>();
 
-	FString GraphString;
+	FString ProviderString;
 	if (GConfig->GetString(
 		TEXT("VoxelSculptTool"),
-		TEXT("Graph"),
-		GraphString,
+		TEXT("Provider"),
+		ProviderString,
 		GEditorPerProjectIni))
 	{
 		FVoxelObjectUtilities::PropertyFromText_InContainer(
 			FindFPropertyChecked(UVoxelParameterContainer, Provider),
-			GraphString,
+			ProviderString,
 			PreviewActor->ParameterContainer);
 	}
 
-	FString ParameterCollectionString;
+	FString ValueOverridesString;
 	if (GConfig->GetString(
 		TEXT("VoxelSculptTool"),
-		TEXT("ParameterCollection"),
-		ParameterCollectionString,
+		TEXT("ValueOverrides"),
+		ValueOverridesString,
 		GEditorPerProjectIni))
 	{
 		FVoxelObjectUtilities::PropertyFromText_InContainer(
-			FindFPropertyChecked(UVoxelParameterContainer, Provider),
-			ParameterCollectionString,
+			FindFPropertyChecked(UVoxelParameterContainer, ValueOverrides),
+			ValueOverridesString,
 			PreviewActor->ParameterContainer);
 	}
 
@@ -126,20 +75,23 @@ void UVoxelSculptTool::Setup()
 
 	AddToolPropertySource(PreviewActor);
 
-	const auto SetSculptVolume = [this](AVoxelSculptVolume* SculptVolume)
+	const auto SetTargetActor = [this](AVoxelActor* TargetActor)
 	{
 		if (!ensure(PreviewActor))
 		{
 			return;
 		}
 
-		PreviewActor->DefaultRuntimeParameters.Remove<FVoxelRuntimeParameter_SculptVolumeStorage>();
-		PreviewActor->SculptVolume = SculptVolume;
+		PreviewActor->DefaultRuntimeParameters.Remove<FVoxelRuntimeParameter_SculptStorage>();
+		PreviewActor->TargetActor = TargetActor;
 
-		if (SculptVolume)
+		if (TargetActor &&
+			ensure(TargetActor->SculptStorageComponent))
 		{
-			const TSharedRef<FVoxelRuntimeParameter_SculptVolumeStorage> Parameter = SculptVolume->GetSculptVolumeParameter();
-			Parameter->SurfaceToWorldOverride = FVoxelTransformRef::Make(*SculptVolume);
+			// Setup parameter for preview
+			const TSharedRef<FVoxelRuntimeParameter_SculptStorage> Parameter = MakeVoxelShared<FVoxelRuntimeParameter_SculptStorage>();
+			Parameter->Data = TargetActor->SculptStorageComponent->GetData();
+			Parameter->SurfaceToWorldOverride = FVoxelTransformRef::Make(*TargetActor);
 			PreviewActor->DefaultRuntimeParameters.Add(Parameter);
 			PreviewActor->QueueRecreate();
 		}
@@ -148,13 +100,13 @@ void UVoxelSculptTool::Setup()
 			PreviewActor->DestroyRuntime();
 		}
 	};
-	const auto OnSelectionChanged = [this, SetSculptVolume](UObject*)
+	const auto OnSelectionChanged = [this, SetTargetActor](UObject*)
 	{
 		for (FSelectionIterator It(*GEditor->GetSelectedActors()); It; ++It)
 		{
-			if (AVoxelSculptVolume* Volume = Cast<AVoxelSculptVolume>(*It))
+			if (AVoxelActor* Actor = Cast<AVoxelActor>(*It))
 			{
-				SetSculptVolume(Volume);
+				SetTargetActor(Actor);
 				break;
 			}
 		}
@@ -163,11 +115,11 @@ void UVoxelSculptTool::Setup()
 	USelection::SelectionChangedEvent.AddWeakLambda(this, OnSelectionChanged);
 	OnSelectionChanged(nullptr);
 
-	if (!PreviewActor->SculptVolume)
+	if (!PreviewActor->TargetActor)
 	{
-		for (AVoxelSculptVolume* Volume : TActorRange<AVoxelSculptVolume>(GetWorld()))
+		for (AVoxelActor* Actor : TActorRange<AVoxelActor>(GetWorld()))
 		{
-			SetSculptVolume(Volume);
+			SetTargetActor(Actor);
 			break;
 		}
 	}
@@ -184,7 +136,7 @@ void UVoxelSculptTool::Shutdown(EToolShutdownType ShutdownType)
 
 	GConfig->SetString(
 		TEXT("VoxelSculptTool"),
-		TEXT("Graph"),
+		TEXT("Provider"),
 		*FVoxelObjectUtilities::PropertyToText_InContainer(
 			FindFPropertyChecked(UVoxelParameterContainer, Provider),
 			PreviewActor->ParameterContainer),
@@ -192,9 +144,9 @@ void UVoxelSculptTool::Shutdown(EToolShutdownType ShutdownType)
 
 	GConfig->SetString(
 		TEXT("VoxelSculptTool"),
-		TEXT("ParameterCollection"),
+		TEXT("ValueOverrides"),
 		*FVoxelObjectUtilities::PropertyToText_InContainer(
-			FindFPropertyChecked(UVoxelParameterContainer, Provider),
+			FindFPropertyChecked(UVoxelParameterContainer, ValueOverrides),
 			PreviewActor->ParameterContainer),
 		GEditorPerProjectIni);
 
@@ -293,102 +245,17 @@ bool UVoxelSculptTool::DoEdit() const
 {
 	if (!ensure(PreviewActor) ||
 		!PreviewActor->GetGraph() ||
-		!PreviewActor->SculptVolume ||
+		!PreviewActor->TargetActor ||
 		!PreviewActor->IsRuntimeCreated())
 	{
-		VOXEL_MESSAGE(Error, "No Sculpt Volume selected");
+		VOXEL_MESSAGE(Error, "No voxel actor selected");
 		return false;
 	}
 
-	AVoxelSculptVolume* SculptVolume = PreviewActor->SculptVolume;
-	if (!SculptVolume->IsRuntimeCreated())
-	{
-		VOXEL_MESSAGE(Error, "{0}: Sculpt volume not created", SculptVolume);
-		return false;
-	}
+	UVoxelSculptFunctionLibrary::ApplySculpt(
+		PreviewActor->TargetActor,
+		PreviewActor);
 
-	const TSharedPtr<FVoxelSetSculptVolumeSurfaceExecNodeRuntime> NodeRuntime = NewSurfaceParameter->WeakRuntime.Pin();
-	if (!NodeRuntime)
-	{
-		VOXEL_MESSAGE(Error, "{0}: No Set Sculpt Volume Surface node", PreviewActor->GetGraph());
-		return false;
-	}
-
-	const TOptional<FVoxelBox> OptionalLocalBounds = FVoxelTaskGroup::TryRunSynchronously(NodeRuntime->GetContext(), [&]
-	{
-		const FVoxelQuery Query = FVoxelQuery::Make(
-			FVoxelQueryContext::Make(SculptVolume->GetRuntime()->GetRuntimeInfoRef().AsShared()),
-			MakeVoxelShared<FVoxelQueryParameters>(),
-			FVoxelDependencyTracker::Create("VoxelSculpt"))
-			.MakeNewQuery(NodeRuntime->GetContext());
-
-		return NodeRuntime->GetNodeRuntime().Get(NodeRuntime->Node.BoundsPin, Query);
-	});
-
-	if (!ensure(OptionalLocalBounds))
-	{
-		return false;
-	}
-
-	const FVoxelBox LocalBounds = OptionalLocalBounds->TransformBy(
-		PreviewActor->ActorToWorld().ToMatrixWithScale() *
-		SculptVolume->ActorToWorld().ToInverseMatrixWithScale());
-
-	// MakeMultipleOf to not have to handle partial chunk updates & querying the source data manually again
-	const FVoxelIntBox IntBounds = FVoxelIntBox::FromFloatBox_WithPadding(LocalBounds)
-		.MakeMultipleOfBigger(FVoxelSculptVolumeStorageData::ChunkSize);
-
-	if (IntBounds.Count_LargeBox() > 1024 * 1024)
-	{
-		VOXEL_MESSAGE(Error, "Cannot apply tool: more than 1M voxels would be computed");
-		return false;
-	}
-
-	const TSharedRef<FVoxelQueryParameters> QueryParameters = MakeVoxelShared<FVoxelQueryParameters>();
-	QueryParameters->Add<FVoxelLODQueryParameter>().LOD = 0;
-	QueryParameters->Add<FVoxelPositionQueryParameter>().InitializeGrid3D(FVector3f(IntBounds.Min), 1.f, IntBounds.Size());
-
-	const TOptional<FVoxelFloatBuffer> SurfaceDistances = FVoxelTaskGroup::TryRunSynchronously(NodeRuntime->GetContext(), [&]
-	{
-		const FVoxelQuery Query = FVoxelQuery::Make(
-			FVoxelQueryContext::Make(SculptVolume->GetRuntime()->GetRuntimeInfoRef().AsShared()),
-			QueryParameters,
-			FVoxelDependencyTracker::Create("VoxelSculpt"))
-			.MakeNewQuery(NodeRuntime->GetContext());
-
-		const TVoxelFutureValue<FVoxelSurface> Surface = NodeRuntime->GetNodeRuntime().Get(NodeRuntime->Node.SurfacePin, Query);
-		return
-			MakeVoxelTask()
-			.Dependency(Surface)
-			.Execute<FVoxelFloatBuffer>([=]
-			{
-				return Surface.Get_CheckCompleted().GetDistance(Query);
-			});
-	});
-
-	if (!ensure(SurfaceDistances))
-	{
-		return false;
-	}
-
-	if (SurfaceDistances->Num() != 1 &&
-		SurfaceDistances->Num() != IntBounds.Count_SmallBox())
-	{
-		VOXEL_MESSAGE(Error, "{0}: Surface has a different buffer size than Positions", NodeRuntime.Get());
-		return false;
-	}
-
-	TVoxelArray<float> Distances;
-	FVoxelUtilities::SetNumFast(Distances, IntBounds.Count_SmallBox());
-
-	FVoxelBufferUtilities::UnpackData(
-		SurfaceDistances->GetStorage(),
-		Distances,
-		IntBounds.Size());
-
-	const TSharedRef<FVoxelSculptVolumeStorageData> Data = SculptVolume->GetData();
-	Data->SetDistances(IntBounds, ReinterpretCastVoxelArrayView<float>(Distances));
-	SculptVolume->MarkPackageDirty();
 	return true;
 }
 
@@ -414,11 +281,6 @@ void UVoxelSculptEdMode::Enter()
 	const FVoxelSculptCommands& Commands = FVoxelSculptCommands::Get();
 
 	RegisterTool(
-		Commands.Select,
-		GetClassName<UVoxelSelectTool>(),
-		NewObject<UVoxelSelectToolBuilder>(this));
-
-	RegisterTool(
 		Commands.Sculpt,
 		GetClassName<UVoxelSculptTool>(),
 		NewObject<UVoxelSculptToolBuilder>(this));
@@ -442,7 +304,6 @@ TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> UVoxelSculptEdMode::GetModeComma
 
 	TMap<FName, TArray<TSharedPtr<FUICommandInfo>>> Result;
 	Result.Add("Tools", {
-		Commands.Select,
 		Commands.Sculpt
 	});
 	return Result;

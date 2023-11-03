@@ -10,104 +10,6 @@ struct FVoxelPointIdBuffer;
 struct VOXELGRAPHCORE_API FVoxelBufferUtilities
 {
 public:
-	static void WritePositions2D(
-		FVoxelFloatBufferStorage& OutPositionX,
-		FVoxelFloatBufferStorage& OutPositionY,
-		const FVector2f& Start,
-		float Step,
-		const FIntPoint& Size);
-
-	static void WritePositions3D(
-		FVoxelFloatBufferStorage& OutPositionX,
-		FVoxelFloatBufferStorage& OutPositionY,
-		FVoxelFloatBufferStorage& OutPositionZ,
-		const FVector3f& Start,
-		float Step,
-		const FIntVector& Size);
-
-	static void WritePositions_Unpacked(
-		FVoxelFloatBufferStorage& OutPositionX,
-		FVoxelFloatBufferStorage& OutPositionY,
-		FVoxelFloatBufferStorage& OutPositionZ,
-		const FVector3f& Start,
-		float Step,
-		const FIntVector& Size);
-
-	static void WriteIntPositions_Unpacked(
-		FVoxelInt32BufferStorage& OutPositionX,
-		FVoxelInt32BufferStorage& OutPositionY,
-		FVoxelInt32BufferStorage& OutPositionZ,
-		const FIntVector& Start,
-		int32 Step,
-		const FIntVector& Size);
-
-	template<typename Type, typename OutDataType>
-	static void UnpackData(
-		const TVoxelBufferStorage<Type>& InData,
-		OutDataType& OutData,
-		const FIntVector& Size)
-	{
-		VOXEL_FUNCTION_COUNTER();
-		check(OutData.Num() == Size.X * Size.Y * Size.Z);
-
-		if (InData.IsConstant())
-		{
-			FVoxelUtilities::SetAll(OutData, InData.GetConstant());
-			return;
-		}
-
-		if (!ensure(InData.Num() == OutData.Num()))
-		{
-			return;
-		}
-
-		check(Size % 2 == 0);
-		const FIntVector BlockSize = Size / 2;
-
-		int32 ReadIndex = 0;
-		for (int32 Z = 0; Z < BlockSize.Z; Z++)
-		{
-			for (int32 Y = 0; Y < BlockSize.Y; Y++)
-			{
-				int32 BaseWriteIndex =
-					Size.X * 2 * Y +
-					Size.X * Size.Y * 2 * Z;
-
-				for (int32 X = 0; X < BlockSize.X; X++)
-				{
-					checkVoxelSlow(ReadIndex == 8 * FVoxelUtilities::Get3DIndex<int32>(Size / 2, X, Y, Z));
-					checkVoxelSlow(BaseWriteIndex == FVoxelUtilities::Get3DIndex<int32>(Size, 2 * X, 2 * Y, 2 * Z));
-
-#define LOOP(Block) \
-					{ \
-						const int32 WriteIndex = BaseWriteIndex + bool(Block & 0x1) + bool(Block & 0x2) * Size.X + bool(Block & 0x4) * Size.X * Size.Y; \
-						checkVoxelSlow(WriteIndex == FVoxelUtilities::Get3DIndex<int32>(Size, \
-							2 * X + bool(Block & 0x1), \
-							2 * Y + bool(Block & 0x2), \
-							2 * Z + bool(Block & 0x4))); \
-						\
-						OutData[WriteIndex] = InData.LoadFast(ReadIndex + Block); \
-					}
-
-					LOOP(0);
-					LOOP(1);
-					LOOP(2);
-					LOOP(3);
-					LOOP(4);
-					LOOP(5);
-					LOOP(6);
-					LOOP(7);
-
-#undef LOOP
-
-					ReadIndex += 8;
-					BaseWriteIndex += 2;
-				}
-			}
-		}
-	}
-
-public:
 	static FVoxelVectorBuffer ApplyTransform(const FVoxelVectorBuffer& Buffer, const FTransform& Transform);
 	static FVoxelVectorBuffer ApplyInverseTransform(const FVoxelVectorBuffer& Buffer, const FTransform& Transform);
 
@@ -169,14 +71,19 @@ public:
 	static FVoxelFloatBuffer DoubleToFloat(const FVoxelDoubleBuffer& Double);
 
 	static FVoxelSeedBuffer PointIdToSeed(const FVoxelPointIdBuffer& Buffer);
-	static FVoxelInt32Buffer BoolToInt32(const FVoxelBoolBuffer& Buffer);
 
 public:
 	static FVoxelFloatBuffer Add(const FVoxelFloatBuffer& A, const FVoxelFloatBuffer& B);
 	static FVoxelFloatBuffer Multiply(const FVoxelFloatBuffer& A, const FVoxelFloatBuffer& B);
+	static FVoxelBoolBuffer Less(const FVoxelFloatBuffer& A, const FVoxelFloatBuffer& B);
 
 	static FVoxelVectorBuffer Add(const FVoxelVectorBuffer& A, const FVoxelVectorBuffer& B);
 	static FVoxelVectorBuffer Multiply(const FVoxelVectorBuffer& A, const FVoxelVectorBuffer& B);
+
+	static FVoxelFloatBuffer Lerp(const FVoxelFloatBuffer& A, const FVoxelFloatBuffer& B, const FVoxelFloatBuffer& Alpha);
+	static FVoxelVector2DBuffer Lerp(const FVoxelVector2DBuffer& A, const FVoxelVector2DBuffer& B, const FVoxelFloatBuffer& Alpha);
+	static FVoxelVectorBuffer Lerp(const FVoxelVectorBuffer& A, const FVoxelVectorBuffer& B, const FVoxelFloatBuffer& Alpha);
+	static FVoxelLinearColorBuffer Lerp(const FVoxelLinearColorBuffer& A, const FVoxelLinearColorBuffer& B, const FVoxelFloatBuffer& Alpha);
 
 	static FVoxelQuaternionBuffer Combine(const FVoxelQuaternionBuffer& A, const FVoxelQuaternionBuffer& B);
 
@@ -185,6 +92,17 @@ public:
 		const FVoxelTerminalBuffer& Buffer,
 		FVoxelInt32Buffer& OutIndices,
 		FVoxelTerminalBuffer& OutPalette);
+
+public:
+	static void Select(
+		FVoxelTerminalBuffer& OutBuffer,
+		const FVoxelBuffer& Indices,
+		TConstVoxelArrayView<const FVoxelTerminalBuffer*> Buffers);
+
+	static TSharedRef<const FVoxelBuffer> Select(
+		const FVoxelPinType& InnerType,
+		const FVoxelBuffer& Indices,
+		TConstVoxelArrayView<const FVoxelBuffer*> Buffers);
 
 public:
 	static void Gather(
@@ -207,16 +125,4 @@ public:
 		const FVoxelBuffer& Buffer,
 		TConstVoxelArrayView<int32> Counts,
 		int32 NewNum);
-
-public:
-	static FVoxelFutureValue Query2D(
-		const FVoxelComputeValue& ComputeValue,
-		const FVoxelQuery& Query,
-		const FVoxelPinType& BufferType);
-
-private:
-	static void ExpandQuery2D(
-		FVoxelTerminalBuffer& OutBuffer,
-		const FVoxelTerminalBuffer& Buffer,
-		int32 Count);
 };

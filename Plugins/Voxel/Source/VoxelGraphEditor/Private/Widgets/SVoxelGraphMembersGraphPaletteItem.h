@@ -7,9 +7,7 @@
 
 struct FVoxelGraphMembersGraphSchemaAction;
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SMembersGraphPaletteItem : public SGraphPaletteItem
+class SVoxelGraphMembersGraphPaletteItem : public SGraphPaletteItem
 {
 public:
 	VOXEL_SLATE_ARGS()
@@ -27,5 +25,3 @@ protected:
 private:
 	TSharedPtr<FVoxelGraphMembersGraphSchemaAction> GetAction() const;
 };
-
-END_VOXEL_NAMESPACE(Graph)

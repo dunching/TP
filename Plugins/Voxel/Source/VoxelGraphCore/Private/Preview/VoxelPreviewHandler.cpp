@@ -1,20 +1,33 @@
 ﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Preview/VoxelPreviewHandler.h"
-
 #include "VoxelQuery.h"
+
+TArray<const FVoxelPreviewHandler*> GVoxelPreviewHandlers;
+
+VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelPreviewHandlersCleanup)
+{
+	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
+	{
+		for (const FVoxelPreviewHandler* PreviewHandler : GVoxelPreviewHandlers)
+		{
+			FVoxelMemory::Delete(PreviewHandler);
+		}
+		GVoxelPreviewHandlers.Empty();
+	});
+}
 
 const TArray<const FVoxelPreviewHandler*>& FVoxelPreviewHandler::GetHandlers()
 {
-	static TArray<const FVoxelPreviewHandler*> Handlers;
-	if (Handlers.Num() == 0)
+	if (GVoxelPreviewHandlers.Num() == 0)
 	{
 		for (UScriptStruct* Struct : GetDerivedStructs<FVoxelPreviewHandler>())
 		{
-			Handlers.Add(TVoxelInstancedStruct<FVoxelPreviewHandler>(Struct).Release());
+			GVoxelPreviewHandlers.Add(TVoxelInstancedStruct<FVoxelPreviewHandler>(Struct).Release());
 		}
 	}
-	return Handlers;
+
+	return GVoxelPreviewHandlers;
 }
 
 void FVoxelPreviewHandler::BuildStats(const FAddStat& AddStat)

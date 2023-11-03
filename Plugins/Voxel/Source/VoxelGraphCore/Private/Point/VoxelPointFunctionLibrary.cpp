@@ -5,9 +5,10 @@
 #include "Point/VoxelPointStorage.h"
 #include "Point/VoxelPointStorageData.h"
 #include "Point/VoxelPointHandleProvider.h"
+#include "Point/VoxelPointOverrideManager.h"
 #include "VoxelRuntime.h"
 
-EVoxelSuccess UVoxelPointFunctionLibrary::MakePointHandle(const FHitResult& HitResult, FVoxelPointHandle& Handle)
+EVoxelSuccess UVoxelPointFunctionLibrary::MakePointHandleFromHitResult(const FHitResult& HitResult, FVoxelPointHandle& Handle)
 {
 	VOXEL_FUNCTION_COUNTER();
 
@@ -31,6 +32,37 @@ EVoxelSuccess UVoxelPointFunctionLibrary::MakePointHandle(const FHitResult& HitR
 	}
 
 	if (!Provider->TryGetPointHandle(HitResult.Item, Handle))
+	{
+		return EVoxelSuccess::Failed;
+	}
+
+	return EVoxelSuccess::Succeeded;
+}
+
+EVoxelSuccess UVoxelPointFunctionLibrary::MakePointHandleFromOverlapResult(const FOverlapResult& OverlapResult, FVoxelPointHandle& Handle)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	Handle = {};
+
+	if (!OverlapResult.bBlockingHit)
+	{
+		return EVoxelSuccess::Failed;
+	}
+
+	const UPrimitiveComponent* Component = OverlapResult.GetComponent();
+	if (!Component)
+	{
+		return EVoxelSuccess::Failed;
+	}
+
+	const IVoxelPointHandleProvider* Provider = Cast<IVoxelPointHandleProvider>(Component);
+	if (!Provider)
+	{
+		return EVoxelSuccess::Failed;
+	}
+
+	if (!Provider->TryGetPointHandle(OverlapResult.ItemIndex, Handle))
 	{
 		return EVoxelSuccess::Failed;
 	}
@@ -62,15 +94,18 @@ EVoxelSuccess UVoxelPointFunctionLibrary::GetPointTransform(
 	}
 
 	TVoxelMap<FName, FVoxelPinValue> Attributes;
+	Attributes.Add(FVoxelPointAttributes::Position);
+	Attributes.Add(FVoxelPointAttributes::Rotation);
+	Attributes.Add(FVoxelPointAttributes::Scale);
 	if (!Handle.GetAttributes(Attributes, &Error))
 	{
 		VOXEL_MESSAGE(Error, "Failed to get attributes: {0}", Error);
 		return EVoxelSuccess::Failed;
 	}
 
-	const FVoxelPinValue Position = Attributes.FindRef(FVoxelPointAttributes::Position);
-	const FVoxelPinValue Rotation = Attributes.FindRef(FVoxelPointAttributes::Rotation);
-	const FVoxelPinValue Scale = Attributes.FindRef(FVoxelPointAttributes::Scale);
+	const FVoxelPinValue Position = Attributes.FindChecked(FVoxelPointAttributes::Position);
+	const FVoxelPinValue Rotation = Attributes.FindChecked(FVoxelPointAttributes::Rotation);
+	const FVoxelPinValue Scale = Attributes.FindChecked(FVoxelPointAttributes::Scale);
 
 	if (ensure(Position.Is<FVector>()))
 	{
@@ -100,6 +135,65 @@ bool UVoxelPointFunctionLibrary::HasPointAttribute(
 		&Error);
 
 	return Value.IsValid();
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void UVoxelPointFunctionLibrary::SetPointVisibility(
+	const FVoxelPointHandle& Handle,
+	const bool bVisible)
+{
+	BulkSetPointVisibility(
+		Handle.ChunkRef,
+		TVoxelArray<FVoxelPointId>{ Handle.PointId },
+		bVisible);
+}
+
+void UVoxelPointFunctionLibrary::BulkSetPointVisibility(
+	const FVoxelPointChunkRef& ChunkRef,
+	const TConstVoxelArrayView<FVoxelPointId> PointIds,
+	const bool bVisible)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!ChunkRef.IsValid())
+	{
+		VOXEL_MESSAGE(Error, "Invalid handle");
+		return;
+	}
+
+	const UWorld* World = ChunkRef.GetWorld();
+	if (!World)
+	{
+		VOXEL_MESSAGE(Error, "Invalid world");
+		return;
+	}
+
+	const TSharedRef<FVoxelPointOverrideChunk> Chunk = FVoxelPointOverrideManager::Get(World)->FindOrAddChunk(ChunkRef);
+
+	TMulticastDelegate<void(TConstVoxelArrayView<FVoxelPointId>)> OnChanged;
+	{
+		VOXEL_SCOPE_LOCK(Chunk->CriticalSection);
+
+		if (bVisible)
+		{
+			for (const FVoxelPointId& PointId : PointIds)
+			{
+				Chunk->PointIdsToHide_RequiresLock.Remove(PointId);
+			}
+		}
+		else
+		{
+			Chunk->PointIdsToHide_RequiresLock.Append(PointIds);
+		}
+
+		OnChanged = Chunk->OnChanged_RequiresLock;
+	}
+
+	VOXEL_SCOPE_COUNTER("OnChanged");
+	OnChanged.Broadcast(PointIds);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -266,12 +360,16 @@ FVoxelPinValue UVoxelPointFunctionLibrary::GetPointAttribute(
 	}
 
 	TVoxelMap<FName, FVoxelPinValue> Attributes;
+	Attributes.Add(Name);
+
 	if (!Handle.GetAttributes(Attributes, OutError))
 	{
 		return {};
 	}
 
-	if (!Attributes.Contains(Name))
+	const FVoxelPinValue Value = Attributes[Name];
+
+	if (!Value.IsValid())
 	{
 		if (OutError)
 		{
@@ -287,5 +385,5 @@ FVoxelPinValue UVoxelPointFunctionLibrary::GetPointAttribute(
 		return {};
 	}
 
-	return Attributes[Name];
+	return Value;
 }

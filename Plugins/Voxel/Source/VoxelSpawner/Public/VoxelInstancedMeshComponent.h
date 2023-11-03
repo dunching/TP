@@ -7,8 +7,6 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "VoxelInstancedMeshComponent.generated.h"
 
-class UVoxelInstancedCollisionComponent;
-
 DECLARE_VOXEL_MEMORY_STAT(VOXELSPAWNER_API, STAT_VoxelInstancedMeshDataMemory, "Voxel Instanced Mesh Data Memory");
 DECLARE_VOXEL_COUNTER(VOXELSPAWNER_API, STAT_VoxelInstancedMeshNumInstances, "Num Instanced Mesh Instances");
 
@@ -34,21 +32,15 @@ class VOXELSPAWNER_API UVoxelInstancedMeshComponent : public UInstancedStaticMes
 	GENERATED_BODY()
 
 public:
-	UPROPERTY()
-	TObjectPtr<UVoxelInstancedCollisionComponent> CollisionComponent;
-
 	UVoxelInstancedMeshComponent();
-
-	//~ Begin UPrimitiveComponent Interface
-	virtual void OnRegister() override;
-	virtual void OnUnregister() override;
-	//~ End UPrimitiveComponent Interface
 
 	void AddMeshData(const TSharedRef<FVoxelInstancedMeshData>& NewMeshData);
 	void SetMeshData(const TSharedRef<FVoxelInstancedMeshData>& NewMeshData);
-	void UpdateCollision(const FBodyInstance& NewBodyInstance) const;
 	void RemoveInstancesFast(TConstVoxelArrayView<int32> Indices);
 	void ReturnToPool();
+
+	void HideInstances(TConstVoxelArrayView<int32> Indices);
+	void ShowInstances(TConstVoxelArrayView<int32> Indices);
 
 	virtual void ClearInstances() override;
 	virtual void DestroyComponent(bool bPromoteChildren = false) override;

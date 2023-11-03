@@ -8,55 +8,87 @@
 #include "VoxelChunkSpawner.h"
 #include "VoxelScreenSizeChunkSpawner.generated.h"
 
-BEGIN_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
+DECLARE_UNIQUE_VOXEL_ID(FVoxelScreenSizeChunkId);
 
-class FOctree;
-
-DECLARE_UNIQUE_VOXEL_ID(FChunkId);
-
-END_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
-
-struct VOXELGRAPHNODES_API FVoxelScreenSizeChunkSpawnerImpl : public FVoxelChunkSpawnerImpl
+USTRUCT()
+struct VOXELGRAPHNODES_API FVoxelScreenSizeChunkSpawner : public FVoxelChunkSpawner
 {
+	GENERATED_BODY()
+	GENERATED_VIRTUAL_STRUCT_BODY()
+
 public:
-	const FVoxelGraphNodeRef NodeRef;
-	const float WorldSize;
-	const int32 ChunkSize;
-	const int32 MaxLOD;
-	const bool bEnableTransitions;
-	const TVoxelDynamicValue<float> ChunkScreenSizeValue;
+	FVoxelGraphNodeRef GraphNodeRef;
+	float WorldSize = 1.e6f;
+	int32 ChunkSize = 32;
+	int32 MaxLOD = 20;
+	bool bEnableTransitions = true;
+	TVoxelDynamicValueFactory<float> ChunkScreenSizeValueFactory;
+	TSharedPtr<FVoxelQueryContext> QueryContext;
+	TSharedPtr<const FVoxelQueryParameters> QueryParameters;
 
-	TOptional<float> ChunkScreenSize;
-
-	FVoxelScreenSizeChunkSpawnerImpl(
-		const FVoxelGraphNodeRef& NodeRef,
-		const float WorldSize,
-		const int32 ChunkSize,
-		const int32 MaxLOD,
-		const bool bEnableTransitions,
-		const TVoxelDynamicValue<float>& ChunkScreenSizeValue)
-		: NodeRef(NodeRef)
-		, WorldSize(WorldSize)
-		, ChunkSize(ChunkSize)
-		, MaxLOD(MaxLOD)
-		, bEnableTransitions(bEnableTransitions)
-		, ChunkScreenSizeValue(ChunkScreenSizeValue)
-	{
-	}
+	TVoxelDynamicValue<float> ChunkScreenSizeValue;
+	TOptional<float> LastChunkScreenSize;
 
 	//~ Begin FVoxelChunkSpawnerImpl Interface
+	virtual void Initialize(FVoxelRuntime& Runtime) override;
 	virtual void Tick(FVoxelRuntime& Runtime) override;
-	virtual void Refresh() override;
-	virtual void Recreate() override;
 	//~ End FVoxelChunkSpawnerImpl Interface
 
-private:
-	VOXEL_USE_NAMESPACE_TYPES(ScreenSizeChunkSpawner, FOctree, FChunkId);
+	void Refresh();
 
+private:
+	using FChunkId = FVoxelScreenSizeChunkId;
+
+	struct FNode
+	{
+		bool bIsRendered = false;
+		uint8 TransitionMask = 0;
+		FChunkId ChunkId = FChunkId::New();
+	};
+
+	struct FChunkInfo
+	{
+		FVoxelBox ChunkBounds;
+		int32 LOD = 0;
+		uint8 TransitionMask = 0;
+		FVoxelIntBox NodeBounds;
+	};
+
+	class FOctree : public TVoxelFastOctree<FNode>
+	{
+	public:
+		const FVector ViewOrigin;
+		const FVoxelScreenSizeChunkSpawner& Object;
+
+		FOctree(
+			const int32 Depth,
+			const FVector& ViewOrigin,
+			const FVoxelScreenSizeChunkSpawner& Object)
+			: TVoxelFastOctree<FNode>(Depth)
+			, ViewOrigin(ViewOrigin)
+			, Object(Object)
+		{
+		}
+
+		FORCEINLINE FVoxelBox GetChunkBounds(const FNodeRef NodeRef) const
+		{
+			return NodeRef.GetBounds().ToVoxelBox().Scale(Object.GetVoxelSize() * Object.ChunkSize);
+		}
+
+		void Update(
+			float ChunkScreenSize,
+			TMap<FChunkId, FChunkInfo>& ChunkInfos,
+			TSet<FChunkId>& ChunksToAdd,
+			TSet<FChunkId>& ChunksToRemove,
+			TSet<FChunkId>& ChunksToUpdate);
+
+		bool AdjacentNodeHasHigherHeight(FNodeRef NodeRef, int32 Direction) const;
+	};
+
+private:
 	TSharedPtr<const FOctree> Octree;
 	bool bTaskInProgress = false;
 	bool bUpdateQueued = false;
-	bool bRecreateQueued = false;
 	TOptional<FVector> LastViewOrigin;
 
 	struct FPreviousChunks
@@ -76,101 +108,10 @@ private:
 		TSharedPtr<FPreviousChunks> PreviousChunks;
 	};
 
-	FVoxelCriticalSection CriticalSection;
-	TMap<FChunkId, TSharedPtr<FChunk>> Chunks_RequiresLock;
+	FVoxelFastCriticalSection CriticalSection;
+	TVoxelMap<FChunkId, TSharedPtr<FChunk>> Chunks_RequiresLock;
 
 	void UpdateTree(const FVector& ViewOrigin);
-};
-
-BEGIN_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
-
-struct FNode
-{
-	bool bIsRendered = false;
-	uint8 TransitionMask = 0;
-	FChunkId ChunkId = FChunkId::New();
-};
-
-struct FChunkInfo
-{
-	FVoxelBox ChunkBounds;
-	int32 LOD = 0;
-	uint8 TransitionMask = 0;
-	FVoxelIntBox NodeBounds;
-};
-
-class FOctree : public TVoxelFastOctree<FNode>
-{
-public:
-	const FVector ViewOrigin;
-	const FVoxelScreenSizeChunkSpawnerImpl& Object;
-
-	FOctree(
-		const int32 Depth,
-		const FVector& ViewOrigin,
-		const FVoxelScreenSizeChunkSpawnerImpl& Object)
-		: TVoxelFastOctree<FNode>(Depth)
-		, ViewOrigin(ViewOrigin)
-		, Object(Object)
-	{
-	}
-
-	FORCEINLINE FVoxelBox GetChunkBounds(const FNodeRef NodeRef) const
-	{
-		return NodeRef.GetBounds().ToVoxelBox().Scale(Object.VoxelSize * Object.ChunkSize);
-	}
-
-	void Update(
-		float ChunkScreenSize,
-		TMap<FChunkId, FChunkInfo>& ChunkInfos,
-		TSet<FChunkId>& ChunksToAdd,
-		TSet<FChunkId>& ChunksToRemove,
-		TSet<FChunkId>& ChunksToUpdate);
-
-	bool AdjacentNodeHasHigherHeight(FNodeRef NodeRef, int32 Direction) const;
-};
-
-END_VOXEL_NAMESPACE(ScreenSizeChunkSpawner)
-
-USTRUCT()
-struct VOXELGRAPHNODES_API FVoxelScreenSizeChunkSpawner : public FVoxelChunkSpawner
-{
-	GENERATED_BODY()
-	GENERATED_VIRTUAL_STRUCT_BODY()
-
-	FVoxelGraphNodeRef Node;
-	float WorldSize = 1.e6f;
-	int32 ChunkSize = 32;
-	int32 MaxLOD = 20;
-	bool bEnableTransitions = true;
-	TVoxelDynamicValue<float> ChunkScreenSizeValue;
-
-	virtual TSharedPtr<FVoxelChunkSpawnerImpl> MakeImpl() const override
-	{
-		const TSharedRef<FVoxelScreenSizeChunkSpawnerImpl> Impl = MakeVoxelShared<FVoxelScreenSizeChunkSpawnerImpl>(
-			Node,
-			WorldSize,
-			ChunkSize,
-			MaxLOD,
-			bEnableTransitions,
-			ChunkScreenSizeValue);
-
-		if (Impl->ChunkScreenSizeValue.IsValid())
-		{
-			Impl->ChunkScreenSizeValue.OnChanged_GameThread(MakeWeakPtrLambda(Impl, [&Impl = *Impl](const float NewChunkScreenSize)
-			{
-				Impl.ChunkScreenSize = NewChunkScreenSize;
-				Impl.Refresh();
-			}));
-		}
-		else
-		{
-			Impl->ChunkScreenSize = 1.f;
-			Impl->Refresh();
-		}
-
-		return Impl;
-	}
 };
 
 USTRUCT(Category = "Chunk Spawner")

@@ -3,7 +3,6 @@
 #pragma once
 
 #include "VoxelMinimal.h"
-#include "VoxelGraphNodeRef.h"
 #include "VoxelQueryParameter.generated.h"
 
 USTRUCT()
@@ -99,7 +98,7 @@ struct VOXELGRAPHCORE_API FVoxelMinExactDistanceQueryParameter : public FVoxelQu
 };
 
 USTRUCT()
-struct VOXELGRAPHCORE_API FVoxelSpawnableBoundsQueryParameter : public FVoxelQueryParameter
+struct VOXELGRAPHCORE_API FVoxelQueryChannelBoundsQueryParameter : public FVoxelQueryParameter
 {
 	GENERATED_BODY()
 	GENERATED_VOXEL_QUERY_PARAMETER_BODY()

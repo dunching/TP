@@ -10,8 +10,6 @@ class UVoxelParameterContainer;
 class IVoxelExecNodeRuntimeInterface;
 struct FVoxelSubsystem;
 
-enum class EVoxelChunkAction; 
-
 using FOnChunkChanged = std::function<void(const FBox&, int32, int32)>;
 
 class VOXELGRAPHCORE_API FVoxelRuntime

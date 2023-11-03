@@ -58,7 +58,6 @@ public:
 	virtual void PreReconstructNode() override;
 
 	virtual void PinDefaultValueChanged(UEdGraphPin* Pin) override;
-	virtual bool CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
 	//~ End UVoxelGraphNode Interface

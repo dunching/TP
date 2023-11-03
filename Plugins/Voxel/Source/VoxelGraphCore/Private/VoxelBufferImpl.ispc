@@ -6,8 +6,6 @@ export void VoxelBufferStorage_FixupSignBit(
 	uniform float Distances[],
 	const uniform int32 Num)
 {
-	check(Num % programCount == 0);
-
 	FOREACH(Index, 0, Num)
 	{
 		if (intbits(Distances[Index]) == 0x80000000)

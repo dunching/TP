@@ -9,7 +9,7 @@ struct VOXELGRAPHNODES_API FVoxelMarchingCubeProcessor
 {
 	const int32 ChunkSize;
 	const int32 DataSize;
-	const FVoxelFloatBufferStorage& PackedDistances;
+	const FVoxelFloatBufferStorage& Distances;
 
 	FVoxelMarchingCubeSurface& Surface;
 
@@ -26,7 +26,7 @@ struct VOXELGRAPHNODES_API FVoxelMarchingCubeProcessor
 	FVoxelMarchingCubeProcessor(
 		const int32 ChunkSize,
 		const int32 DataSize,
-		FVoxelFloatBufferStorage& PackedDistances,
+		FVoxelFloatBufferStorage& Distances,
 		FVoxelMarchingCubeSurface& Surface);
 	~FVoxelMarchingCubeProcessor();
 
@@ -36,13 +36,10 @@ private:
 	TVoxelArray<int32> VertexIndexToCellIndex;
 	TVoxelAddOnlyMap<int32, int32> CacheIndexToVertexIndex;
 
-	FORCEINLINE int32 GetPackedIndex(const int32 X, const int32 Y, const int32 Z) const
+	FORCEINLINE int32 GetIndex(const int32 X, const int32 Y, const int32 Z) const
 	{
-		checkVoxelSlow(DataSize % 2 == 0);
-		const int32 BlockIndex = FVoxelUtilities::Get3DIndex<int32>(DataSize / 2, X / 2, Y / 2, Z / 2);
-		return 8 * BlockIndex + FVoxelUtilities::Get3DIndex<int32>(2, X % 2, Y % 2, Z % 2);
+		return FVoxelUtilities::Get3DIndex<int32>(DataSize, X, Y, Z);
 	}
-
 	FORCEINLINE int32 GetCacheIndex(const FIntVector& Position, const int32 EdgeIndex) const
 	{
 		checkVoxelSlow(0 <= EdgeIndex && EdgeIndex < 3);
@@ -50,7 +47,6 @@ private:
 		return EdgeIndex + 3 * Index;
 	}
 
-	template<int32 Pass>
 	void FindCells();
 	void ProcessCells();
 
@@ -76,10 +72,10 @@ private:
 		}
 	}
 	template<int32 Direction>
-	FORCEINLINE int32 GetPackedIndex(const int32 X, const int32 Y) const
+	FORCEINLINE int32 GetIndex(const int32 X, const int32 Y) const
 	{
 		const FIntVector Position = GetPosition<Direction>(X, Y);
-		return GetPackedIndex(Position.X, Position.Y, Position.Z);
+		return GetIndex(Position.X, Position.Y, Position.Z);
 	}
 
 	void FindTransitionCells();

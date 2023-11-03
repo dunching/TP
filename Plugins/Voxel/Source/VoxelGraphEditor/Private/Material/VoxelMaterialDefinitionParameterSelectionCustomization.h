@@ -20,4 +20,5 @@ public:
 
 private:
 	FGuid TargetParameterId;
+	TSharedPtr<FVoxelStructCustomizationWrapper> Wrapper;
 };

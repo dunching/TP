@@ -1,4 +1,4 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -14,7 +14,10 @@ class VOXELGRAPHCORE_API UVoxelPointFunctionLibrary : public UBlueprintFunctionL
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "Voxel|Points", meta = (ExpandEnumAsExecs = ReturnValue))
-	static EVoxelSuccess MakePointHandle(const FHitResult& HitResult, FVoxelPointHandle& Handle);
+	static EVoxelSuccess MakePointHandleFromHitResult(const FHitResult& HitResult, FVoxelPointHandle& Handle);
+
+	//UFUNCTION(BlueprintCallable, Category = "Voxel|Points", meta = (ExpandEnumAsExecs = ReturnValue))
+	static EVoxelSuccess MakePointHandleFromOverlapResult(const FOverlapResult& OverlapResult, FVoxelPointHandle& Handle);
 
 	UFUNCTION(BlueprintCallable, Category = "Voxel|Points", meta = (ExpandEnumAsExecs = ReturnValue))
 	static EVoxelSuccess GetPointTransform(
@@ -44,6 +47,20 @@ public:
 
 		return Value.Is<T>();
 	}
+
+public:
+	// Fast path to hide a point, typically to spawn an actor instead
+	// Affects visibility & collision
+	// Will not be saved to point storage!
+	UFUNCTION(BlueprintCallable, Category = "Voxel|Points")
+	static void SetPointVisibility(
+		const FVoxelPointHandle& Handle,
+		bool bVisible = false);
+
+	static void BulkSetPointVisibility(
+		const FVoxelPointChunkRef& ChunkRef,
+		TConstVoxelArrayView<FVoxelPointId> PointIds,
+		bool bVisible = false);
 
 public:
 	UFUNCTION(BlueprintCallable, DisplayName = "Set Point Attribute", CustomThunk, Category = "Voxel|Points", meta = (AutoCreateRefTerm = "Value", CustomStructureParam = "Value", BlueprintInternalUseOnly = "true"))
@@ -114,7 +131,7 @@ public:
 			return {};
 		}
 
-		if (!ensure(Value.Is<T>()))
+		if (!ensure(Value.CanBeCastedTo<T>()))
 		{
 			return {};
 		}

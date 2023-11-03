@@ -21,13 +21,21 @@ VOXEL_CONSOLE_COMMAND(
 	FVoxelEditorStyle::ReloadTextures();
 }
 
-TSharedPtr<FVoxelStyleSet> FVoxelEditorStyle::VoxelEditorStyle = nullptr;
+TSharedPtr<FVoxelStyleSet> GVoxelEditorStyle;
 constexpr const TCHAR* GVoxelStyleSetName = TEXT("VoxelStyle");
 
 FVoxelStyleSet::FVoxelStyleSet(const FName& InStyleSetName) : FSlateStyleSet(InStyleSetName)
 {
 	FVoxelStyleSet::SetContentRoot(FVoxelSystemUtilities::GetPlugin().GetBaseDir() / TEXT("Resources/EditorIcons"));
 	FVoxelStyleSet::SetCoreContentRoot(FPaths::EngineContentDir() / TEXT("Editor/Slate"));
+
+	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
+	{
+		if (GVoxelEditorStyle)
+		{
+			FVoxelEditorStyle::Shutdown();
+		}
+	});
 }
 
 void FVoxelStyleSet::InitModule(FVoxelStyleSet& Style, const FOnVoxelStyleReinitialize& Delegate)
@@ -70,7 +78,7 @@ void FVoxelEditorStyle::Unregister()
 void FVoxelEditorStyle::Shutdown()
 {
 	Unregister();
-	VoxelEditorStyle.Reset();
+	GVoxelEditorStyle.Reset();
 }
 
 void FVoxelEditorStyle::ReloadTextures()
@@ -80,16 +88,16 @@ void FVoxelEditorStyle::ReloadTextures()
 
 void FVoxelEditorStyle::ReinitializeStyle()
 {
-	TArray<FOnVoxelStyleReinitialize> Delegates = VoxelEditorStyle->Styles;
+	TArray<FOnVoxelStyleReinitialize> Delegates = GVoxelEditorStyle->Styles;
 
 	Shutdown();
-	VoxelEditorStyle = MakeVoxelShared<FVoxelStyleSet>(GVoxelStyleSetName);
+	GVoxelEditorStyle = MakeVoxelShared<FVoxelStyleSet>(GVoxelStyleSetName);
 
 	for (const FOnVoxelStyleReinitialize& Delegate : Delegates)
 	{
 		if (Delegate.IsBound())
 		{
-			VoxelEditorStyle->InitModule(*Delegate.Execute(), Delegate);
+			GVoxelEditorStyle->InitModule(*Delegate.Execute(), Delegate);
 		}
 	}
 
@@ -98,12 +106,11 @@ void FVoxelEditorStyle::ReinitializeStyle()
 
 const FVoxelStyleSet& FVoxelEditorStyle::Get()
 {
-	if (!VoxelEditorStyle.IsValid())
+	if (!GVoxelEditorStyle)
 	{
-		VoxelEditorStyle = MakeVoxelShared<FVoxelStyleSet>(GVoxelStyleSetName);
+		GVoxelEditorStyle = MakeVoxelShared<FVoxelStyleSet>(GVoxelStyleSetName);
 	}
-
-	return *VoxelEditorStyle;
+	return *GVoxelEditorStyle;
 }
 
 // Run this last, after all styles are registered

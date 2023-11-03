@@ -10,6 +10,12 @@
 #include "Misc/ConfigCacheIni.h"
 #include "VoxelChannelAsset_DEPRECATED.generated.h"
 
+USTRUCT()
+struct FVoxelDistance_DEPRECATED
+{
+	GENERATED_BODY()
+};
+
 UCLASS()
 class VOXELGRAPHCORE_API UVoxelChannelAsset_DEPRECATED : public UObject
 {
@@ -31,7 +37,7 @@ public:
 			UVoxelSettings* Settings = GetMutableDefault<UVoxelSettings>();
 			Settings->GlobalChannels.Add(FVoxelChannelExposedDefinition
 			{
-				Name,
+				GetFName(),
 				Type,
 				DefaultValue
 			});
@@ -67,7 +73,7 @@ struct VOXELGRAPHCORE_API FVoxelChannelRef_DEPRECATEDPinType : public FVoxelObje
 	{
 		if (bSetObject)
 		{
-			Object = Struct.Channel.Get();
+			Object = Struct.Channel;
 		}
 		else
 		{

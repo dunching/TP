@@ -9,48 +9,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_GetGradient, Gradient)
 	FindVoxelQueryParameter(FVoxelPositionQueryParameter, PositionQueryParameter);
 	FindVoxelQueryParameter(FVoxelGradientStepQueryParameter, GradientStepQueryParameter);
 
-	if (PositionQueryParameter->IsGrid2D())
-	{
-		VOXEL_MESSAGE(Error, "{0}: 2D positions are being passed, use GetGradient2D instead", this);
-		return {};
-	}
-
-	if (PositionQueryParameter->IsGrid3D())
-	{
-		const TValue<FVoxelFloatBuffer> Value = Get(ValuePin, Query);
-		const FVoxelVectorBuffer QueryPositions = PositionQueryParameter->GetPositions();
-
-		return VOXEL_ON_COMPLETE(GradientStepQueryParameter, Value, QueryPositions)
-		{
-			if (Value.IsConstant())
-			{
-				return FVector::ZeroVector;
-			}
-
-			CheckVoxelBuffersNum(Value, QueryPositions);
-
-			FVoxelFloatBufferStorage X; X.Allocate(Value.Num());
-			FVoxelFloatBufferStorage Y; Y.Allocate(Value.Num());
-			FVoxelFloatBufferStorage Z; Z.Allocate(Value.Num());
-
-			VOXEL_SCOPE_COUNTER("VoxelNode_GetGradient_Dense");
-
-			ForeachVoxelBufferChunk(Value.Num(), [&](const FVoxelBufferIterator& Iterator)
-			{
-				ispc::VoxelNode_GetGradient_Dense(
-					Value.GetData(Iterator),
-					Iterator.AlignedNum(),
-					GradientStepQueryParameter->Step,
-					X.GetData(Iterator),
-					Y.GetData(Iterator),
-					Z.GetData(Iterator));
-			});
-
-			return FVoxelVectorBuffer::Make(X, Y, Z);
-		};
-	}
-
-	if (PositionQueryParameter->IsSparseGradient())
+	if (PositionQueryParameter->IsGradient())
 	{
 		const TValue<FVoxelFloatBuffer> Value = Get(ValuePin, Query);
 		const FVoxelVectorBuffer QueryPositions = PositionQueryParameter->GetPositions();
@@ -182,7 +141,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_GetGradient, Gradient)
 			ensure(InputIndex == AlignedInputNum);
 			ensure(GradientIndex == GradientNum);
 
-			NewPositionQueryParameter->InitializeSparseGradient(
+			NewPositionQueryParameter->InitializeGradient(
 				FVoxelVectorBuffer::Make(X, Y, Z),
 				PositionQueryParameter->GetBounds().Extend(HalfStep));
 		}

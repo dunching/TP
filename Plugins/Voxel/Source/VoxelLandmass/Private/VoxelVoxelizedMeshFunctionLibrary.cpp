@@ -26,19 +26,19 @@ FVoxelSurface UVoxelVoxelizedMeshFunctionLibrary::CreateVoxelizedMeshSurface(
 		return {};
 	}
 
-	FVoxelSurface Surface(
+	FVoxelSurface Surface = FVoxelSurface::MakeWithLocalBounds(
 		GetNodeRef(),
-		FVoxelSurfaceBounds::Make(
-			MeshData->MeshBounds
-			.Extend(1)
-			.Scale(MeshData->VoxelSize)));
+		GetQuery(),
+		MeshData->MeshBounds
+		.Extend(1)
+		.Scale(MeshData->VoxelSize));
 
-	Surface.SetDistance(this, [=](const UVoxelVoxelizedMeshFunctionLibrary& This)
+	Surface.SetLocalDistance(GetQuery(), GetNodeRef(), [=, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
 	{
-		return This.CreateVoxelizedMeshSurface_Distance(MeshData.ToSharedRef(), bHermiteInterpolation);
+		return MakeVoxelFunctionCaller<UVoxelVoxelizedMeshFunctionLibrary>(NodeRef, Query)->CreateVoxelizedMeshSurface_Distance(MeshData.ToSharedRef(), bHermiteInterpolation);
 	});
 
-	return Surface.CreateLocalSurface(this);
+	return Surface;
 }
 
 FVoxelFloatBuffer UVoxelVoxelizedMeshFunctionLibrary::CreateVoxelizedMeshSurface_Distance(

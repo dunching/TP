@@ -18,7 +18,7 @@ public:
 
 	void DoTask(ENamedThreads::Type, const FGraphEventRef&) const
 	{
-		VOXEL_LLM_SCOPE();
+		VOXEL_SCOPE_COUNTER("TVoxelGraphTask");
 		Lambda();
 	}
 
@@ -44,9 +44,12 @@ FORCEINLINE bool IsInGameThreadFast()
 }
 
 VOXELCORE_API void FlushVoxelGameThreadTasks();
+VOXELCORE_API void AsyncVoxelTask(TVoxelUniqueFunction<void()>&& Lambda);
 
 namespace FVoxelUtilities
 {
+	// Will never be called right away, even if we are on the game thread
+	// Useful to avoid deadlocks
 	VOXELCORE_API void RunOnGameThread_Async(TVoxelUniqueFunction<void()>&& Lambda);
 
 	template<typename T>

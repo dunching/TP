@@ -16,8 +16,7 @@
 FVoxelMessages::FOnMessageLogged FVoxelMessages::OnMessageLogged;
 FVoxelMessages::FOnFocusNode FVoxelMessages::OnFocusNode;
 FVoxelMessages::FOnNodeMessageLogged FVoxelMessages::OnNodeMessageLogged;
-FVoxelMessages::FOnClearNodeMessages FVoxelMessages::OnClearNodeMessages;
-FVoxelMessages::FOnGatherCallstacks FVoxelMessages::OnGatherCallstacks;
+TArray<FVoxelMessages::FGatherCallstack> FVoxelMessages::GatherCallstacks;
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -90,7 +89,7 @@ void FVoxelMessages::LogMessage(const TSharedRef<FTokenizedMessage>& Message)
 			FString Text;
 			double Time = 0;
 		};
-		static TVoxelArray<FRecentMessage> RecentMessages;
+		static TArray<FRecentMessage> RecentMessages;
 
 		const FString Text = Message->ToText().ToString();
 		const double Time = FPlatformTime::Seconds();
@@ -208,35 +207,10 @@ FVoxelMessageBuilder::FVoxelMessageBuilder(const EVoxelMessageSeverity Severity,
 {
 }
 
-void FVoxelMessageBuilder::Execute(FTokenizedMessage& Message, TSet<const UEdGraph*>& OutGraphs)
+void FVoxelMessageBuilder::AppendTo(FTokenizedMessage& Message, TSet<const UEdGraph*>& OutGraphs) const
 {
 	VOXEL_FUNCTION_COUNTER();
 	check(IsInGameThread());
-	ensure(Format.IsEmpty());
-
-	for (const FArg& Arg : Args)
-	{
-		Arg(Message, OutGraphs);
-	}
-}
-
-TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdGraph*>& OutGraphs) const
-{
-	VOXEL_FUNCTION_COUNTER();
-	check(IsInGameThread());
-
-	const EMessageSeverity::Type MessageSeverity = INLINE_LAMBDA
-	{
-		switch (Severity)
-		{
-		default: ensure(false);
-		case EVoxelMessageSeverity::Info: return EMessageSeverity::Info;
-		case EVoxelMessageSeverity::Warning: return EMessageSeverity::Warning;
-		case EVoxelMessageSeverity::Error: return EMessageSeverity::Error;
-		}
-	};
-
-	const TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(MessageSeverity);
 
 	const FString FixedFormat = Format.Replace(TEXT("\n"), TEXT("{N}"));
 	const TCHAR* FormatPtr = *FixedFormat;
@@ -254,7 +228,7 @@ TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdG
 			const FString RemainingText(FormatPtr);
 			if (!RemainingText.IsEmpty())
 			{
-				Message->AddToken(FTextToken::Create(FText::FromString(RemainingText)));
+				Message.AddToken(FTextToken::Create(FText::FromString(RemainingText)));
 			}
 			break;
 		}
@@ -263,7 +237,7 @@ TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdG
 		const FString TextBefore = FString(Delimiter - FormatPtr, FormatPtr);
 		if (!TextBefore.IsEmpty())
 		{
-			Message->AddToken(FTextToken::Create(FText::FromString(TextBefore)));
+			Message.AddToken(FTextToken::Create(FText::FromString(TextBefore)));
 		}
 
 		FormatPtr = Delimiter + FCString::Strlen(TEXT("{"));
@@ -279,7 +253,7 @@ TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdG
 
 		if (IndexString == "N")
 		{
-			Message->AddToken(FTextToken::Create(FText::FromString("\n")));
+			Message.AddToken(FTextToken::Create(FText::FromString("\n")));
 			FormatPtr = Delimiter + FCString::Strlen(TEXT("}"));
 			continue;
 		}
@@ -303,7 +277,7 @@ TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdG
 		UsedArgs[Index] = true;
 		if (ensure(Args[Index]))
 		{
-			Args[Index](*Message, OutGraphs);
+			Args[Index](Message, OutGraphs);
 		}
 
 		FormatPtr = Delimiter + FCString::Strlen(TEXT("}"));
@@ -313,6 +287,23 @@ TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdG
 	{
 		ensureMsgf(UsedArgs[Index], TEXT("Unused arg: %d"), Index);
 	}
+}
+
+TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdGraph*>& OutGraphs) const
+{
+	const EMessageSeverity::Type MessageSeverity = INLINE_LAMBDA
+	{
+		switch (Severity)
+		{
+		default: ensure(false);
+		case EVoxelMessageSeverity::Info: return EMessageSeverity::Info;
+		case EVoxelMessageSeverity::Warning: return EMessageSeverity::Warning;
+		case EVoxelMessageSeverity::Error: return EMessageSeverity::Error;
+		}
+	};
+	const TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(MessageSeverity);
+
+	AppendTo(*Message, OutGraphs);
 
 	// Merge text tokens as otherwise they are rendered with an ugly space in between them
 
@@ -346,17 +337,7 @@ TSharedRef<FTokenizedMessage> FVoxelMessageBuilder::BuildMessage(TSet<const UEdG
 	for (const TSharedPtr<FVoxelMessageBuilder>& Callstack : Callstacks)
 	{
 		FinalMessage->AddToken(FTextToken::Create(FText::FromString("\n")));
-
-		const TSharedRef<FTokenizedMessage> CallstackMessage = Callstack->BuildMessage(OutGraphs);
-		for (const TSharedRef<IMessageToken>& Token : CallstackMessage->GetMessageTokens())
-		{
-			if (Token->GetType() == EMessageToken::Severity)
-			{
-				continue;
-			}
-
-			FinalMessage->AddToken(Token);
-		}
+		Callstack->AppendTo(*FinalMessage, OutGraphs);
 	}
 
 	return FinalMessage;
@@ -369,12 +350,16 @@ void FVoxelMessages::InternalLogMessage(const TSharedRef<FVoxelMessageBuilder>& 
 		return;
 	}
 
-	OnGatherCallstacks.Broadcast(Builder->Callstacks);
+	for (const FGatherCallstack& GatherCallstack : GatherCallstacks)
+	{
+		GatherCallstack(Builder->Callstacks);
+	}
 
 	FVoxelUtilities::RunOnGameThread([=]
 	{
 		TSet<const UEdGraph*> Graphs;
 		const TSharedRef<FTokenizedMessage> Message = Builder->BuildMessage(Graphs);
+		Graphs.Remove(nullptr);
 
 		for (const UEdGraph* Graph : Graphs)
 		{

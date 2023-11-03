@@ -67,11 +67,11 @@ void UK2Node_SetVoxelGraphParameter::ExpandNode(FKismetCompilerContext& Compiler
 
 	UEdGraphPin* NamePin = FindPin(STATIC_FNAME("Name"));
 	UEdGraphPin* OutValuePin = FindPin(STATIC_FNAME("OutValue"));
-	UEdGraphPin* ParameterCollectionPin = FindPin(STATIC_FNAME("ParameterCollection"));
+	UEdGraphPin* ParameterContainerPin = FindPin(STATIC_FNAME("ParameterContainer"));
 
 	if (!ensure(NamePin) ||
 		!ensure(OutValuePin) ||
-		!ensure(ParameterCollectionPin))
+		!ensure(ParameterContainerPin))
 	{
 		return;
 	}
@@ -83,11 +83,11 @@ void UK2Node_SetVoxelGraphParameter::ExpandNode(FKismetCompilerContext& Compiler
 
 		UEdGraphPin* FunctionNamePin = Function->FindPin(STATIC_FNAME("Name"));
 		UEdGraphPin* FunctionValuePin = Function->FindPin(STATIC_FNAME("Value"));
-		UEdGraphPin* FunctionParameterCollectionPin = Function->FindPin(STATIC_FNAME("ParameterCollection"));
+		UEdGraphPin* FunctionParameterContainerPin = Function->FindPin(STATIC_FNAME("ParameterContainer"));
 
 		if (!ensure(FunctionNamePin) ||
 			!ensure(FunctionValuePin) ||
-			!ensure(FunctionParameterCollectionPin))
+			!ensure(FunctionParameterContainerPin))
 		{
 			return;
 		}
@@ -98,7 +98,7 @@ void UK2Node_SetVoxelGraphParameter::ExpandNode(FKismetCompilerContext& Compiler
 		Function->PostReconstructNode();
 
 		CompilerContext.MovePinLinksToIntermediate(*GetThenPin(), *Function->GetThenPin());
-		CompilerContext.CopyPinLinksToIntermediate(*ParameterCollectionPin, *FunctionParameterCollectionPin);
+		CompilerContext.CopyPinLinksToIntermediate(*ParameterContainerPin, *FunctionParameterContainerPin);
 		CompilerContext.CopyPinLinksToIntermediate(*NamePin, *FunctionNamePin);
 		CompilerContext.MovePinLinksToIntermediate(*OutValuePin, *FunctionValuePin);
 

@@ -11,7 +11,7 @@ class FVoxelRuntime;
 class UVoxelGraphInterface;
 class UVoxelParameterContainer;
 
-UCLASS(ClassGroup = Voxel, HideCategories = ("Rendering", "Physics", "LOD", "Activation", "Collision", "Cooking", "AssetUserData"), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = Voxel, DisplayName = "Voxel Component", HideCategories = ("Rendering", "Physics", "LOD", "Activation", "Collision", "Cooking", "AssetUserData"), meta = (BlueprintSpawnableComponent))
 class VOXELGRAPHCORE_API UVoxelComponent
 	: public USceneComponent
 	, public IVoxelRuntimeProvider
@@ -21,6 +21,9 @@ class VOXELGRAPHCORE_API UVoxelComponent
 public:
 	UPROPERTY(BlueprintReadOnly, Category = "Voxel", meta = (ProviderClass = "/Script/VoxelGraphCore.VoxelGraphInterface"))
 	TObjectPtr<UVoxelParameterContainer> ParameterContainer;
+
+	FSimpleMulticastDelegate OnRuntimeCreated;
+	FSimpleMulticastDelegate OnRuntimeDestroyed;
 
 public:
 	UPROPERTY()

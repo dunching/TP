@@ -13,6 +13,7 @@ struct VOXELCORE_API FVoxelVirtualStruct
 #endif
 {
 	GENERATED_BODY()
+	VOXEL_COUNT_INSTANCES()
 
 public:
 	FVoxelVirtualStruct() = default;
@@ -43,7 +44,7 @@ public:
 		{
 			PrivateStruct = Internal_GetStruct();
 		}
-		checkVoxelSlow(PrivateStruct.Get() == Internal_GetStruct());
+		checkVoxelSlow(PrivateStruct.Get() == Internal_GetStruct() || PrivateStruct.Get()->GetName().StartsWith("LIVECODING_"));
 		return PrivateStruct.Get();
 	}
 

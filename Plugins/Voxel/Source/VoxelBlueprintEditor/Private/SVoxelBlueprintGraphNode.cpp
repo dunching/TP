@@ -2,6 +2,11 @@
 
 #include "SVoxelBlueprintGraphNode.h"
 
+#include "SVoxelGraphPinParameter.h"
+#include "K2Node_QueryVoxelChannel.h"
+#include "SVoxelGraphPinChannelName_K2.h"
+#include "K2Node_VoxelGraphParameterBase.h"
+
 void SVoxelBlueprintGraphNode::Construct(const FArguments& InArgs, UK2Node_VoxelBaseNode* InNode)
 {
 	GraphNode = InNode;
@@ -55,4 +60,31 @@ void SVoxelBlueprintGraphNode::CreatePinWidgets()
 			}
 		}
 	}
+}
+
+TSharedPtr<SGraphPin> SVoxelBlueprintGraphNode::CreatePinWidget(UEdGraphPin* Pin) const
+{
+	if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Name &&
+		Pin->PinName == UK2Node_VoxelGraphParameterBase::ParameterPinName)
+	{
+		const UObject* Outer = Pin->GetOuter();
+
+		if (Outer->IsA<UK2Node_VoxelGraphParameterBase>())
+		{
+			return SNew(SVoxelGraphPinParameter, Pin);
+		}
+	}
+
+	if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Name &&
+		Pin->PinName == STATIC_FNAME("Channel"))
+	{
+		const UObject* Outer = Pin->GetOuter();
+
+		if (Outer->IsA<UK2Node_QueryVoxelChannelBase>())
+		{
+			return SNew(SVoxelGraphPinChannelName_K2, Pin);
+		}
+	}
+
+	return SGraphNodeK2Base::CreatePinWidget(Pin);
 }

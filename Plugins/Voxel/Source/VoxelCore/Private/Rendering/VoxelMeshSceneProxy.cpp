@@ -41,7 +41,7 @@ FVoxelMeshSceneProxy::FVoxelMeshSceneProxy(const UVoxelMeshComponent& Component)
 	EnableGPUSceneSupportFlags();
 
 	// Hack to cancel motion blur when mesh components are reused in the same frame
-	ENQUEUE_RENDER_COMMAND(UpdateTransformCommand)(
+	VOXEL_ENQUEUE_RENDER_COMMAND(UpdateTransformCommand)(
 		[this, PreviousLocalToWorld = Component.GetRenderMatrix()](FRHICommandListImmediate& RHICmdList)
 		{
 			FScene& Scene = static_cast<FScene&>(GetScene());
@@ -55,7 +55,7 @@ FVoxelMeshSceneProxy::FVoxelMeshSceneProxy(const UVoxelMeshComponent& Component)
 
 void FVoxelMeshSceneProxy::CreateRenderThreadResources()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 	check(IsInRenderingThread());
 
 	Mesh->CallInitialize_RenderThread(
@@ -69,7 +69,7 @@ void FVoxelMeshSceneProxy::CreateRenderThreadResources()
 
 void FVoxelMeshSceneProxy::DrawStaticElements(FStaticPrimitiveDrawInterface* PDI)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	const TSharedRef<FVoxelMaterialRef> Material = Mesh->GetMaterialSafe();
 
@@ -120,7 +120,7 @@ void FVoxelMeshSceneProxy::DrawStaticElements(FStaticPrimitiveDrawInterface* PDI
 
 void FVoxelMeshSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	const FEngineShowFlags& EngineShowFlags = ViewFamily.EngineShowFlags;
 

@@ -17,3 +17,19 @@ export void VoxelNode_MakeHeightSurface(
 		OutDistance[Index] = Z - Height;
 	}
 }
+
+export void VoxelNode_GrowSurface(
+	const uniform float Distance[],
+	const uniform bool bConstDistance,
+	const uniform float Amount[],
+	const uniform bool bConstAmount,
+	const uniform float MaxAmount,
+	const uniform float Scale,
+	uniform float OutDistance[],
+	const uniform int32 Num)
+{
+	FOREACH(Index, 0, Num)
+	{
+		OutDistance[Index] = (bConstDistance ? Distance[0] : Distance[Index]) - Scale * clamp(bConstAmount ? Amount[0] : Amount[Index], -MaxAmount, MaxAmount);
+	}
+}

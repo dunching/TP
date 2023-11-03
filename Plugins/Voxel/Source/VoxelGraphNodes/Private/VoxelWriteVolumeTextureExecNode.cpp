@@ -13,44 +13,34 @@ TVoxelUniquePtr<FVoxelExecNodeRuntime> FVoxelWriteVolumeTextureExecNode::CreateE
 void FVoxelWriteVolumeTextureExecNodeRuntime::Create()
 {
 	VOXEL_FUNCTION_COUNTER();
-
-	PinValuesProvider.Compute(this, [this](const FPinValues& PinValues)
-	{
-		Update(PinValues);
-	});
-}
-
-void FVoxelWriteVolumeTextureExecNodeRuntime::Destroy()
-{
-	DistanceValue = {};
-}
-
-void FVoxelWriteVolumeTextureExecNodeRuntime::Update(const FPinValues& PinValues)
-{
-	VOXEL_FUNCTION_COUNTER();
 	ensure(IsInGameThread());
 
-	if (int64(PinValues.Size.X) *
-		int64(PinValues.Size.Y) *
-		int64(PinValues.Size.Z) > 1024 * 1024 * 1024)
+	const TWeakObjectPtr<UVolumeTexture> WeakTexture = GetConstantPin(Node.TexturePin).Texture;
+	const FVector Start = GetConstantPin(Node.StartPin);
+	const FIntVector Size = GetConstantPin(Node.SizePin);
+	const float VoxelSize = GetConstantPin(Node.VoxelSizePin);
+
+	if (int64(Size.X) *
+		int64(Size.Y) *
+		int64(Size.Z) > 1024 * 1024 * 1024)
 	{
 		ensure(false);
 		return;
 	}
-	if (PinValues.Size.X <= 0 ||
-		PinValues.Size.Y <= 0 ||
-		PinValues.Size.Z <= 0)
+	if (Size.X <= 0 ||
+		Size.Y <= 0 ||
+		Size.Z <= 0)
 	{
 		ensure(false);
 		return;
 	}
 
 	const TSharedRef<FVoxelQueryParameters> Parameters = MakeVoxelShared<FVoxelQueryParameters>();
-	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = PinValues.VoxelSize;
-	Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid3D(FVector3f(PinValues.Start), PinValues.VoxelSize, PinValues.Size);
+	Parameters->Add<FVoxelGradientStepQueryParameter>().Step = VoxelSize;
+	Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid(FVector3f(Start), VoxelSize, Size);
 
 	DistanceValue = GetNodeRuntime().MakeDynamicValueFactory(Node.DistancePin).Compute(GetContext(), Parameters);
-	DistanceValue.OnChanged_GameThread([WeakTexture = PinValues.Texture.Texture, Size = PinValues.Size](const FVoxelFloatBuffer& Distance)
+	DistanceValue.OnChanged_GameThread([=](const FVoxelFloatBuffer& Distance)
 	{
 		UVolumeTexture* Texture = WeakTexture.Get();
 		if (!Texture)
@@ -77,7 +67,7 @@ void FVoxelWriteVolumeTextureExecNodeRuntime::Update(const FPinValues& PinValues
 		{
 			void* Data = Mip->BulkData.Realloc(sizeof(float) * Size.X * Size.Y * Size.Z);
 			const TVoxelArrayView<float> OutData(static_cast<float*>(Data), Size.X * Size.Y * Size.Z);
-			FVoxelBufferUtilities::UnpackData(Distance.GetStorage(), OutData, Size);
+			Distance.GetStorage().CopyTo(OutData);
 		}
 		Mip->BulkData.Unlock();
 		PlatformData->Mips.Add(Mip);
@@ -92,4 +82,9 @@ void FVoxelWriteVolumeTextureExecNodeRuntime::Update(const FPinValues& PinValues
 		Texture->SetPlatformData(PlatformData);
 		Texture->UpdateResource();
 	});
+}
+
+void FVoxelWriteVolumeTextureExecNodeRuntime::Destroy()
+{
+	DistanceValue = {};
 }

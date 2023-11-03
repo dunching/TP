@@ -4,6 +4,8 @@
 #include "MarchingCube/VoxelMarchingCubeNodes.h"
 #include "MarchingCube/VoxelMarchingCubeMesh.h"
 #include "VoxelRuntime.h"
+#include "VoxelSettings.h"
+#include "VoxelDebugNode.h"
 #include "VoxelGradientNodes.h"
 #include "VoxelDetailTextureNodes.h"
 #include "VoxelScreenSizeChunkSpawner.h"
@@ -16,16 +18,30 @@ FVoxelNodeAliases::TValue<FVoxelMarchingCubeExecNodeMesh> FVoxelMarchingCubeExec
 	const FVoxelBox& Bounds) const
 {
 	checkVoxelSlow(FVoxelTaskReferencer::Get().IsReferenced(this));
-	const FVoxelQuery Query = InQuery.EnterScope(*this);
+
+	const TSharedRef<FVoxelDebugQueryParameter> DebugParameter = MakeVoxelShared<FVoxelDebugQueryParameter>();
+
+	const FVoxelQuery Query = INLINE_LAMBDA
+	{
+		const TSharedRef<FVoxelQueryParameters> Parameters = InQuery.CloneParameters();
+		Parameters->Add(DebugParameter);
+		return InQuery.EnterScope(*this).MakeNewQuery(Parameters);
+	};
+
+	const TValue<FVoxelSurface> FutureSurface = INLINE_LAMBDA
+	{
+		const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
+		Parameters->Add<FVoxelQueryChannelBoundsQueryParameter>().Bounds = Bounds;
+		return GetNodeRuntime().Get(SurfacePin, Query.MakeNewQuery(Parameters));
+	};
 
 	const TValue<FVoxelMarchingCubeSurface> MarchingCubeSurface = VOXEL_CALL_NODE(FVoxelNode_GenerateMarchingCubeSurface, SurfacePin, Query)
 	{
-		VOXEL_CALL_NODE_BIND(DistancePin)
+		VOXEL_CALL_NODE_BIND(DistancePin, FutureSurface)
 		{
-			const TValue<FVoxelSurface> Surface = GetNodeRuntime().Get(SurfacePin, Query);
-			return VOXEL_ON_COMPLETE(Surface)
+			return VOXEL_ON_COMPLETE(FutureSurface)
 			{
-				return Surface->GetDistance(Query);
+				return FutureSurface->GetDistance(Query);
 			};
 		};
 		VOXEL_CALL_NODE_BIND(VoxelSizePin, VoxelSize)
@@ -65,14 +81,11 @@ FVoxelNodeAliases::TValue<FVoxelMarchingCubeExecNodeMesh> FVoxelMarchingCubeExec
 			return MarchingCubeSurface;
 		};
 
-		VOXEL_CALL_NODE_BIND(MaterialPin)
+		VOXEL_CALL_NODE_BIND(MaterialPin, DebugParameter, FutureSurface)
 		{
 			FindVoxelQueryParameter(FVoxelLODQueryParameter, LODQueryParameter);
-			const int32 LOD = LODQueryParameter->LOD;
 
-			const TValue<FVoxelMaterial> Material = GetNodeRuntime().Get(MaterialPin, Query);
-
-			const TValue<FVoxelMaterialParameter> MaterialIdMaterialParameter = VOXEL_CALL_NODE(FVoxelNode_MakeMaterialIdDetailTextureParameter, ParameterPin, Query)
+			const TValue<FVoxelMaterialParameter> FutureMaterialIdMaterialParameter = VOXEL_CALL_NODE(FVoxelNode_MakeMaterialIdDetailTextureParameter, ParameterPin, Query)
 			{
 				CalleeNode.bIsMain = true;
 
@@ -86,14 +99,231 @@ FVoxelNodeAliases::TValue<FVoxelMarchingCubeExecNodeMesh> FVoxelMarchingCubeExec
 				};
 			};
 
+			const int32 LOD = LODQueryParameter->LOD;
+			const TValue<FVoxelMaterial> MaterialTemplate = INLINE_LAMBDA
+			{
+				VOXEL_SCOPE_LOCK(DebugParameter->CriticalSection);
+
+				if (DebugParameter->Entries_RequiresLock.Num() == 0)
+				{
+					return GetNodeRuntime().Get(MaterialPin, Query);
+				}
+
+				TVoxelArray<FVoxelGraphNodeRef> NodeRefs;
+				TVoxelArray<TSharedPtr<const TVoxelComputeValue<FVoxelFloatBuffer>>> ChannelComputes;
+				for (const auto& It : DebugParameter->Entries_RequiresLock)
+				{
+					const FVoxelDebugQueryParameter::FEntry& Entry = It.Value;
+					if (Entry.Type.Is<FVoxelFloatBuffer>())
+					{
+						NodeRefs.Add(Entry.NodeRef);
+						ChannelComputes.Add(ReinterpretCastSharedPtr<const TVoxelComputeValue<FVoxelFloatBuffer>>(Entry.Compute));
+					}
+					else if (Entry.Type.Is<FVoxelVector2DBuffer>())
+					{
+						NodeRefs.Add(Entry.NodeRef);
+						NodeRefs.Add(Entry.NodeRef);
+
+						ChannelComputes.Add(MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([Compute = Entry.Compute](const FVoxelQuery& Query)
+						{
+							const FVoxelFutureValue Value = (*Compute)(Query);
+							return
+								MakeVoxelTask()
+								.Dependency(Value)
+								.Execute<FVoxelFloatBuffer>([=]
+								{
+									return Value.Get_CheckCompleted<FVoxelVector2DBuffer>().X;
+								});
+						}));
+						ChannelComputes.Add(MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([Compute = Entry.Compute](const FVoxelQuery& Query)
+						{
+							const FVoxelFutureValue Value = (*Compute)(Query);
+							return
+								MakeVoxelTask()
+								.Dependency(Value)
+								.Execute<FVoxelFloatBuffer>([=]
+								{
+									return Value.Get_CheckCompleted<FVoxelVector2DBuffer>().Y;
+								});
+						}));
+					}
+					else if (Entry.Type.Is<FVoxelVectorBuffer>())
+					{
+						NodeRefs.Add(Entry.NodeRef);
+						NodeRefs.Add(Entry.NodeRef);
+						NodeRefs.Add(Entry.NodeRef);
+
+						ChannelComputes.Add(MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([Compute = Entry.Compute](const FVoxelQuery& Query)
+						{
+							const FVoxelFutureValue Value = (*Compute)(Query);
+							return
+								MakeVoxelTask()
+								.Dependency(Value)
+								.Execute<FVoxelFloatBuffer>([=]
+								{
+									return Value.Get_CheckCompleted<FVoxelVectorBuffer>().X;
+								});
+						}));
+						ChannelComputes.Add(MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([Compute = Entry.Compute](const FVoxelQuery& Query)
+						{
+							const FVoxelFutureValue Value = (*Compute)(Query);
+							return
+								MakeVoxelTask()
+								.Dependency(Value)
+								.Execute<FVoxelFloatBuffer>([=]
+								{
+									return Value.Get_CheckCompleted<FVoxelVectorBuffer>().Y;
+								});
+						}));
+						ChannelComputes.Add(MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([Compute = Entry.Compute](const FVoxelQuery& Query)
+						{
+							const FVoxelFutureValue Value = (*Compute)(Query);
+							return
+								MakeVoxelTask()
+								.Dependency(Value)
+								.Execute<FVoxelFloatBuffer>([=]
+								{
+									return Value.Get_CheckCompleted<FVoxelVectorBuffer>().Z;
+								});
+						}));
+					}
+				}
+
+				if (ChannelComputes.Num() == 0)
+				{
+					return GetNodeRuntime().Get(MaterialPin, Query);
+				}
+
+				if (ChannelComputes.Num() > 3)
+				{
+					VOXEL_MESSAGE(Error, "{0}: More than 3 channels being debugged at once: {1}", this, NodeRefs);
+					ChannelComputes.SetNum(3);
+					ChannelComputes.SetNum(3);
+				}
+
+				TVoxelArray<TValue<FVoxelMaterialParameter>> Parameters;
+				for (int32 Index = 0; Index < ChannelComputes.Num(); Index++)
+				{
+					const TSharedPtr<const TVoxelComputeValue<FVoxelFloatBuffer>> Compute = ChannelComputes[Index];
+
+					Parameters.Add(VOXEL_CALL_NODE(FVoxelNode_MakeFloatDetailTextureParameter, ParameterPin, Query)
+					{
+						VOXEL_CALL_NODE_BIND(FloatPin, Compute)
+						{
+							return (*Compute)(Query);
+						};
+						VOXEL_CALL_NODE_BIND(TexturePin, Index)
+						{
+							return VOXEL_ON_COMPLETE_GAME_THREAD(Index)
+							{
+								if (!GetDefault<UVoxelSettings>()->MarchingCubeDebugDetailTextures.IsValidIndex(Index))
+								{
+									return {};
+								}
+
+								UVoxelFloatDetailTexture* Texture = GetDefault<UVoxelSettings>()->MarchingCubeDebugDetailTextures[Index].LoadSynchronous();
+								if (!Texture)
+								{
+									return {};
+								}
+
+								return FVoxelFloatDetailTextureRef{ GVoxelDetailTextureManager->FindOrAddPool_GameThread(*Texture) };
+							};
+						};
+					});
+				}
+
+				return
+					MakeVoxelTask()
+					.Thread(EVoxelTaskThread::GameThread)
+					.Dependencies(Parameters)
+					.Execute<FVoxelMaterial>([=]
+					{
+						FVoxelMaterial Result;
+						Result.ParentMaterial = FVoxelMaterialRef::Make(GetDefault<UVoxelSettings>()->MarchingCubeDebugMaterial.LoadSynchronous());
+						for (const TValue<FVoxelMaterialParameter>& Parameter : Parameters)
+						{
+							Result.Parameters.Add(Parameter.GetShared_CheckCompleted());
+						}
+						return Result;
+					});
+			};
+
+			const TValue<FVoxelMaterial> Material =
+				MakeVoxelTask()
+				.Dependencies(FutureSurface, MaterialTemplate, FutureMaterialIdMaterialParameter)
+				.Execute<FVoxelMaterial>([=]
+				{
+					const FVoxelSurface& Surface = FutureSurface.Get_CheckCompleted();
+
+					TVoxelArray<TValue<FVoxelMaterialParameter>> Parameters;
+					for (const auto& It : Surface.NameToAttribute)
+					{
+						const FVoxelSurface::FAttribute& Attribute = It.Value;
+						if (!Attribute.DetailTexturePool.IsValid() ||
+							!ensure(Attribute.Compute))
+						{
+							continue;
+						}
+
+						if (Attribute.InnerType.Is<float>())
+						{
+							Parameters.Add(VOXEL_CALL_NODE(FVoxelNode_MakeFloatDetailTextureParameter, ParameterPin, Query)
+							{
+								VOXEL_CALL_NODE_BIND(FloatPin, Attribute)
+								{
+									return TValue<FVoxelFloatBuffer>((*Attribute.Compute)(Query));
+								};
+								VOXEL_CALL_NODE_BIND(TexturePin, Attribute)
+								{
+									return FVoxelFloatDetailTextureRef{ Attribute.DetailTexturePool };
+								};
+							});
+						}
+						else if (Attribute.InnerType.Is<FLinearColor>())
+						{
+							Parameters.Add(VOXEL_CALL_NODE(FVoxelNode_MakeColorDetailTextureParameter, ParameterPin, Query)
+							{
+								VOXEL_CALL_NODE_BIND(ColorPin, Attribute)
+								{
+									return TValue<FVoxelLinearColorBuffer>((*Attribute.Compute)(Query));
+								};
+								VOXEL_CALL_NODE_BIND(TexturePin, Attribute)
+								{
+									return FVoxelColorDetailTextureRef{ Attribute.DetailTexturePool };
+								};
+							});
+						}
+						else
+						{
+							ensure(false);
+						}
+					}
+
+					return
+						MakeVoxelTask()
+						.Dependencies(Parameters)
+						.Execute<FVoxelMaterial>([=]
+						{
+							if (!FutureMaterialIdMaterialParameter.Get_CheckCompleted().IsA<FVoxelDetailTextureParameter>() ||
+								!FutureMaterialIdMaterialParameter.Get_CheckCompleted().AsChecked<FVoxelDetailTextureParameter>().Pool)
+							{
+								VOXEL_MESSAGE(Error, "{0}: MaterialId detail texture is null", this);
+							}
+
+							FVoxelMaterial Result = MaterialTemplate.Get_CheckCompleted();
+							Result.Parameters.Add(FutureMaterialIdMaterialParameter.GetShared_CheckCompleted());
+							for (const TValue<FVoxelMaterialParameter>& Parameter : Parameters)
+							{
+								Result.Parameters.Add(Parameter.GetShared_CheckCompleted());
+							}
+							return Result;
+						});
+				});
+
 			if (LOD == 0)
 			{
-				return VOXEL_ON_COMPLETE(LOD, Material, MaterialIdMaterialParameter)
-				{
-					FVoxelMaterial MaterialCopy = *Material;
-					MaterialCopy.Parameters.Add(MaterialIdMaterialParameter);
-					return MaterialCopy;
-				};
+				return Material;
 			}
 
 			const TValue<FVoxelMaterialParameter> NormalMaterialParameter = VOXEL_CALL_NODE(FVoxelNode_MakeNormalDetailTextureParameter, ParameterPin, Query)
@@ -120,12 +350,17 @@ FVoxelNodeAliases::TValue<FVoxelMarchingCubeExecNodeMesh> FVoxelMarchingCubeExec
 				};
 			};
 
-			return VOXEL_ON_COMPLETE(LOD, Material, MaterialIdMaterialParameter, NormalMaterialParameter)
+			return VOXEL_ON_COMPLETE(LOD, Material, NormalMaterialParameter)
 			{
-				FVoxelMaterial MaterialCopy = *Material;
-				MaterialCopy.Parameters.Add(MaterialIdMaterialParameter);
-				MaterialCopy.Parameters.Add(NormalMaterialParameter);
-				return MaterialCopy;
+				if (!NormalMaterialParameter->IsA<FVoxelDetailTextureParameter>() ||
+					!NormalMaterialParameter->AsChecked<FVoxelDetailTextureParameter>().Pool)
+				{
+					VOXEL_MESSAGE(Error, "{0}: Normal detail texture is null", this);
+				}
+
+				FVoxelMaterial Result = *Material;
+				Result.Parameters.Add(NormalMaterialParameter);
+				return Result;
 			};
 		};
 
@@ -150,7 +385,11 @@ FVoxelNodeAliases::TValue<FVoxelMarchingCubeExecNodeMesh> FVoxelMarchingCubeExec
 	};
 
 	const TValue<FVoxelMeshSettings> MeshSettings = GetNodeRuntime().Get(MeshSettingsPin, Query);
-	const TValue<FBodyInstance> BodyInstance = GetNodeRuntime().Get(BodyInstancePin, Query);
+	const TValue<FBodyInstance> BodyInstance =
+		Query.GetInfo(EVoxelQueryInfo::Query).IsGameWorld()
+		? GetNodeRuntime().Get(BodyInstancePin, Query)
+		// Always collide in editor for sculpting & drag/drop
+		: FBodyInstance();
 
 	return
 		MakeVoxelTask(STATIC_FNAME("MarchingCubeSceneNode - CreateCollider"))
@@ -222,50 +461,37 @@ void FVoxelMarchingCubeExecNodeRuntime::Create()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	ChunkSpawnerValue = GetNodeRuntime().MakeDynamicValueFactory(Node.ChunkSpawnerPin).Compute(GetContext());
-	ChunkSpawnerValue.OnChanged_GameThread(MakeWeakPtrLambda(this, [this](const TSharedRef<const FVoxelChunkSpawner>& NewSpawner)
+	const TSharedPtr<FVoxelRuntime> Runtime = GetRuntime();
+	if (!ensure(Runtime))
 	{
-		ChunkSpawner = NewSpawner->MakeImpl();
+		return;
+	}
 
-		if (!ChunkSpawner)
-		{
-			ChunkSpawner = FVoxelScreenSizeChunkSpawner().MakeImpl();
-		}
+	ChunkSpawner = GetConstantPin(Node.ChunkSpawnerPin)->MakeSharedCopy();
+	VoxelSize = GetConstantPin(Node.VoxelSizePin);
 
-		ChunkSpawner->VoxelSize = VoxelSize;
-		ChunkSpawner->CreateChunkLambda = MakeWeakPtrLambda(this, [this](
-			const int32 LOD,
-			const int32 ChunkSize,
-			const FVoxelBox& Bounds,
-			TSharedPtr<FVoxelChunkRef>& OutChunkRef)
-		{
-			const TSharedRef<FChunkInfo> ChunkInfo = MakeVoxelShared<FChunkInfo>(LOD, ChunkSize, Bounds);
-
-			VOXEL_SCOPE_LOCK(ChunkInfos_CriticalSection);
-			ChunkInfos.Add(ChunkInfo->ChunkId, ChunkInfo);
-
-			OutChunkRef = MakeVoxelShared<FVoxelChunkRef>(ChunkInfo->ChunkId, ChunkActionQueue);
-		});
-	}));
-
-	VoxelSizeValue = GetNodeRuntime().MakeDynamicValueFactory(Node.VoxelSizePin).Compute(GetContext());
-	VoxelSizeValue.OnChanged_GameThread(MakeWeakPtrLambda(this, [this](const float NewVoxelSize)
+	if (ChunkSpawner->GetStruct() == StaticStructFast<FVoxelChunkSpawner>())
 	{
-		if (VoxelSize == NewVoxelSize)
-		{
-			return;
-		}
+		const TSharedRef<FVoxelScreenSizeChunkSpawner> ScreenSizeChunkSpawner = MakeVoxelShared<FVoxelScreenSizeChunkSpawner>();
+		ScreenSizeChunkSpawner->LastChunkScreenSize = 1.f;
+		ChunkSpawner = ScreenSizeChunkSpawner;
+	}
 
-		VoxelSize = NewVoxelSize;
+	ChunkSpawner->PrivateVoxelSize = VoxelSize;
+	ChunkSpawner->PrivateCreateChunkLambda = MakeWeakPtrLambda(this, [this](
+		const int32 LOD,
+		const int32 ChunkSize,
+		const FVoxelBox& Bounds) -> TSharedPtr<FVoxelChunkRef>
+	{
+		const TSharedRef<FChunkInfo> ChunkInfo = MakeVoxelShared<FChunkInfo>(LOD, ChunkSize, Bounds);
 
-		if (!ChunkSpawner)
-		{
-			return;
-		}
+		VOXEL_SCOPE_LOCK(ChunkInfos_CriticalSection);
+		ChunkInfos.Add(ChunkInfo->ChunkId, ChunkInfo);
 
-		ChunkSpawner->VoxelSize = NewVoxelSize;
-		ChunkSpawner->Recreate();
-	}));
+		return MakeVoxelShared<FVoxelChunkRef>(ChunkInfo->ChunkId, ChunkActionQueue);
+	});
+
+	ChunkSpawner->Initialize(*Runtime);
 }
 
 void FVoxelMarchingCubeExecNodeRuntime::Destroy()
@@ -303,12 +529,12 @@ void FVoxelMarchingCubeExecNodeRuntime::Tick(FVoxelRuntime& Runtime)
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	if (ChunkSpawnerValue.IsComputed() &&
-		VoxelSizeValue.IsComputed() &&
-		ChunkSpawner)
+	if (!ensure(ChunkSpawner))
 	{
-		ChunkSpawner->Tick(Runtime);
+		return;
 	}
+
+	ChunkSpawner->Tick(Runtime);
 
 	ProcessMeshes(Runtime);
 	ProcessActions(&Runtime, true);
@@ -331,7 +557,7 @@ void FVoxelMarchingCubeExecNodeRuntime::FChunkInfo::FlushOnComplete()
 		return;
 	}
 
-	AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [OnCompleteArray = MoveTemp(OnCompleteArray)]
+	AsyncVoxelTask([OnCompleteArray = MoveTemp(OnCompleteArray)]
 	{
 		for (const TSharedPtr<const TVoxelUniqueFunction<void()>>& OnComplete : OnCompleteArray)
 		{
@@ -349,7 +575,7 @@ void FVoxelMarchingCubeExecNodeRuntime::ProcessMeshes(FVoxelRuntime& Runtime)
 	{
 		if (OnCompleteArray.Num() > 0)
 		{
-			AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [OnCompleteArray = MoveTemp(OnCompleteArray)]
+			AsyncVoxelTask([OnCompleteArray = MoveTemp(OnCompleteArray)]
 			{
 				for (const TSharedPtr<const TVoxelUniqueFunction<void()>>& OnComplete : OnCompleteArray)
 				{
@@ -379,7 +605,7 @@ void FVoxelMarchingCubeExecNodeRuntime::ProcessMeshes(FVoxelRuntime& Runtime)
 		}
 		else
 		{
-			ENQUEUE_RENDER_COMMAND(SetTransitionMask_RenderThread)([Mesh, TransitionMask = ChunkInfo->TransitionMask](FRHICommandList& RHICmdList)
+			VOXEL_ENQUEUE_RENDER_COMMAND(SetTransitionMask_RenderThread)([Mesh, TransitionMask = ChunkInfo->TransitionMask](FRHICommandList& RHICmdList)
 			{
 				ConstCast(CastChecked<FVoxelMarchingCubeMesh>(*Mesh)).SetTransitionMask_RenderThread(RHICmdList, TransitionMask);
 			});
@@ -397,18 +623,18 @@ void FVoxelMarchingCubeExecNodeRuntime::ProcessMeshes(FVoxelRuntime& Runtime)
 				QueuedMesh.Mesh->MeshSettings->ApplyToComponent(*Component);
 			}
 
-            const auto Box = ChunkInfo->Bounds.ToFBox();
-            for (const auto& Iter : Runtime.OnChunkChangedMap)
-            {
-                if (Iter.Value)
-                {
-                    Iter.Value(
-                        Box,
-                        ChunkInfo->LOD,
-                        ChunkInfo->ChunkSize
-                    );
-                }
-            }
+			const auto Box = ChunkInfo->Bounds.ToFBox();
+			for (const auto& Iter : Runtime.OnChunkChangedMap)
+			{
+				if (Iter.Value)
+				{
+					Iter.Value(
+						Box,
+						ChunkInfo->LOD,
+						ChunkInfo->ChunkSize
+					);
+				}
+			}
 		}
 
 		if (!Collider)
@@ -463,7 +689,7 @@ void FVoxelMarchingCubeExecNodeRuntime::ProcessActions(FVoxelRuntime* Runtime, c
 
 void FVoxelMarchingCubeExecNodeRuntime::ProcessAction(FVoxelRuntime* Runtime, const FVoxelChunkAction& Action)
 {
-	checkVoxelSlow(ChunkInfos_CriticalSection.IsLocked_Debug());
+	checkVoxelSlow(ChunkInfos_CriticalSection.IsLocked());
 
 	const TSharedPtr<FChunkInfo> ChunkInfo = ChunkInfos.FindRef(Action.ChunkId);
 	if (!ChunkInfo)
@@ -496,7 +722,7 @@ void FVoxelMarchingCubeExecNodeRuntime::ProcessAction(FVoxelRuntime* Runtime, co
 			.AddRef(NodeRef)
 			.Priority(FVoxelTaskPriority::MakeBounds(
 				ChunkInfo->Bounds,
-				0,
+				GetConstantPin(Node.PriorityOffsetPin),
 				GetWorld(),
 				GetLocalToWorld()))
 			.Compute(GetContext(), Parameters);
@@ -517,15 +743,15 @@ void FVoxelMarchingCubeExecNodeRuntime::ProcessAction(FVoxelRuntime* Runtime, co
 		VOXEL_SCOPE_COUNTER("SetTransitionMask");
 		check(IsInGameThread());
 
- 		ChunkInfo->TransitionMask = Action.TransitionMask;
- 
- 		if (UVoxelMeshComponent* Component = ChunkInfo->MeshComponent.Get())
- 		{
- 			if (const TSharedPtr<const FVoxelMesh> Mesh = Component->GetMesh())
- 			{
- 				ConstCast(CastChecked<FVoxelMarchingCubeMesh>(*Mesh)).SetTransitionMask_GameThread(Action.TransitionMask);
- 			}
- 		}
+		ChunkInfo->TransitionMask = Action.TransitionMask;
+
+		if (UVoxelMeshComponent* Component = ChunkInfo->MeshComponent.Get())
+		{
+			if (const TSharedPtr<const FVoxelMesh> Mesh = Component->GetMesh())
+			{
+				ConstCast(CastChecked<FVoxelMarchingCubeMesh>(*Mesh)).SetTransitionMask_GameThread(Action.TransitionMask);
+			}
+		}
 	}
 	break;
 	case EVoxelChunkAction::BeginDestroy:

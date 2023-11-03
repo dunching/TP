@@ -11,11 +11,7 @@ void FVoxelInstancedStruct::Free()
 		return;
 	}
 
-	if (UObjectInitialized())
-	{
-		ScriptStruct->DestroyStruct(StructMemory);
-	}
-
+	FVoxelObjectUtilities::DestroyStruct_Safe(ScriptStruct, StructMemory);
 	FVoxelMemory::Free(StructMemory);
 
 	ScriptStruct = nullptr;
@@ -128,7 +124,7 @@ bool FVoxelInstancedStruct::NetSerialize(FArchive& Ar, UPackageMap& Map)
 
 bool FVoxelInstancedStruct::Serialize(FArchive& Ar)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	using FVersion = DECLARE_VOXEL_VERSION
 	(
@@ -290,7 +286,7 @@ bool FVoxelInstancedStruct::Identical(const FVoxelInstancedStruct* Other, uint32
 
 bool FVoxelInstancedStruct::ExportTextItem(FString& ValueStr, const FVoxelInstancedStruct& DefaultValue, UObject* Parent, int32 PortFlags, UObject* ExportRootScope) const
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (!ScriptStruct)
 	{
@@ -314,7 +310,7 @@ bool FVoxelInstancedStruct::ExportTextItem(FString& ValueStr, const FVoxelInstan
 
 bool FVoxelInstancedStruct::ImportTextItem(const TCHAR*& Buffer, int32 PortFlags, UObject* Parent, FOutputDevice* ErrorText, FArchive* InSerializingArchive)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	FString StructPathName;
 	{
@@ -365,7 +361,7 @@ bool FVoxelInstancedStruct::ImportTextItem(const TCHAR*& Buffer, int32 PortFlags
 
 void FVoxelInstancedStruct::AddStructReferencedObjects(FReferenceCollector& Collector)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (!ScriptStruct)
 	{

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "VoxelMinimal.h"
-#include "VoxelCachedValue.h"
+#include "VoxelNodeStats.h"
 #include "VoxelDynamicValue.h"
 
 #if WITH_EDITOR

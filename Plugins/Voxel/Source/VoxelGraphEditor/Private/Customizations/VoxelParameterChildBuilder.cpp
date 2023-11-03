@@ -96,8 +96,6 @@ void FVoxelParameterChildBuilder::GenerateHeaderRowContent(FDetailWidgetRow& Row
 
 void FVoxelParameterChildBuilder::GenerateChildContent(IDetailChildrenBuilder& ChildrenBuilder)
 {
-	VOXEL_FUNCTION_COUNTER();
-
 	if (!ensure(!ParameterDetails.IsOrphan()))
 	{
 		return;

@@ -14,6 +14,7 @@ struct VOXELGRAPHCORE_API FVoxelNodeNames
 	static const FName Builtin;
 	static const FName ExecuteNodeId;
 	static const FName MergeNodeId;
+	static const FName PreviewNodeId;
 	static const FName GetPreviousOutputNodeId;
 	static const FName MacroTemplateInput;
 	static const FName MacroRecursiveTemplateInput;
@@ -24,6 +25,7 @@ struct VOXELGRAPHCORE_API FVoxelGraphNodeRef
 {
 	GENERATED_BODY()
 
+public:
 	UPROPERTY()
 	TWeakObjectPtr<const UVoxelGraphInterface> Graph;
 
@@ -33,13 +35,14 @@ struct VOXELGRAPHCORE_API FVoxelGraphNodeRef
 	UPROPERTY()
 	int32 TemplateInstance = 0;
 
+public:
+	// Debug only
 	UPROPERTY()
-	FName DebugName;
+	FName EdGraphNodeTitle;
 
-#if WITH_EDITORONLY_DATA
+	// Debug only
 	UPROPERTY()
-	FName EdGraphNodeName_EditorOnly;
-#endif
+	FName EdGraphNodeName;
 
 	FVoxelGraphNodeRef() = default;
 	FVoxelGraphNodeRef(
@@ -47,10 +50,8 @@ struct VOXELGRAPHCORE_API FVoxelGraphNodeRef
 		const FName NodeId)
 		: Graph(Graph)
 		, NodeId(NodeId)
-		, DebugName(NodeId)
-#if WITH_EDITORONLY_DATA
-		, EdGraphNodeName_EditorOnly(FVoxelNodeNames::Builtin)
-#endif
+		, EdGraphNodeTitle(NodeId)
+		, EdGraphNodeName(FVoxelNodeNames::Builtin)
 	{
 	}
 
@@ -59,6 +60,7 @@ struct VOXELGRAPHCORE_API FVoxelGraphNodeRef
 	UEdGraphNode* GetGraphNode_EditorOnly() const;
 #endif
 
+	bool IsDeleted() const;
 	FVoxelGraphNodeRef WithSuffix(const FString& Suffix) const;
 
 	FORCEINLINE bool IsExplicitlyNull() const
@@ -83,6 +85,15 @@ struct VOXELGRAPHCORE_API FVoxelGraphNodeRef
 			TemplateInstance != Other.TemplateInstance;
 	}
 
+	FORCEINLINE friend FArchive& operator<<(FArchive& Ar, FVoxelGraphNodeRef& Key)
+	{
+		Ar << Key.Graph;
+		Ar << Key.NodeId;
+		Ar << Key.TemplateInstance;
+		Ar << Key.EdGraphNodeTitle;
+		Ar << Key.EdGraphNodeName;
+		return Ar;
+	}
 	FORCEINLINE friend uint32 GetTypeHash(const FVoxelGraphNodeRef& Key)
 	{
 		return FVoxelUtilities::MurmurHashMulti(
@@ -143,6 +154,9 @@ struct VOXELGRAPHCORE_API FVoxelNodePath
 		return NodeRefs != Other.NodeRefs;
 	}
 
+	FString ToDebugString() const;
 	bool NetSerialize(FArchive& Ar, UPackageMap& Map);
+
+	VOXELGRAPHCORE_API friend FArchive& operator<<(FArchive& Ar, FVoxelNodePath& Path);
 	VOXELGRAPHCORE_API friend uint32 GetTypeHash(const FVoxelNodePath& Path);
 };

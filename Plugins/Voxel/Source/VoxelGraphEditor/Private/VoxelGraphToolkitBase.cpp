@@ -321,25 +321,6 @@ void FVoxelGraphToolkitBase::SetTabManager(const TSharedRef<FTabManager>& TabMan
 	DocumentManager->SetTabManager(TabManager);
 }
 
-void FVoxelGraphToolkitBase::PostUndo()
-{
-	Super::PostUndo();
-
-	CloseInvalidGraphs();
-
-	// Clear selection, to avoid holding refs to nodes that go away
-	for (const UEdGraph* EdGraph : GetAllEdGraphs())
-	{
-		if (const TSharedPtr<SGraphEditor> GraphEditor = FindGraphEditor(EdGraph))
-		{
-			GraphEditor->ClearSelectionSet();
-			GraphEditor->NotifyGraphChanged();
-		}
-
-		OnGraphChanged(EdGraph);
-	}
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -715,7 +696,7 @@ void FVoxelGraphToolkitBase::PasteNodesHere(const FVector2D& Location)
 		return;
 	}
 
-	const FVoxelTransaction Transaction(Graph->GetOuter() ? Graph->GetOuter() : Graph, "Paste nodes");
+	const FVoxelTransaction Transaction(Graph, "Paste nodes");
 	FVoxelGraphDelayOnGraphChangedScope OnGraphChangedScope;
 
 	// Clear the selection set (newly pasted stuff will be selected)
@@ -776,6 +757,7 @@ void FVoxelGraphToolkitBase::PasteNodesHere(const FVector2D& Location)
 	{
 		if (UVoxelGraphNodeBase* VoxelNode = Cast<UVoxelGraphNodeBase>(Node))
 		{
+			VoxelNode->bEnableDebug = false;
 			VoxelNode->bEnablePreview = false;
 			VoxelNode->PostPasteVoxelNode(PastedNodes);
 		}

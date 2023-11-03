@@ -4,9 +4,10 @@
 
 #include "VoxelMinimal.h"
 #include "VoxelParameter.h"
-#include "VoxelCompiledGraph.h"
 #include "VoxelGraphInterface.h"
 #include "VoxelGraph.generated.h"
+
+class UVoxelRuntimeGraph;
 
 USTRUCT()
 struct VOXELGRAPHCORE_API FVoxelEditedDocumentInfo
@@ -58,8 +59,8 @@ struct VOXELGRAPHCORE_API FVoxelGraphParameter : public FVoxelParameter
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = "Voxel", DisplayName = "Expose Default as Pin")
-	bool bExposeInputDefaultAsPin = false;
+	UPROPERTY()
+	bool bExposeInputDefaultAsPin_DEPRECATED = false;
 
 	UPROPERTY(EditAnywhere, Category = "Voxel")
 	EVoxelGraphParameterType ParameterType = {};
@@ -141,6 +142,11 @@ public:
 	FLinearColor InstanceColor = FLinearColor::Gray;
 #endif
 
+	// Enable to render a custom graph thumbnail
+	// Might crash the engine if virtual shadow maps are enabled
+	UPROPERTY(EditAnywhere, Category = "Config")
+	bool bEnableThumbnail = false;
+
 	UPROPERTY(EditAnywhere, Category = "Config")
 	FString Tooltip;
 
@@ -156,26 +162,21 @@ public:
 	TArray<FVoxelGraphParameter> Parameters;
 
 #if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	bool bIsParameterGraph = false;
+
 	UPROPERTY(EditAnywhere, Category = "Internal")
 	TMap<FGuid, TObjectPtr<UVoxelGraph>> ParameterGraphs;
-
-	UPROPERTY()
-	bool bParameterGraph = false;
 #endif
 
 	UPROPERTY()
 	TMap<EVoxelGraphParameterType, FVoxelParameterCategories> ParametersCategories;
 
 	UPROPERTY()
-	FVoxelCompiledGraph CompiledGraph;
-
-	UPROPERTY()
 	FVoxelGraphPreviewConfig Preview;
 
-	UPROPERTY()
-	bool bExposeToLibrary = false;
-
-	FSimpleMulticastDelegate OnGraphCompiled;
+	UPROPERTY(EditAnywhere, Category = "Config")
+	bool bExposeToLibrary = true;
 
 	enum class EParameterChangeType
 	{
@@ -192,7 +193,17 @@ public:
 	virtual FString GetGraphName() const override;
 	void SetGraphName(const FString& NewName);
 
+	void ForceRecompile();
+
+	FORCEINLINE UVoxelRuntimeGraph& GetRuntimeGraph() const
+	{
+		return *RuntimeGraph;
+	}
+
 private:
+	UPROPERTY()
+	TObjectPtr<UVoxelRuntimeGraph> RuntimeGraph;
+
 	UPROPERTY(EditAnywhere, Category = "Config")
 	bool bEnableNameOverride = false;
 
@@ -222,22 +233,11 @@ public:
 	virtual TSharedPtr<IVoxelParameterRootView> GetParameterViewImpl(const FVoxelParameterPath& BasePath) override;
 	//~ End IVoxelParameterProvider Interface
 
-	void PostGraphCompiled() const;
-
 	void FixupParameters();
-	TArray<UVoxelGraph*> GetAllGraphs();
-	TArray<const UVoxelGraph*> GetAllGraphs() const
-	{
-		return ReinterpretCastArray<const UVoxelGraph*>(ConstCast(this)->GetAllGraphs());
-	}
 
 #if WITH_EDITOR
-	TArray<UVoxelGraph*> GetAllParameterGraphs();
+	TArray<UVoxelGraph*> GetAllGraphs();
 	UVoxelGraph* FindGraph(const UEdGraph* EdGraph);
-	const UVoxelGraph* FindGraph(const UEdGraph* EdGraph) const
-	{
-		return ConstCast(this)->FindGraph(EdGraph);
-	}
 #endif
 
 	FVoxelGraphParameter* FindParameterByGuid(const FGuid& TargetGuid)
@@ -257,6 +257,10 @@ public:
 				Parameter.ParameterType == ParameterType &&
 				Parameter.Name == TargetName;
 		});
+	}
+	const FVoxelGraphParameter* FindParameterByName(const EVoxelGraphParameterType ParameterType, const FName TargetName) const
+	{
+		return ConstCast(this)->FindParameterByName(ParameterType, TargetName);
 	}
 
 	TArray<FString>& GetCategories(const EVoxelGraphParameterType Type)

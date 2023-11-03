@@ -27,6 +27,9 @@ public:
 		TFunction<void(TVoxelArrayView<uint8> Data)> InitializeMip0 = nullptr,
 		UTexture2D* ExistingTexture = nullptr);
 
+	// Unload bulk data, saving CPU memory for textures that can be kept on the GPU
+	static void RemoveBulkData(UTexture2D* Texture);
+
 	static UTexture2DArray* CreateTextureArray(
 		FName DebugName,
 		int32 SizeX,

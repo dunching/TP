@@ -7,6 +7,9 @@
 #include "VoxelFunctionLibrary.h"
 #include "VoxelSurfaceFunctionLibrary.generated.h"
 
+struct FVoxelFloatDetailTextureRef;
+struct FVoxelColorDetailTextureRef;
+
 UENUM()
 enum class EVoxelTransformSpace : uint8
 {
@@ -28,51 +31,69 @@ class VOXELGRAPHCORE_API UVoxelSurfaceFunctionLibrary : public UVoxelFunctionLib
 public:
 	// Get the bounds of a surface
 	// @param	Smoothness	Bounds will be increased by Smoothness. Should be the same as the SmoothUnion smoothness.
-	UFUNCTION(Category = "Surface", meta = (AdvancedDisplay = "TransformSpace"))
-	FVoxelBox GetSurfaceBounds(
+	UFUNCTION(Category = "Surface")
+	FVoxelBounds GetSurfaceBounds(
 		const FVoxelSurface& Surface,
-		float Smoothness = 0.f,
+		float Smoothness = 0.f) const;
+
+	UFUNCTION(Category = "Surface", meta = (ShowInShortList))
+	FVoxelBounds MakeBoundsFromLocalBox(const FVoxelBox& Box) const;
+
+	UFUNCTION(Category = "Surface")
+	FVoxelBox GetBoundsBox(
+		const FVoxelBounds& Bounds,
 		EVoxelTransformSpace TransformSpace = EVoxelTransformSpace::Local) const;
 
-	// Transform Value from local space into surface space
-	// This is automatically applied to Smoothness in SmoothUnion/Intersection
 	UFUNCTION(Category = "Surface")
-	float TransformToSurfaceSpace(
-		const FVoxelSurface& Surface,
-		float Value) const;
-
-	UFUNCTION(Category = "Surface")
-	FVoxelSurfaceMaterial MergeSurfaceMaterials(
+	FVoxelSurfaceMaterial BlendSurfaceMaterials(
 		const FVoxelSurfaceMaterial& A,
 		const FVoxelSurfaceMaterial& B,
 		const FVoxelFloatBuffer& Alpha) const;
 
 public:
-	// Apply the transform of the current graph/actor to the surface
-	UFUNCTION(Category = "Surface", meta = (Internal))
-	FVoxelSurface ApplyTransform(const FVoxelSurface& Surface) const;
+	// Assign a detail texture to a float attribute
+	// The float attribute can then be accessed in the material graph through that detail texture
+	UFUNCTION(Category = "Surface", meta = (AdvancedDisplay = bLogError))
+	FVoxelSurface BindFloatAttributeDetailTexture(
+		const FVoxelSurface& Surface,
+		FName Name,
+		const FVoxelFloatDetailTextureRef& DetailTexture,
+		bool bLogError = true) const;
 
+	// Assign a detail texture to a color attribute
+	// The color attribute can then be accessed in the material graph through that detail texture
+	UFUNCTION(Category = "Surface", meta = (AdvancedDisplay = bLogError))
+	FVoxelSurface BindColorAttributeDetailTexture(
+		const FVoxelSurface& Surface,
+		FName Name,
+		const FVoxelColorDetailTextureRef& DetailTexture,
+		bool bLogError = true) const;
+
+public:
 	UFUNCTION(Category = "Surface", meta = (ShowInShortList))
 	FVoxelSurface Invert(const FVoxelSurface& Surface) const;
 
-	// Grow the surface by some amount
-	UFUNCTION(Category = "Surface", meta = (ShowInShortList))
-	FVoxelSurface Grow(
-		const FVoxelSurface& Surface,
-		float Amount = 100.f) const;
-
+	// Smoothly merge two surfaces
+	// Smoothness is in local space
+	// ie, if this brush is scaled up, smoothness will increase accordingly
 	UFUNCTION(Category = "Surface", meta = (ShowInShortList))
 	FVoxelSurface SmoothUnion(
 		const FVoxelSurface& A,
 		const FVoxelSurface& B,
 		float Smoothness = 100.f) const;
 
+	// Smoothly intersect two surfaces
+	// Smoothness is in local space
+	// ie, if this brush is scaled up, smoothness will increase accordingly
 	UFUNCTION(Category = "Surface", meta = (ShowInShortList))
 	FVoxelSurface SmoothIntersection(
 		const FVoxelSurface& A,
 		const FVoxelSurface& B,
 		float Smoothness = 100.f) const;
 
+	// Smoothly subtract a surface from another
+	// Smoothness is in local space
+	// ie, if this brush is scaled up, smoothness will increase accordingly
 	UFUNCTION(Category = "Surface", meta = (ShowInShortList))
 	FVoxelSurface SmoothSubtraction(
 		const FVoxelSurface& Surface,

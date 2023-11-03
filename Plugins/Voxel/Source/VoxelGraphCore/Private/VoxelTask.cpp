@@ -39,20 +39,20 @@ bool ShouldRunVoxelTaskInParallel()
 	{
 		return false;
 	}
-	return Group->bParallelTasks;
+	return Group->RuntimeInfo->ShouldRunTasksInParallel();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FVoxelTaskPriorityTicker : public FVoxelTicker
+class FVoxelTaskPriorityTicker : public FVoxelSingleton
 {
 public:
 	FVoxelFastCriticalSection CriticalSection;
 	TVoxelMap<FObjectKey, TVoxelMap<FVoxelTransformRef, TWeakPtr<FVector>>> WorldToLocalToWorldToPosition;
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelSingleton Interface
 	virtual void Tick() override
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -84,14 +84,9 @@ public:
 			}
 		}
 	}
-	//~ End FVoxelTicker Interface
+	//~ End FVoxelSingleton Interface
 };
-FVoxelTaskPriorityTicker* GVoxelTaskPriorityTicker = nullptr;
-
-VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelTaskPriorityTicker)
-{
-	GVoxelTaskPriorityTicker = new FVoxelTaskPriorityTicker();
-}
+FVoxelTaskPriorityTicker* GVoxelTaskPriorityTicker = MakeVoxelSingleton(FVoxelTaskPriorityTicker);
 
 TSharedRef<const FVector> FVoxelTaskPriority::GetPosition(
 	const FObjectKey World,
@@ -120,10 +115,8 @@ DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelTaskReferencer);
 FVoxelTaskReferencer::FVoxelTaskReferencer(const FName Name)
 	: Name(Name)
 {
-	VOXEL_FUNCTION_COUNTER();
-
-	Objects.Reserve(64);
-	GraphExecutors.Reserve(64);
+	Objects.Reserve(4);
+	GraphExecutors.Reserve(4);
 }
 
 void FVoxelTaskReferencer::AddRef(const TSharedRef<const FVirtualDestructor>& Object)
@@ -190,6 +183,7 @@ void FVoxelTask::Execute() const
 	checkVoxelSlow(Thread != EVoxelTaskThread::GameThread || IsInGameThread());
 	checkVoxelSlow(Thread != EVoxelTaskThread::RenderThread || IsInRenderingThread());
 	checkVoxelSlow(NumDependencies.GetValue() == 0);
+	checkVoxelSlow(Group.RuntimeInfo->NumActiveTasks.GetValue() > 0);
 
 	if (Name.IsNone())
 	{
@@ -219,7 +213,10 @@ void FVoxelTaskFactory::Execute(TVoxelUniqueFunction<void()>&& Lambda)
 	TVoxelArray<const FVoxelFutureValue*, TVoxelInlineAllocator<32>> DependenciesToProcess;
 	for (const FVoxelFutureValue& Dependency : DependenciesView)
 	{
-		checkf(Dependency.IsValid(), TEXT("Invalid dependency passed to %s"), *PrivateName.ToString());
+		if (!ensureMsgf(Dependency.IsValid(), TEXT("Invalid dependency passed to %s"), *PrivateName.ToString()))
+		{
+			continue;
+		}
 
 		if (!Dependency.IsComplete())
 		{
@@ -256,7 +253,13 @@ void FVoxelTaskFactory::Execute(TVoxelUniqueFunction<void()>&& Lambda)
 
 		if (bCanExecute)
 		{
-			FVoxelTaskGroupScope Scope(Task.Group);
+			FVoxelTaskGroupScope Scope;
+			if (!Scope.Initialize(Task.Group))
+			{
+				// Exiting
+				return;
+			}
+
 			Task.Execute();
 			return;
 		}

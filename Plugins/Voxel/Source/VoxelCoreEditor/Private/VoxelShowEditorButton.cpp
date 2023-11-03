@@ -63,9 +63,7 @@ private:
 				.ToolTipText(Function->GetToolTipText())
 				.OnClicked_Lambda([=]
 				{
-#if WITH_EDITOR
 					FScopedTransaction Transaction(*Function->GetName(), Function->GetDisplayNameText(), nullptr);
-#endif
 
 					for (const TWeakObjectPtr<UObject>& Object : Objects)
 					{

@@ -9,8 +9,8 @@
 #include "VoxelPhysicalMaterial.h"
 #include "VoxelMarchingCubeCollisionNode.generated.h"
 
-struct FVoxelInvoker;
 struct FVoxelCollider;
+class FVoxelInvokerView;
 class UVoxelCollisionComponent;
 class UVoxelNavigationComponent;
 
@@ -21,15 +21,18 @@ struct VOXELGRAPHNODES_API FVoxelMarchingCubeCollisionExecNode : public FVoxelEx
 	GENERATED_VOXEL_NODE_BODY()
 
 	VOXEL_INPUT_PIN(FVoxelSurface, Surface, nullptr, VirtualPin);
-	VOXEL_INPUT_PIN(FBodyInstance, BodyInstance, nullptr, VirtualPin);
-	VOXEL_INPUT_PIN(FName, InvokerChannel, "Default", VirtualPin);
-	VOXEL_INPUT_PIN(float, VoxelSize, 100.f, VirtualPin);
-	VOXEL_INPUT_PIN(bool, ComputeCollision, true, VirtualPin);
-	VOXEL_INPUT_PIN(bool, ComputeNavmesh, false, VirtualPin);
+	VOXEL_INPUT_PIN(FBodyInstance, BodyInstance, nullptr, ConstantPin);
+	VOXEL_INPUT_PIN(FName, InvokerChannel, "Default", ConstantPin);
+	VOXEL_INPUT_PIN(float, VoxelSize, 100.f, ConstantPin);
+	VOXEL_INPUT_PIN(bool, ComputeCollision, true, ConstantPin);
+	VOXEL_INPUT_PIN(bool, ComputeNavmesh, false, ConstantPin);
 
 	VOXEL_INPUT_PIN(FVoxelPhysicalMaterialBuffer, PhysicalMaterial, nullptr, VirtualPin, AdvancedDisplay);
 	VOXEL_INPUT_PIN(float, DistanceChecksTolerance, 1.f, VirtualPin, AdvancedDisplay);
-	VOXEL_INPUT_PIN(int32, ChunkSize, 32, VirtualPin, AdvancedDisplay);
+	VOXEL_INPUT_PIN(int32, ChunkSize, 32, ConstantPin, AdvancedDisplay);
+	// Priority offset, added to the task distance from camera
+	// Closest tasks are computed first, so set this to a very low value (eg, -1000000) if you want it to be computed first
+	VOXEL_INPUT_PIN(double, PriorityOffset, -2000000, ConstantPin, AdvancedDisplay);
 
 	TValue<FVoxelCollider> CreateCollider(
 		const FVoxelQuery& InQuery,
@@ -51,20 +54,6 @@ public:
 	//~ End FVoxelExecNodeRuntime Interface
 
 private:
-	struct FOctree : TVoxelFastOctree<>
-	{
-		const float VoxelSize;
-		const int32 ChunkSize;
-
-		explicit FOctree(
-			const float VoxelSize,
-			const int32 ChunkSize)
-			: TVoxelFastOctree(30)
-			, VoxelSize(VoxelSize)
-			, ChunkSize(ChunkSize)
-		{
-		}
-	};
 	struct FChunk
 	{
 		FChunk() = default;
@@ -81,22 +70,12 @@ private:
 	};
 
 public:
-	DECLARE_VOXEL_PIN_VALUES(
-		BodyInstance,
-		InvokerChannel,
-		VoxelSize,
-		ChunkSize,
-		ComputeCollision,
-		ComputeNavmesh);
-
-	FName InvokerChannel_GameThread;
-	TSharedPtr<const FVoxelInvoker> LastInvoker_GameThread;
-	TSharedPtr<const FBodyInstance> BodyInstance_GameThread;
-	bool bComputeCollision_GameThread = false;
-	bool bComputeNavmesh_GameThread = false;
+	TSharedPtr<const FBodyInstance> BodyInstance;
+	bool bComputeCollision = false;
+	bool bComputeNavmesh = false;
+	TSharedPtr<FVoxelInvokerView> InvokerView;
 
 	FVoxelFastCriticalSection CriticalSection;
-	TSharedPtr<FOctree> Octree_RequiresLock;
 	TVoxelIntVectorMap<TSharedPtr<FChunk>> Chunks_RequiresLock;
 
 	struct FQueuedCollider
@@ -106,8 +85,6 @@ public:
 	};
 	TQueue<FQueuedCollider, EQueueMode::Mpsc> QueuedColliders;
 	TQueue<TSharedPtr<FChunk>, EQueueMode::Mpsc> ChunksToDestroy;
-
-	void Update_AnyThread(const TSharedRef<const FVoxelInvoker>& Invoker);
 
 	void ProcessChunksToDestroy();
 	void ProcessQueuedColliders(FVoxelRuntime& Runtime);

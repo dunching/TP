@@ -400,15 +400,15 @@ FVoxelQuaternionBuffer UVoxelMathFunctionLibrary::CombineRotation(
 ///////////////////////////////////////////////////////////////////////////////
 
 FVoxelVectorBuffer UVoxelMathFunctionLibrary::TransformLocation(
-	const FTransform& T,
-	const FVoxelVectorBuffer& Location) const
+	const FVoxelVectorBuffer& Location,
+	const FTransform& Transform) const
 {
-	return FVoxelBufferUtilities::ApplyTransform(Location, T);
+	return FVoxelBufferUtilities::ApplyTransform(Location, Transform);
 }
 
 FVoxelVectorBuffer UVoxelMathFunctionLibrary::InverseTransformLocation(
-	const FTransform& T,
-	const FVoxelVectorBuffer& Location) const
+	const FVoxelVectorBuffer& Location,
+	const FTransform& Transform) const
 {
-	return FVoxelBufferUtilities::ApplyInverseTransform(Location, T);
+	return FVoxelBufferUtilities::ApplyInverseTransform(Location, Transform);
 }

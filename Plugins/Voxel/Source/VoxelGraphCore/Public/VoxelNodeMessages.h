@@ -6,14 +6,18 @@
 #include "VoxelQuery.h"
 
 class FVoxelNodeRuntime;
+struct FVoxelRuntimeNode;
 struct FVoxelGraphPinRef;
 struct FVoxelGraphNodeRef;
-struct FVoxelCompiledNode;
 struct IVoxelNodeInterface;
 
-VOXEL_FWD_DECLARE_NAMESPACE_CLASS(Graph, FPin);
-VOXEL_FWD_DECLARE_NAMESPACE_CLASS(Graph, FNode);
-VOXEL_FWD_DECLARE_NAMESPACE_CLASS(Graph, FGraph);
+namespace Voxel::Graph
+{
+class FPin;
+class FNode;
+class FGraph;
+enum class ENodeType : uint8;
+}
 
 template<>
 struct VOXELGRAPHCORE_API TVoxelMessageArgProcessor<FVoxelNodeRuntime>
@@ -107,10 +111,10 @@ struct VOXELGRAPHCORE_API TVoxelMessageArgProcessor<FVoxelGraphPinRef>
 };
 
 template<>
-struct VOXELGRAPHCORE_API TVoxelMessageArgProcessor<FVoxelCompiledNode>
+struct VOXELGRAPHCORE_API TVoxelMessageArgProcessor<FVoxelRuntimeNode>
 {
-	static void ProcessArg(FVoxelMessageBuilder& Builder, const FVoxelCompiledNode* Node);
-	static void ProcessArg(FVoxelMessageBuilder& Builder, const FVoxelCompiledNode& Node)
+	static void ProcessArg(FVoxelMessageBuilder& Builder, const FVoxelRuntimeNode* Node);
+	static void ProcessArg(FVoxelMessageBuilder& Builder, const FVoxelRuntimeNode& Node)
 	{
 		ProcessArg(Builder, &Node);
 	}

@@ -7,9 +7,7 @@
 
 TSharedRef<SWidget> FVoxelGraphMembersGraphSchemaAction::CreatePaletteWidget(FCreateWidgetForActionData* const InCreateData) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
-	return SNew(SMembersGraphPaletteItem, InCreateData);
+	return SNew(SVoxelGraphMembersGraphPaletteItem, InCreateData);
 }
 
 void FVoxelGraphMembersGraphSchemaAction::OnActionDoubleClick() const

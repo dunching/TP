@@ -232,8 +232,16 @@ TSharedPtr<FVoxelStructCustomizationWrapper> FVoxelPinValueCustomizationHelper::
 		return nullptr;
 	}
 
+	FUIAction CopyAction;
+	FUIAction PasteAction;
+	PropertyHandle->CreateDefaultPropertyCopyPasteActions(CopyAction, PasteAction);
+
+	FDetailWidgetRow& Row = DetailInterface.AddCustomRow(PropertyHandle->GetPropertyDisplayName())
+	.CopyAction(CopyAction)
+	.PasteAction(PasteAction);
+
 	SetupRow(
-		DetailInterface.AddCustomRow(PropertyHandle->GetPropertyDisplayName()),
+		Row,
 		AddArrayItemOptions(PropertyHandle, ValueWidget).ToSharedRef());
 
 	return nullptr;
@@ -427,7 +435,7 @@ TSharedPtr<SWidget> FVoxelPinValueCustomizationHelper::AddArrayItemOptions(const
 		ArrayHandle->DuplicateItem(Index);
 	});
 
-	return 
+	return
 		SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot()
 		.FillWidth(1.f)

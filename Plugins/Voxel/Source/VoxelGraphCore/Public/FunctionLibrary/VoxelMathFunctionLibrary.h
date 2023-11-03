@@ -197,16 +197,16 @@ public:
 
 public:
 	// Transform a position by the supplied transform.
-	// For example, if T was an object's transform, this would transform a position from local space to world space.
-	UFUNCTION(Category = "Math|Transforms")
+	// For example, if Transform was an object's transform, this would transform a position from local space to world space.
+	UFUNCTION(Category = "Math|Transform")
 	FVoxelVectorBuffer TransformLocation(
-		const FTransform& T,
-		const FVoxelVectorBuffer& Location) const;
+		const FVoxelVectorBuffer& Location,
+		const FTransform& Transform) const;
 
 	// Transform a position by the inverse of the supplied transform.
-	// For example, if T was an object's transform, this would transform a position from world space to local space.
-	UFUNCTION(Category = "Math|Transforms")
+	// For example, if Transform was an object's transform, this would transform a position from world space to local space.
+	UFUNCTION(Category = "Math|Transform")
 	FVoxelVectorBuffer InverseTransformLocation(
-		const FTransform& T,
-		const FVoxelVectorBuffer& Location) const;
+		const FVoxelVectorBuffer& Location,
+		const FTransform& Transform) const;
 };

@@ -9,40 +9,40 @@
 
 class FVoxelInlineGraphData;
 
+UENUM()
+enum class EVoxelGraphMacroType : uint8
+{
+	// Regular macro
+	Macro,
+	// The graph being executed is exposed as a pin, letting you override it in instances
+	Template,
+	// Multiple graphs are executed sequentially, useful for clusters
+	RecursiveTemplate
+};
+
 USTRUCT(meta = (Internal))
-struct FVoxelNode_FunctionCall : public FVoxelNode
+struct VOXELGRAPHCORE_API FVoxelNode_FunctionCall : public FVoxelNode
 {
 	GENERATED_BODY()
 	GENERATED_VOXEL_NODE_BODY()
 
 public:
-	enum class EMode : uint8
-	{
-		Macro,
-		Template,
-		RecursiveTemplate
-	};
+	UPROPERTY()
+	TObjectPtr<UVoxelGraphInterface> GraphInterface;
 
-	void Initialize(
-		EMode NewMode,
-		const UVoxelGraphInterface& NewDefaultGraphInterface);
+	UPROPERTY()
+	EVoxelGraphMacroType Type = {};
 
 	//~ Begin FVoxelNode Interface
 	virtual void PreCompile() override;
 	virtual FVoxelComputeValue CompileCompute(FName PinName) const override;
 	//~ End FVoxelNode Interface
 
-private:
-	EMode Mode = {};
-
-	// UPROPERTY for diffing
-	UPROPERTY()
-	TWeakObjectPtr<const UVoxelGraphInterface> DefaultGraphInterface;
+	void FixupPins();
+	UVoxelGraph* GetGraph() const;
 
 private:
 	TSharedPtr<FVoxelComputeInputMap> ComputeInputMap;
-	TVoxelMap<FName, FVoxelParameter> PinNameToInputParameter;
-	TVoxelMap<FName, FVoxelParameter> PinNameToOutputParameter;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -50,13 +50,17 @@ private:
 ///////////////////////////////////////////////////////////////////////////////
 
 USTRUCT(meta = (Internal))
-struct FVoxelNode_FunctionCallInput_WithoutDefaultPin : public FVoxelNode
+struct VOXELGRAPHCORE_API FVoxelNode_FunctionCallInput_WithoutDefaultPin : public FVoxelNode
 {
 	GENERATED_BODY()
 	GENERATED_VOXEL_NODE_BODY()
 
+public:
+	UPROPERTY()
 	FName Name;
-	FVoxelRuntimePinValue DefaultValue;
+
+	UPROPERTY()
+	FVoxelPinValue DefaultValue;
 
 	VOXEL_TEMPLATE_OUTPUT_PIN(FVoxelWildcard, Value);
 
@@ -66,14 +70,22 @@ struct FVoxelNode_FunctionCallInput_WithoutDefaultPin : public FVoxelNode
 		return FVoxelPinTypeSet::All();
 	}
 #endif
+
+	//~ Begin FVoxelNode Interface
+	virtual void PreCompile() override;
+	//~ End FVoxelNode Interface
+
+public:
+	FVoxelRuntimePinValue RuntimeDefaultValue;
 };
 
 USTRUCT(meta = (Internal))
-struct FVoxelNode_FunctionCallInput_WithDefaultPin : public FVoxelNode
+struct VOXELGRAPHCORE_API FVoxelNode_FunctionCallInput_WithDefaultPin : public FVoxelNode
 {
 	GENERATED_BODY()
 	GENERATED_VOXEL_NODE_BODY()
 
+	UPROPERTY()
 	FName Name;
 
 	VOXEL_TEMPLATE_INPUT_PIN(FVoxelWildcard, Default, nullptr);
@@ -92,10 +104,13 @@ struct FVoxelNode_FunctionCallInput_WithDefaultPin : public FVoxelNode
 ///////////////////////////////////////////////////////////////////////////////
 
 USTRUCT(meta = (Internal))
-struct FVoxelNode_FunctionCallOutput : public FVoxelNode
+struct VOXELGRAPHCORE_API FVoxelNode_FunctionCallOutput : public FVoxelNode
 {
 	GENERATED_BODY()
 	GENERATED_VOXEL_NODE_BODY()
+
+	UPROPERTY()
+	FName Name;
 
 	VOXEL_TEMPLATE_INPUT_PIN(FVoxelWildcard, Value, nullptr);
 

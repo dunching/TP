@@ -23,8 +23,53 @@ public:
 	const FVoxelBox Bounds;
 
 	float BaseCellSize = 0.f;
+	FVector Offset = FVector::ZeroVector;
 	int32 Depth = -1;
-	TVoxelChunkedArray<FIntVector> Cells;
+
+	struct FCell
+	{
+		union
+		{
+			struct
+			{
+				uint32 X : 10;
+				uint32 Y : 10;
+				uint32 Z : 10;
+				uint32 Padding : 2;
+			};
+			uint32 Raw = 0;
+		};
+
+		FCell() = default;
+		FORCEINLINE explicit FCell(const FIntVector& Min)
+		{
+			checkVoxelSlow(0 <= Min.X && Min.X < 1024);
+			checkVoxelSlow(0 <= Min.Y && Min.Y < 1024);
+			checkVoxelSlow(0 <= Min.Z && Min.Z < 1024);
+
+			X = Min.X;
+			Y = Min.Y;
+			Z = Min.Z;
+			Padding = 0;
+		}
+
+		FORCEINLINE FIntVector Vector() const
+		{
+			return FIntVector(X, Y, Z);
+		}
+
+		FORCEINLINE bool operator==(const FCell& Other) const
+		{
+			return Raw == Other.Raw;
+		}
+		FORCEINLINE friend uint32 GetTypeHash(const FCell& Cell)
+		{
+			return FVoxelUtilities::MurmurHash32(Cell.Raw);
+		}
+	};
+	checkStatic(sizeof(FCell) == sizeof(uint32));
+
+	TVoxelChunkedArray<FCell> Cells;
 
 	FVoxelPointIdBufferStorage Id;
 	FVoxelFloatBufferStorage PositionX;

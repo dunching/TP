@@ -37,7 +37,7 @@ void FVoxelDependencyInvalidationScope::Invalidate()
 	if (IsInGameThread() &&
 		!GVoxelBypassTaskQueue)
 	{
-		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [Trackers = MakeUniqueCopy(MoveTemp(Trackers))]
+		AsyncVoxelTask([Trackers = MakeUniqueCopy(MoveTemp(Trackers))]
 		{
 			FVoxelDependencyInvalidationScope Invalidator;
 
@@ -95,7 +95,6 @@ void FVoxelDependencyInvalidationScope::Invalidate()
 void FVoxelDependency::Invalidate(const FInvalidationParameters Parameters)
 {
 	VOXEL_FUNCTION_COUNTER();
-	LOG_VOXEL(Verbose, "Invalidating %s %s", *ClassName.ToString(), *InstanceName.ToString());
 
 	FVoxelDependencyInvalidationScope LocalScope;
 	FVoxelDependencyInvalidationScope& RootScope = *GVoxelDependencyInvalidationScope;
@@ -107,6 +106,23 @@ void FVoxelDependency::Invalidate(const FInvalidationParameters Parameters)
 	const uint64 LessOrEqualTag = Parameters.LessOrEqualTag.Get({});
 
 	VOXEL_SCOPE_LOCK(CriticalSection);
+
+	if (TrackerRefs_RequiresLock.Num() > 0)
+	{
+		if (Parameters.Bounds.IsSet())
+		{
+			LOG_VOXEL(Verbose, "Invalidating %s %s Bounds=%s",
+				*ClassName.ToString(),
+				*InstanceName.ToString(),
+				*Parameters.Bounds->ToString());
+		}
+		else
+		{
+			LOG_VOXEL(Verbose, "Invalidating %s %s",
+				*ClassName.ToString(),
+				*InstanceName.ToString());
+		}
+	}
 
 	TrackerRefs_RequiresLock.Foreach([&](const FTrackerRef& TrackerRef)
 	{

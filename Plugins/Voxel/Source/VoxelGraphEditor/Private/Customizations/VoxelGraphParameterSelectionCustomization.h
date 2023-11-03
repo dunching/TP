@@ -9,17 +9,21 @@ struct FVoxelGraphToolkit;
 class FVoxelGraphParameterSelectionCustomization : public IDetailCustomization
 {
 public:
-	FVoxelGraphParameterSelectionCustomization(const TWeakPtr<FVoxelGraphToolkit>& Toolkit, const FGuid TargetParameterId)
-		: WeakToolkit(Toolkit)
+	const TWeakObjectPtr<UEdGraph> EdGraph;
+	const FGuid TargetParameterGuid;
+	const TWeakObjectPtr<UObject> SelectedNode;
+
+	FVoxelGraphParameterSelectionCustomization(
+		const TWeakObjectPtr<UEdGraph>& EdGraph,
+		const FGuid TargetParameterId,
+		const TWeakObjectPtr<UObject>& SelectedNode)
+		: EdGraph(EdGraph)
 		, TargetParameterGuid(TargetParameterId)
+		, SelectedNode(SelectedNode)
 	{
 	}
 
 	//~ Begin IDetailCustomization Interface
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailLayout) override;
 	//~ End IDetailCustomization Interface
-
-private:
-	TWeakPtr<FVoxelGraphToolkit> WeakToolkit;
-	FGuid TargetParameterGuid;
 };

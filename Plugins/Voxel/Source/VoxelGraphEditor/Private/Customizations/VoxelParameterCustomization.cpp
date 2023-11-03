@@ -94,6 +94,8 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelParameter)(TSharedRef<IPropertyHandle> Pro
 
 	ChildBuilder.AddProperty(PropertyHandle->GetChildHandleStatic(FVoxelParameter, Description));
 
+	IDetailCategoryBuilder& DefaultValueCategory = ChildBuilder.GetParentCategory().GetParentLayout().EditCategory("Default Value", INVTEXT("Default Value"));
+
 	const auto GetMetaData = [](const TSharedPtr<IPropertyHandle>& Handle)
 	{
 		const FVoxelParameter Parameter = FVoxelEditorUtilities::GetStructPropertyValue<FVoxelParameter>(Handle);
@@ -107,7 +109,7 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelParameter)(TSharedRef<IPropertyHandle> Pro
 	};
 
 	FVoxelPinValueCustomizationHelper::CreatePinValueRangeSetter(
-		ChildBuilder.AddCustomRow(INVTEXT("Slider Range")),
+		DefaultValueCategory.AddCustomRow(INVTEXT("Slider Range")),
 		PropertyHandle,
 		INVTEXT("Slider Range"),
 		INVTEXT("Allows setting the minimum and maximum values for the UI slider for this variable."),
@@ -117,7 +119,7 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelParameter)(TSharedRef<IPropertyHandle> Pro
 		SetMetaData);
 
 	FVoxelPinValueCustomizationHelper::CreatePinValueRangeSetter(
-		ChildBuilder.AddCustomRow(INVTEXT("Value Range")),
+		DefaultValueCategory.AddCustomRow(INVTEXT("Value Range")),
 		PropertyHandle,
 		INVTEXT("Value Range"),
 		INVTEXT("The range of values allowed by this variable. Values outside of this will be clamped to the range."),
@@ -132,5 +134,5 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelParameter)(TSharedRef<IPropertyHandle> Pro
 	{
 		DefaultValueHandle->SetInstanceMetaData(It.Key, It.Value);
 	}
-	ChildBuilder.AddProperty(DefaultValueHandle);
+	DefaultValueCategory.AddProperty(DefaultValueHandle);
 }

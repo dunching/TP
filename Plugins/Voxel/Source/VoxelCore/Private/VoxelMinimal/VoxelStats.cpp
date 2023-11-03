@@ -1,71 +1,59 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelMinimal.h"
-#include "MemPro/MemProProfiler.h"
-#include "Runtime/Core/Private/HAL/LowLevelMemTrackerPrivate.h"
+#include "HAL/PlatformStackWalk.h"
 
 UE_TRACE_CHANNEL_DEFINE(VoxelChannel);
+LLM_DEFINE_TAG(Voxel, "Voxel", NAME_None, GET_STATFNAME(STAT_VoxelLLM));
+DEFINE_STAT(STAT_VoxelLLM);
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-#if !IS_MONOLITHIC
-namespace UE
-{
-	namespace LLMPrivate
-	{
-		ELLMTag FTagData::GetEnumTag() const
-		{
-			return EnumTag;
-		}
-	}
-}
-#endif
-
-bool GVoxelLLMRegistered = false;
-
-void Voxel_RegisterLLM()
-{
-	check(!GVoxelLLMRegistered);
-	GVoxelLLMRegistered = true;
-
-	LLM(FLowLevelMemTracker::Get().RegisterProjectTag(int32(VOXEL_LLM_TAG), TEXT("Voxel"), GET_STATFNAME(STAT_VoxelLLM), NAME_None));
-
-#if MEMPRO_ENABLED && ENABLE_LOW_LEVEL_MEM_TRACKER
-	// Ensure tags are correctly tracked, in case the voxel tag was not registered when TrackTagsByName was called
-	// To use MemPro: -LLM -MemPro -MemProTags="Voxel", and open Saved/Profiling/MemPro/XXX.mempro_dump
-	FString LLMTagsStr;
-	if (FParse::Value(FCommandLine::Get(), TEXT("MemProTags="), LLMTagsStr))
-	{
-		FMemProProfiler::TrackTagsByName(*LLMTagsStr);
-	}
-#endif
-}
-
-void Voxel_CheckLLMScopeImpl()
-{
 #if ENABLE_LOW_LEVEL_MEM_TRACKER
-	if (FLowLevelMemTracker::bIsDisabled ||
-		IsEngineExitRequested())
-	{
-		return;
-	}
+// Enable by default using zero-initialization
+// This way any global calling new will register LLM scopes just in case
+bool GVoxelLLMDisabled = false;
 
-	const UE::LLMPrivate::FTagData* TagData = FLowLevelMemTracker::Get().GetActiveTagData(ELLMTracker::Default);
-	if (!ensure(TagData))
-	{
-		return;
-	}
+thread_local int32 GVoxelLLMScopeCounter = 0;
 
-	if (TagData->GetEnumTag() == VOXEL_LLM_TAG)
-	{
-		return;
-	}
+struct FVoxelLLMScope
+{
+	const FLLMScope LLMScope = FLLMScope(LLMTagDeclaration_Voxel.GetUniqueName(), false, ELLMTagSet::None, ELLMTracker::Default);
+	const FMemScope MemScope = FMemScope(LLMTagDeclaration_Voxel.GetUniqueName());
+};
+thread_local TOptional<FVoxelLLMScope> GVoxelLLMScope;
 
-	ensure(false);
-#endif
+void EnterVoxelLLMScope()
+{
+	ensureVoxelSlow(!GVoxelLLMDisabled);
+	GVoxelLLMScopeCounter++;
+	ensureVoxelSlow(GVoxelLLMScopeCounter >= 1);
+
+	if (GVoxelLLMScopeCounter == 1)
+	{
+		ensureVoxelSlow(!GVoxelLLMScope);
+		GVoxelLLMScope.Emplace();
+	}
 }
+void ExitVoxelLLMScope()
+{
+	ensureVoxelSlow(!GVoxelLLMDisabled);
+	GVoxelLLMScopeCounter--;
+	ensureVoxelSlow(GVoxelLLMScopeCounter >= 0);
+
+	if (GVoxelLLMScopeCounter == 0)
+	{
+		ensureVoxelSlow(GVoxelLLMScope);
+		GVoxelLLMScope.Reset();
+	}
+}
+void CheckVoxelLLMScope()
+{
+	if (!GIsEditor &&
+		!GVoxelLLMDisabled)
+	{
+		ensureMsgf(GVoxelLLMScopeCounter > 0, TEXT("Missing VOXEL_FUNCTION_COUNTER or VOXEL_SCOPE_COUNTER"));
+	}
+}
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -211,6 +199,19 @@ void Voxel_AddAmountToDynamicStat(const FName Name, const int64 Amount)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+void FVoxelStackTrace::Capture()
+{
+	StackFrames.SetNum(StackFrames.Max());
+	const int64 NumStackFrames = FPlatformStackWalk::CaptureStackBackTrace(
+		ReinterpretCastPtr<uint64>(StackFrames.GetData()),
+		StackFrames.Num());
+	StackFrames.SetNum(NumStackFrames);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 #if STATS
 TMap<FName, const FThreadSafeCounter64*> GVoxelStatNameToInstanceCounter;
 
@@ -243,10 +244,37 @@ VOXEL_RUN_ON_STARTUP_GAME(RegisterVoxelInstanceCounters)
 
 	GOnVoxelModuleUnloaded.AddLambda([]
 	{
+		TMap<FString, int32> Leaks;
 		for (const auto& It : GVoxelStatNameToInstanceCounter)
 		{
-			checkfVoxelSlow(It.Value->GetValue() == 0, TEXT("Leaking %lld instances of class %s"), It.Value->GetValue(), *It.Key.ToString());
+			if (It.Value->GetValue() == 0)
+			{
+				continue;
+			}
+
+			FString Name = It.Key.ToString();
+			ensure(Name.RemoveFromStart("//STATGROUP_VoxelCounters//STAT_Num"));
+
+			const int32 Index = Name.Find("///");
+			if (ensure(Index != -1))
+			{
+				Name = Name.Left(Index);
+			}
+
+			Leaks.Add(Name, It.Value->GetValue());
 		}
+
+		if (Leaks.Num() == 0)
+		{
+			return;
+		}
+
+		FString Error = "Leaks detected:";
+		for (const auto& It : Leaks)
+		{
+			Error += FString::Printf(TEXT("\n%s: %d instances"), *It.Key, It.Value);
+		}
+		ensureMsgf(false, TEXT("%s"), *Error);
 	});
 }
 #endif

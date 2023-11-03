@@ -2,9 +2,7 @@
 
 #include "SVoxelGraphPreviewStats.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SPreviewStats::Construct(const FArguments& Args)
+void SVoxelGraphPreviewStats::Construct(const FArguments& Args)
 {
 	const TSharedRef<SScrollBar> ScrollBar = SNew(SScrollBar);
 
@@ -27,9 +25,9 @@ void SPreviewStats::Construct(const FArguments& Args)
 					.Orientation(Orient_Horizontal)
 					+ SScrollBox::Slot()
 					[
-						SAssignNew(RowsView, SListView<TSharedPtr<FStatsRow>>)
+						SAssignNew(RowsView, SListView<TSharedPtr<FRow>>)
 						.ListItemsSource(&Rows)
-						.OnGenerateRow(this, &SPreviewStats::CreateRow)
+						.OnGenerateRow(this, &SVoxelGraphPreviewStats::CreateRow)
 						.ExternalScrollbar(ScrollBar)
 						.ItemHeight(24.0f)
 						.ConsumeMouseWheel(EConsumeMouseWheel::Always)
@@ -50,10 +48,10 @@ void SPreviewStats::Construct(const FArguments& Args)
 	];
 }
 
-TSharedRef<ITableRow> SPreviewStats::CreateRow(TSharedPtr<FStatsRow> StatsRow, const TSharedRef<STableViewBase>& OwnerTable) const
+TSharedRef<ITableRow> SVoxelGraphPreviewStats::CreateRow(TSharedPtr<FRow> StatsRow, const TSharedRef<STableViewBase>& OwnerTable) const
 {
 	return
-		SNew(STableRow<TSharedPtr<FStatsRow>>, OwnerTable)
+		SNew(STableRow<TSharedPtr<FRow>>, OwnerTable)
 		[
 			SNew(SVerticalBox)
 			.ToolTipText(StatsRow->Tooltip)
@@ -101,5 +99,3 @@ TSharedRef<ITableRow> SPreviewStats::CreateRow(TSharedPtr<FStatsRow> StatsRow, c
 			]
 		];
 }
-
-END_VOXEL_NAMESPACE(Graph)

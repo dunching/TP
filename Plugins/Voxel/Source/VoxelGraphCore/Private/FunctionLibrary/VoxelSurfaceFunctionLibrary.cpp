@@ -2,69 +2,56 @@
 
 #include "FunctionLibrary/VoxelSurfaceFunctionLibrary.h"
 #include "FunctionLibrary/VoxelMathFunctionLibrary.h"
-#include "VoxelBufferUtilities.h"
+#include "VoxelDetailTexture.h"
 #include "VoxelPositionQueryParameter.h"
 #include "VoxelSurfaceFunctionLibraryImpl.ispc.generated.h"
 
-FVoxelBox UVoxelSurfaceFunctionLibrary::GetSurfaceBounds(
+FVoxelBounds UVoxelSurfaceFunctionLibrary::GetSurfaceBounds(
 	const FVoxelSurface& Surface,
-	const float InSmoothness,
+	const float Smoothness) const
+{
+	return Surface.Bounds.Extend(Smoothness, GetQuery(), GetQuery().GetLocalToWorld());
+}
+
+FVoxelBounds UVoxelSurfaceFunctionLibrary::MakeBoundsFromLocalBox(const FVoxelBox& Box) const
+{
+	return FVoxelBounds(Box, GetQuery().GetLocalToWorld());
+}
+
+FVoxelBox UVoxelSurfaceFunctionLibrary::GetBoundsBox(
+	const FVoxelBounds& Bounds,
 	const EVoxelTransformSpace TransformSpace) const
 {
-	FVoxelTransformRef WorldToResult;
+	FVoxelTransformRef LocalToWorld;
 	switch (TransformSpace)
 	{
 	default: ensure(false);
 	case EVoxelTransformSpace::Local:
 	{
-		WorldToResult = GetQuery().GetInfo(EVoxelQueryInfo::Local).GetWorldToLocal();
+		LocalToWorld = GetQuery().GetLocalToWorld();
 	}
 	break;
 	case EVoxelTransformSpace::World:
 	{
-		WorldToResult = FVoxelTransformRef::Identity();
+		LocalToWorld = FVoxelTransformRef::Identity();
 	}
 	break;
 	case EVoxelTransformSpace::Query:
 	{
-		WorldToResult = GetQuery().GetInfo(EVoxelQueryInfo::Query).GetWorldToLocal();
+		LocalToWorld = GetQuery().GetQueryToWorld();
 	}
 	break;
 	}
 
-	const float Smoothness = TransformToSurfaceSpace(Surface, InSmoothness);
-
-	const FVoxelTransformRef Transform = Surface.LocalToWorld * WorldToResult;
-	return Surface.LocalBounds
-		.Extend(Smoothness)
-		.TransformBy(Transform.Get(GetQuery()))
-		.GetBounds();
+	return Bounds.GetBox(GetQuery(), LocalToWorld);
 }
 
-float UVoxelSurfaceFunctionLibrary::TransformToSurfaceSpace(
-	const FVoxelSurface& Surface,
-	const float Value) const
-{
-	if (!Surface.bIsValid)
-	{
-		return Value;
-	}
-
-	const FVoxelTransformRef LocalToSurface = GetQuery().GetInfo(EVoxelQueryInfo::Local).GetLocalToWorld() * Surface.LocalToWorld.Inverse();
-	return Value * LocalToSurface.Get(GetQuery()).GetScaleVector().GetAbsMax();
-}
-
-FVoxelSurfaceMaterial UVoxelSurfaceFunctionLibrary::MergeSurfaceMaterials(
+FVoxelSurfaceMaterial UVoxelSurfaceFunctionLibrary::BlendSurfaceMaterials(
 	const FVoxelSurfaceMaterial& A,
 	const FVoxelSurfaceMaterial& B,
 	const FVoxelFloatBuffer& Alpha) const
 {
 	const int32 Num = ComputeVoxelBuffersNum_Function(A, B, Alpha);
-
-	// TODO
-	ensure(A.Attributes.Num() == 0);
-	ensure(B.Attributes.Num() == 0);
-
 	const int32 NumLayers = A.Layers.Num() + B.Layers.Num();
 
 	TVoxelArray<FVoxelMaterialDefinitionBufferStorage> Materials;
@@ -134,112 +121,85 @@ FVoxelSurfaceMaterial UVoxelSurfaceFunctionLibrary::MergeSurfaceMaterials(
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-FVoxelSurface UVoxelSurfaceFunctionLibrary::ApplyTransform(const FVoxelSurface& Surface) const
+FVoxelSurface UVoxelSurfaceFunctionLibrary::BindFloatAttributeDetailTexture(
+	const FVoxelSurface& Surface,
+	const FName Name,
+	const FVoxelFloatDetailTextureRef& DetailTexture,
+	const bool bLogError) const
 {
-	if (!Surface.bIsValid)
-	{
-		return {};
-	}
+	FVoxelSurface Result = Surface;
 
-	FVoxelSurface Result(
-		GetNodeRef(),
-		GetQuery().GetInfo(EVoxelQueryInfo::Query).GetLocalToWorld(),
-		Surface.LocalBounds);
-
-	if (Surface.ComputeLocalDistance)
+	FVoxelSurface::FAttribute* Attribute = Result.NameToAttribute.Find(Name);
+	if (!Attribute)
 	{
-		Result.SetDistance(GetQuery(), [Surface, NodeRef = GetNodeRef()](const FVoxelQuery& Query) -> TVoxelFutureValue<FVoxelFloatBuffer>
+		if (bLogError)
 		{
-			if (!Surface.ComputeLocalDistance)
-			{
-				return 0.f;
-			}
+			TVoxelArray<FName> Attributes;
+			Surface.NameToAttribute.GenerateKeyArray(Attributes);
 
-			const FVoxelPositionQueryParameter* PositionQueryParameter = Query.GetParameters().Find<FVoxelPositionQueryParameter>();
-			if (!PositionQueryParameter)
-			{
-				RaiseQueryError<FVoxelPositionQueryParameter>(NodeRef);
-				return {};
-			}
+			VOXEL_MESSAGE(Error, "{0}: No attribute named {1}. Valid attributes: {2}",
+				this,
+				Name,
+				Attributes);
+		}
 
-			const FVoxelVectorBuffer Positions = PositionQueryParameter->GetPositions();
-
-			const FVoxelTransformRef LocalToQuery =
-					Query.GetInfo(EVoxelQueryInfo::Local).GetLocalToWorld() *
-					Query.GetInfo(EVoxelQueryInfo::Query).GetWorldToLocal();
-
-			const FMatrix Transform = LocalToQuery.Inverse().Get(Query);
-
-			const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
-			if (Transform.Equals(FMatrix::Identity))
-			{
-				// Nothing to be done
-			}
-			else if (
-				PositionQueryParameter->IsGrid3D() &&
-				Transform.Rotator().IsNearlyZero() &&
-				Transform.GetScaleVector().IsUniform())
-			{
-				Parameters->Add<FVoxelPositionQueryParameter>().InitializeGrid3D(
-					FMatrix44f(Transform).TransformPosition(PositionQueryParameter->GetGrid3D().Start),
-					PositionQueryParameter->GetGrid3D().Step * Transform.GetMaximumAxisScale(),
-					PositionQueryParameter->GetGrid3D().Size);
-			}
-			else
-			{
-				Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse([=]
-				{
-					return FVoxelBufferUtilities::ApplyTransform(Positions, Transform);
-				});
-			}
-
-			const TVoxelFutureValue<FVoxelFloatBuffer> Distance = Surface.GetLocalDistance(Query.MakeNewQuery(Parameters));
-
-			return
-				MakeVoxelTask(STATIC_FNAME("TransformDistance"))
-				.Dependency(Distance)
-				.Execute<FVoxelFloatBuffer>([=]
-				{
-					return FVoxelBufferUtilities::TransformDistance(Distance.Get_CheckCompleted(), LocalToQuery.Get(Query));
-				});
-		});
+		return Surface;
 	}
-
-	if (Surface.ComputeMaterial)
+	if (!Attribute->InnerType.Is<float>())
 	{
-		Result.SetMaterial(GetQuery(), [Surface, NodeRef = GetNodeRef()](const FVoxelQuery& Query) -> TVoxelFutureValue<FVoxelSurfaceMaterial>
-		{
-			if (!Surface.ComputeMaterial)
-			{
-				return {};
-			}
+		VOXEL_MESSAGE(Error, "{0}: Attribute {1} has type {2}, not float",
+			this,
+			Name,
+			Attribute->InnerType.ToString());
 
-			const FVoxelPositionQueryParameter* PositionQueryParameter = Query.GetParameters().Find<FVoxelPositionQueryParameter>();
-			if (!PositionQueryParameter)
-			{
-				RaiseQueryError<FVoxelPositionQueryParameter>(NodeRef);
-				return {};
-			}
-
-			const FVoxelVectorBuffer Positions = PositionQueryParameter->GetPositions();
-
-			const FVoxelTransformRef LocalToQuery =
-					Query.GetInfo(EVoxelQueryInfo::Local).GetLocalToWorld() *
-					Query.GetInfo(EVoxelQueryInfo::Query).GetWorldToLocal();
-
-			const TSharedRef<FVoxelQueryParameters> Parameters = Query.CloneParameters();
-			Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse([=]
-			{
-				const FMatrix Transform = LocalToQuery.Inverse().Get(Query);
-				return FVoxelBufferUtilities::ApplyTransform(Positions, Transform);
-			});
-
-			return Surface.GetLocalMaterial(Query.MakeNewQuery(Parameters));
-		});
+		return Surface;
 	}
 
+	Attribute->DetailTexturePool = DetailTexture.WeakPool;
 	return Result;
 }
+
+FVoxelSurface UVoxelSurfaceFunctionLibrary::BindColorAttributeDetailTexture(
+	const FVoxelSurface& Surface,
+	const FName Name,
+	const FVoxelColorDetailTextureRef& DetailTexture,
+	const bool bLogError) const
+{
+	FVoxelSurface Result = Surface;
+
+	FVoxelSurface::FAttribute* Attribute = Result.NameToAttribute.Find(Name);
+	if (!Attribute)
+	{
+		if (bLogError)
+		{
+			TVoxelArray<FName> Attributes;
+			Surface.NameToAttribute.GenerateKeyArray(Attributes);
+
+			VOXEL_MESSAGE(Error, "{0}: No attribute named {1}. Valid attributes: {2}",
+				this,
+				Name,
+				Attributes);
+		}
+
+		return Surface;
+	}
+	if (!Attribute->InnerType.Is<FLinearColor>())
+	{
+		VOXEL_MESSAGE(Error, "{0}: Attribute {1} has type {2}, not color",
+			this,
+			Name,
+			Attribute->InnerType.ToString());
+
+		return Surface;
+	}
+
+	Attribute->DetailTexturePool = DetailTexture.WeakPool;
+	return Result;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 FVoxelSurface UVoxelSurfaceFunctionLibrary::Invert(const FVoxelSurface& Surface) const
 {
@@ -248,19 +208,11 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::Invert(const FVoxelSurface& Surface)
 		return {};
 	}
 
-	FVoxelSurface Result(
-		GetNodeRef(),
-		Surface.LocalToWorld,
-		Surface.LocalBounds.Invert());
+	FVoxelSurface Result = FVoxelSurface::MakeInfinite(GetNodeRef());
 
-	Result.SetDistance(GetQuery(), [Surface](const FVoxelQuery& Query) -> TVoxelFutureValue<FVoxelFloatBuffer>
+	Result.SetDistance(GetQuery(), GetNodeRef(), [Surface](const FVoxelQuery& Query) -> TVoxelFutureValue<FVoxelFloatBuffer>
 	{
-		if (!Surface.ComputeLocalDistance)
-		{
-			return 0.f;
-		}
-
-		const TVoxelFutureValue<FVoxelFloatBuffer> FutureDistance = Surface.GetLocalDistance(Query);
+		const TVoxelFutureValue<FVoxelFloatBuffer> FutureDistance = Surface.GetDistance(Query);
 
 		return
 			MakeVoxelTask(STATIC_FNAME("Invert"))
@@ -283,67 +235,15 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::Invert(const FVoxelSurface& Surface)
 				return FVoxelFloatBuffer::Make(NewDistance);
 			});
 	});
-	Result.ComputeMaterial = Surface.ComputeMaterial;
 
-	return Result;
-}
-
-FVoxelSurface UVoxelSurfaceFunctionLibrary::Grow(
-	const FVoxelSurface& Surface,
-	const float InAmount) const
-{
-	if (!Surface.bIsValid)
-	{
-		return {};
-	}
-
-	const float Amount = TransformToSurfaceSpace(Surface, InAmount);
-
-	FVoxelSurface Result(
-		GetNodeRef(),
-		Surface.LocalToWorld,
-		Surface.LocalBounds.Extend(Amount));
-
-	Result.SetDistance(GetQuery(), [Surface, Amount](const FVoxelQuery& Query) -> TVoxelFutureValue<FVoxelFloatBuffer>
-	{
-		if (!Surface.ComputeLocalDistance)
-		{
-			return 0.f;
-		}
-
-		const TVoxelFutureValue<FVoxelFloatBuffer> FutureDistance = Surface.GetLocalDistance(Query);
-
-		return
-			MakeVoxelTask(STATIC_FNAME("Grow"))
-			.Dependency(FutureDistance)
-			.Execute<FVoxelFloatBuffer>([=]
-			{
-				const FVoxelFloatBuffer Distance = FutureDistance.Get_CheckCompleted();
-
-				FVoxelFloatBufferStorage NewDistance;
-				NewDistance.Allocate(Distance.Num());
-
-				ForeachVoxelBufferChunk(Distance.Num(), [&](const FVoxelBufferIterator& Iterator)
-				{
-					ispc::VoxelSurfaceFunctionLibrary_Grow(
-						Distance.GetData(Iterator),
-						NewDistance.GetData(Iterator),
-						Amount,
-						Iterator.Num());
-				});
-
-				return FVoxelFloatBuffer::Make(NewDistance);
-			});
-	});
-	Result.ComputeMaterial = Surface.ComputeMaterial;
-
+	Result.CopyMaterialAttributes(Surface);
 	return Result;
 }
 
 FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothUnion(
 	const FVoxelSurface& A,
 	const FVoxelSurface& B,
-	const float InSmoothness) const
+	const float Smoothness) const
 {
 	if (!A.bIsValid)
 	{
@@ -354,23 +254,14 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothUnion(
 		return A;
 	}
 
-	if (A.LocalToWorld != B.LocalToWorld)
+	const float QuerySmoothness = Smoothness * GetQuery().GetLocalToQuery().Get(GetQuery()).GetScaleVector().GetAbsMax();
+
+	FVoxelSurface Result = FVoxelSurface::MakeInfinite(GetNodeRef());
+
+	Result.SetDistance(GetQuery(), GetNodeRef(), [A, B, QuerySmoothness, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
 	{
-		VOXEL_MESSAGE(Error, "{0}: A and B have different transforms. Did you forget an ApplyTransform? A: {1} B: {2}", this, A.Node, B.Node);
-		return {};
-	}
-
-	const float Smoothness = TransformToSurfaceSpace(A, InSmoothness);
-
-	FVoxelSurface Result(
-		GetNodeRef(),
-		A.LocalToWorld,
-		A.LocalBounds.Union(B.LocalBounds).Extend(Smoothness));
-
-	Result.SetDistance(GetQuery(), [A, B, Smoothness, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
-	{
-		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetLocalDistance(Query);
-		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetLocalDistance(Query);
+		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetDistance(Query);
+		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetDistance(Query);
 
 		return
 			MakeVoxelTask(STATIC_FNAME("SmoothMin"))
@@ -384,26 +275,25 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothUnion(
 					Alpha,
 					DistanceA.Get_CheckCompleted(),
 					DistanceB.Get_CheckCompleted(),
-					Smoothness);
+					QuerySmoothness);
 				return Distance;
 			});
 	});
 
-	if (A.ComputeMaterial &&
-		B.ComputeMaterial)
-	{
-		Result.SetMaterial(GetQuery(), [A, B, Smoothness, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
+	Result.LerpMaterialAttributes(
+		GetQuery(),
+		GetNodeRef(),
+		A,
+		B,
+		MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([NodeRef = GetNodeRef(), A, B, QuerySmoothness](const FVoxelQuery& Query)
 		{
-			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetLocalDistance(Query);
-			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetLocalDistance(Query);
-
-			const TVoxelFutureValue<FVoxelSurfaceMaterial> MaterialA = A.GetLocalMaterial(Query);
-			const TVoxelFutureValue<FVoxelSurfaceMaterial> MaterialB = B.GetLocalMaterial(Query);
+			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetDistance(Query);
+			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetDistance(Query);
 
 			return
-				MakeVoxelTask(STATIC_FNAME("SmoothMin Material"))
-				.Dependencies(DistanceA, DistanceB, MaterialA, MaterialB)
-				.Execute<FVoxelSurfaceMaterial>([=]
+				MakeVoxelTask(STATIC_FNAME("SmoothMin"))
+				.Dependencies(DistanceA, DistanceB)
+				.Execute<FVoxelFloatBuffer>([=]
 				{
 					FVoxelFloatBuffer Distance;
 					FVoxelFloatBuffer Alpha;
@@ -412,19 +302,11 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothUnion(
 						Alpha,
 						DistanceA.Get_CheckCompleted(),
 						DistanceB.Get_CheckCompleted(),
-						Smoothness);
+						QuerySmoothness);
 
-					return MakeVoxelFunctionCaller<UVoxelSurfaceFunctionLibrary>(NodeRef, Query)->MergeSurfaceMaterials(
-						MaterialA.Get_CheckCompleted(),
-						MaterialB.Get_CheckCompleted(),
-						Alpha);
+					return Alpha;
 				});
-		});
-	}
-	else
-	{
-		Result.ComputeMaterial = A.ComputeMaterial ? A.ComputeMaterial : B.ComputeMaterial;
-	}
+		}));
 
 	return Result;
 }
@@ -432,7 +314,7 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothUnion(
 FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothIntersection(
 	const FVoxelSurface& A,
 	const FVoxelSurface& B,
-	const float InSmoothness) const
+	const float Smoothness) const
 {
 	if (!A.bIsValid ||
 		!B.bIsValid)
@@ -440,23 +322,14 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothIntersection(
 		return {};
 	}
 
-	if (A.LocalToWorld != B.LocalToWorld)
+	const float QuerySmoothness = Smoothness * GetQuery().GetLocalToQuery().Get(GetQuery()).GetScaleVector().GetAbsMax();
+
+	FVoxelSurface Result = FVoxelSurface::MakeInfinite(GetNodeRef());
+
+	Result.SetDistance(GetQuery(), GetNodeRef(), [A, B, QuerySmoothness, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
 	{
-		VOXEL_MESSAGE(Error, "{0}: A and B have different transforms. Did you forget an ApplyTransform?", this);
-		return {};
-	}
-
-	const float Smoothness = TransformToSurfaceSpace(A, InSmoothness);
-
-	FVoxelSurface Result(
-		GetNodeRef(),
-		A.LocalToWorld,
-		A.LocalBounds.Intersection(B.LocalBounds));
-
-	Result.SetDistance(GetQuery(), [A, B, Smoothness, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
-	{
-		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetLocalDistance(Query);
-		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetLocalDistance(Query);
+		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetDistance(Query);
+		const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetDistance(Query);
 
 		return
 			MakeVoxelTask(STATIC_FNAME("SmoothMax"))
@@ -470,26 +343,25 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothIntersection(
 					Alpha,
 					DistanceA.Get_CheckCompleted(),
 					DistanceB.Get_CheckCompleted(),
-					Smoothness);
+					QuerySmoothness);
 				return Distance;
 			});
 	});
 
-	if (A.ComputeMaterial &&
-		B.ComputeMaterial)
-	{
-		Result.SetMaterial(GetQuery(), [A, B, Smoothness, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
+	Result.LerpMaterialAttributes(
+		GetQuery(),
+		GetNodeRef(),
+		A,
+		B,
+		MakeVoxelShared<TVoxelComputeValue<FVoxelFloatBuffer>>([NodeRef = GetNodeRef(), A, B, QuerySmoothness](const FVoxelQuery& Query)
 		{
-			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetLocalDistance(Query);
-			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetLocalDistance(Query);
-
-			const TVoxelFutureValue<FVoxelSurfaceMaterial> MaterialA = A.GetLocalMaterial(Query);
-			const TVoxelFutureValue<FVoxelSurfaceMaterial> MaterialB = B.GetLocalMaterial(Query);
+			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceA = A.GetDistance(Query);
+			const TVoxelFutureValue<FVoxelFloatBuffer> DistanceB = B.GetDistance(Query);
 
 			return
-				MakeVoxelTask(STATIC_FNAME("SmoothMax Material"))
-				.Dependencies(DistanceA, DistanceB, MaterialA, MaterialB)
-				.Execute<FVoxelSurfaceMaterial>([=]
+				MakeVoxelTask(STATIC_FNAME("SmoothMax"))
+				.Dependencies(DistanceA, DistanceB)
+				.Execute<FVoxelFloatBuffer>([=]
 				{
 					FVoxelFloatBuffer Distance;
 					FVoxelFloatBuffer Alpha;
@@ -498,19 +370,11 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothIntersection(
 						Alpha,
 						DistanceA.Get_CheckCompleted(),
 						DistanceB.Get_CheckCompleted(),
-						Smoothness);
+						QuerySmoothness);
 
-					return MakeVoxelFunctionCaller<UVoxelSurfaceFunctionLibrary>(NodeRef, Query)->MergeSurfaceMaterials(
-						MaterialA.Get_CheckCompleted(),
-						MaterialB.Get_CheckCompleted(),
-						Alpha);
+					return Alpha;
 				});
-		});
-	}
-	else
-	{
-		Result.ComputeMaterial = A.ComputeMaterial ? A.ComputeMaterial : B.ComputeMaterial;
-	}
+		}));
 
 	return Result;
 }
@@ -520,6 +384,11 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::SmoothSubtraction(
 	const FVoxelSurface& SurfaceToSubtract,
 	const float Smoothness) const
 {
+	if (!SurfaceToSubtract.bIsValid)
+	{
+		return Surface;
+	}
+
 	return SmoothIntersection(Surface, Invert(SurfaceToSubtract), Smoothness);
 }
 
@@ -533,16 +402,17 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::MakeSphereSurface(
 {
 	const float Radius = FMath::Max(InRadius, 0.f);
 
-	FVoxelSurface Surface(
+	FVoxelSurface Surface = FVoxelSurface::MakeWithLocalBounds(
 		GetNodeRef(),
-		FVoxelSurfaceBounds::Make(FVoxelBox().Extend(Radius).ShiftBy(Center)));
+		GetQuery(),
+		FVoxelBox(Center - Radius, Center + Radius));
 
-	Surface.SetDistance(this, [=](const UVoxelSurfaceFunctionLibrary& This)
+	Surface.SetLocalDistance(GetQuery(), GetNodeRef(), [=, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
 	{
-		return This.MakeSphereSurface_Distance(Center, Radius);
+		return MakeVoxelFunctionCaller<UVoxelSurfaceFunctionLibrary>(NodeRef, Query)->MakeSphereSurface_Distance(Center, Radius);
 	});
 
-	return Surface.CreateLocalSurface(this);
+	return Surface;
 }
 
 FVoxelSurface UVoxelSurfaceFunctionLibrary::MakeBoxSurface(
@@ -553,16 +423,17 @@ FVoxelSurface UVoxelSurfaceFunctionLibrary::MakeBoxSurface(
 	const FVector Extent = FVector::Max(InExtent, FVector::ZeroVector);
 	const float Smoothness = FMath::Max(InSmoothness, 0.f);
 
-	FVoxelSurface Surface(
+	FVoxelSurface Surface = FVoxelSurface::MakeWithLocalBounds(
 		GetNodeRef(),
-		FVoxelSurfaceBounds::Make(FVoxelBox().Extend(Extent + Smoothness).ShiftBy(Center)));
+		GetQuery(),
+		FVoxelBox(Center - Extent, Center + Extent).Extend(Smoothness));
 
-	Surface.SetDistance(this, [=](const UVoxelSurfaceFunctionLibrary& This)
+	Surface.SetLocalDistance(GetQuery(), GetNodeRef(), [=, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
 	{
-		return This.MakeBoxSurface_Distance(Center, Extent, Smoothness);
+		return MakeVoxelFunctionCaller<UVoxelSurfaceFunctionLibrary>(NodeRef, Query)->MakeBoxSurface_Distance(Center, Extent, Smoothness);
 	});
 
-	return Surface.CreateLocalSurface(this);
+	return Surface;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -575,12 +446,6 @@ FVoxelFloatBuffer UVoxelSurfaceFunctionLibrary::MakeSphereSurface_Distance(
 {
 	VOXEL_FUNCTION_COUNTER();
 	FindVoxelQueryParameter_Function(FVoxelPositionQueryParameter, PositionQueryParameter);
-
-	if (PositionQueryParameter->IsGrid2D())
-	{
-		VOXEL_MESSAGE(Error, "{0}: MakeSphereSurface requires 3D positions", this);
-		return {};
-	}
 
 	const FVoxelVectorBuffer Positions = PositionQueryParameter->GetPositions();
 
@@ -613,12 +478,6 @@ FVoxelFloatBuffer UVoxelSurfaceFunctionLibrary::MakeBoxSurface_Distance(
 {
 	VOXEL_FUNCTION_COUNTER();
 	FindVoxelQueryParameter_Function(FVoxelPositionQueryParameter, PositionQueryParameter);
-
-	if (PositionQueryParameter->IsGrid2D())
-	{
-		VOXEL_MESSAGE(Error, "{0}: MakeBoxSurface requires 3D positions", this);
-		return {};
-	}
 
 	const FVoxelVectorBuffer Positions = PositionQueryParameter->GetPositions();
 

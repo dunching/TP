@@ -3,10 +3,10 @@
 #include "VoxelRuntime.h"
 #include "VoxelActor.h"
 #include "VoxelQuery.h"
+#include "VoxelGraph.h"
 #include "VoxelChannel.h"
 #include "VoxelExecNode.h"
 #include "VoxelExecNodes.h"
-#include "VoxelSubsystem.h"
 #include "VoxelParameterValues.h"
 #include "VoxelParameterContainer.h"
 #include "Application/ThrottleManager.h"
@@ -53,7 +53,8 @@ TSharedRef<FVoxelRuntime> FVoxelRuntime::Create(
 
 	const FVoxelGraphNodeRef NodeRef
 	{
-		Graph,
+		// TODO Refactor graph instances, this is a hacky fix
+		Graph->GetGraph(),
 		// See FCompilerUtilities::AddExecOutput
 		FVoxelNodeNames::ExecuteNodeId,
 	};
@@ -69,7 +70,7 @@ TSharedRef<FVoxelRuntime> FVoxelRuntime::Create(
 		Runtime->RuntimeInfo.ToSharedRef(),
 		FVoxelParameterValues::Create(&ParameterContainer));
 
-	NodeRuntime->CallCreate(QueryContext);
+	NodeRuntime->CallCreate(QueryContext, {});
 
 	Runtime->NodeRuntime = NodeRuntime;
 
@@ -230,10 +231,14 @@ void FVoxelRuntime::DestroyComponent_ReturnToPoolCalled(USceneComponent& Compone
 #if WITH_EDITOR
 void FVoxelRuntime::FEditorTicker::Tick()
 {
-	// If slate is throttling actor tick (eg, when dragging a float property), force tick
-	if (!FSlateThrottleManager::Get().IsAllowingExpensiveTasks())
+	ensure(!Runtime.RuntimeInfo->IsDestroyed());
+
+	if (FSlateThrottleManager::Get().IsAllowingExpensiveTasks())
 	{
-		Runtime.Tick();
+		return;
 	}
+
+	// If slate is throttling actor tick (eg, when dragging a float property), force tick
+	Runtime.Tick();
 }
 #endif

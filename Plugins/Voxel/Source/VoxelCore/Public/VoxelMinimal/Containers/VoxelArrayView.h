@@ -93,6 +93,27 @@ public:
 		return TVoxelArrayView(GetData() + Index, InNum);
 	}
 
+	// Returns the left-most part of the view by taking the given number of elements from the left
+	FORCEINLINE TVoxelArrayView Left(const SizeType Count) const
+	{
+		return Slice(0, Count);
+	}
+	// Returns the left-most part of the view by chopping the given number of elements from the right
+	FORCEINLINE TVoxelArrayView LeftChop(const SizeType Count) const
+	{
+		return Slice(0, Num() - Count);
+	}
+	// Returns the right-most part of the view by taking the given number of elements from the right
+	FORCEINLINE TVoxelArrayView Right(const SizeType Count) const
+	{
+		return Slice(Num() - Count, Count);
+	}
+	// Returns the right-most part of the view by chopping the given number of elements from the left
+	FORCEINLINE TVoxelArrayView RightChop(const SizeType Count) const
+	{
+		return Slice(Count, Num() - Count);
+	}
+
 	FORCEINLINE ElementType& operator[](InSizeType Index) const
 	{
 		RangeCheck(Index);
@@ -105,6 +126,15 @@ public:
 		return GetData()[Num() - IndexFromTheEnd - 1];
 	}
 };
+
+template<typename T>
+using TVoxelArrayView64 = TVoxelArrayView<T, int64>;
+
+template<typename T, typename SizeType = int32>
+using TConstVoxelArrayView = TVoxelArrayView<const T, SizeType>;
+
+template<typename T>
+using TConstVoxelArrayView64 = TConstVoxelArrayView<T, int64>;
 
 template <typename InElementType>
 struct TIsZeroConstructType<TVoxelArrayView<InElementType>> : TIsZeroConstructType<TArrayView<InElementType>>
@@ -170,10 +200,14 @@ FORCEINLINE auto MakeByteVoxelArrayView(T& Value)
 }
 
 template<typename T>
-using TVoxelArrayView64 = TVoxelArrayView<T, int64>;
-
-template<typename T, typename SizeType = int32>
-using TConstVoxelArrayView = TVoxelArrayView<const T, SizeType>;
-
+FORCEINLINE T& FromByteVoxelArrayView(const TVoxelArrayView<uint8> Array)
+{
+	checkVoxelSlow(Array.Num() == sizeof(T));
+	return *reinterpret_cast<T*>(Array.GetData());
+}
 template<typename T>
-using TConstVoxelArrayView64 = TConstVoxelArrayView<T, int64>;
+FORCEINLINE const T& FromByteVoxelArrayView(const TConstVoxelArrayView<uint8> Array)
+{
+	checkVoxelSlow(Array.Num() == sizeof(T));
+	return *reinterpret_cast<const T*>(Array.GetData());
+}

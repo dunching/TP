@@ -3,6 +3,8 @@
 #pragma once
 
 #include "VoxelMinimal.h"
+#include "VoxelPinValue.h"
+#include "VoxelParameterContainer.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "VoxelParameterFunctionLibrary.generated.h"
 
@@ -18,7 +20,12 @@ public:
 	static void K2_GetVoxelParameter(
 		UVoxelParameterContainer* ParameterContainer,
 		FName Name,
-		int32& Value);
+		int32& Value)
+	{
+		unimplemented();
+	}
+
+	DECLARE_FUNCTION(execK2_GetVoxelParameter);
 
 	static void GetVoxelParameterImpl(
 		UVoxelParameterContainer* ParameterContainer,
@@ -26,7 +33,33 @@ public:
 		void* OutData,
 		const FProperty* PropertyForTypeCheck);
 
-	DECLARE_FUNCTION(execK2_GetVoxelParameter);
+	static FVoxelPinValue GetVoxelParameter(
+		UVoxelParameterContainer* ParameterContainer,
+		FName Name);
+
+	template<typename T, typename ReturnType = typename TDecay<decltype(DeclVal<FVoxelPinValue>().Get<T>())>::Type>
+	static ReturnType GetVoxelParameterChecked(
+		UVoxelParameterContainer* ParameterContainer,
+		const FName Name)
+	{
+		const FVoxelPinValue Value = GetVoxelParameter(ParameterContainer, Name);
+		if (!Value.IsValid())
+		{
+			return {};
+		}
+
+		if (!ensure(Value.Is<T>()))
+		{
+			return {};
+		}
+
+		return Value.Get<T>();
+	}
+
+public:
+	static bool HasVoxelParameter(
+		UVoxelParameterContainer* ParameterContainer,
+		FName Name);
 
 public:
 	UFUNCTION(BlueprintCallable, DisplayName = "Set Voxel Parameter", CustomThunk, Category = "Voxel|Parameters", meta = (AutoCreateRefTerm = "Value", CustomStructureParam = "Value,OutValue", BlueprintInternalUseOnly = "true"))
@@ -34,7 +67,12 @@ public:
 		UVoxelParameterContainer* ParameterContainer,
 		FName Name,
 		const int32& Value,
-		int32& OutValue);
+		int32& OutValue)
+	{
+		unimplemented();
+	}
+
+	DECLARE_FUNCTION(execK2_SetVoxelParameter);
 
 	static void SetVoxelParameterImpl(
 		UVoxelParameterContainer* ParameterContainer,
@@ -42,5 +80,27 @@ public:
 		const void* ValuePtr,
 		const FProperty* ValueProperty);
 
-	DECLARE_FUNCTION(execK2_SetVoxelParameter);
+	template<typename T, typename = typename TEnableIf<!TIsTObjectPtr<T>::Value && !TIsPointer<T>::Value>::Type>
+	static void SetVoxelParameterChecked(
+		UVoxelParameterContainer* ParameterContainer,
+		const FName Name,
+		const T& Value)
+	{
+		const FVoxelPinValue PinValue = GetVoxelParameter(ParameterContainer, Name);
+		if (!PinValue.IsValid())
+		{
+			return;
+		}
+
+		if (!ensure(PinValue.Is<T>()))
+		{
+			return;
+		}
+
+		FString Error;
+		if (!ParameterContainer->Set(Name, FVoxelPinValue::Make<T>(Value), &Error))
+		{
+			VOXEL_MESSAGE(Error, "{0}", Error);
+		}
+	}
 };

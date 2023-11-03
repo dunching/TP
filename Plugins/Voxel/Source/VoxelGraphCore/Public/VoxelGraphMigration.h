@@ -4,12 +4,9 @@
 
 #include "VoxelMinimal.h"
 
-class VOXELGRAPHCORE_API FVoxelGraphMigration
+class VOXELGRAPHCORE_API FVoxelGraphMigration : public FVoxelSingleton
 {
 public:
-	FVoxelGraphMigration() = default;
-	UE_NONCOPYABLE(FVoxelGraphMigration);
-
 	UFunction* FindNewFunction(FName CachedName) const;
 	FName FindNewPinName(UObject* Outer, FName OldName) const;
 

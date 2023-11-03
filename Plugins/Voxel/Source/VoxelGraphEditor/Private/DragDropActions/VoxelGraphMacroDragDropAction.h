@@ -2,22 +2,20 @@
 
 #pragma once
 
-#include "VoxelCoreMinimal.h"
+#include "VoxelEditorMinimal.h"
 #include "DragDropActions/VoxelMembersBaseDragDropAction.h"
 
 struct FVoxelGraphToolkit;
 class UVoxelGraph;
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class FMacroDragDropAction : public FVoxelMembersBaseDragDropAction
+class FVoxelGraphMacroDragDropAction : public FVoxelMembersBaseDragDropAction
 {
 public:
 	DRAG_DROP_OPERATOR_TYPE(FMacroDragDropAction, FGraphSchemaActionDragDropAction)
 
-	static TSharedRef<FMacroDragDropAction> New(const TSharedPtr<FEdGraphSchemaAction>& InAction, const TWeakObjectPtr<UVoxelGraph> Macro)
+	static TSharedRef<FVoxelGraphMacroDragDropAction> New(const TSharedPtr<FEdGraphSchemaAction>& InAction, const TWeakObjectPtr<UVoxelGraph> Macro)
 	{
-		const TSharedRef<FMacroDragDropAction> Operation = MakeVoxelShared<FMacroDragDropAction>();
+		const TSharedRef<FVoxelGraphMacroDragDropAction> Operation = MakeVoxelShared<FVoxelGraphMacroDragDropAction>();
 		Operation->WeakMacroGraph = Macro;
 		Operation->SourceAction = InAction;
 		Operation->Construct();
@@ -32,5 +30,3 @@ public:
 private:
 	TWeakObjectPtr<UVoxelGraph> WeakMacroGraph;
 };
-
-END_VOXEL_NAMESPACE(Graph)

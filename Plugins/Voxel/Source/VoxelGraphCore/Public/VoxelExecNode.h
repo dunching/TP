@@ -8,7 +8,6 @@
 #include "VoxelExecNode.generated.h"
 
 struct FVoxelSpawnable;
-struct FVoxelMergeSpawnableRef;
 class FVoxelRuntime;
 class FVoxelExecNodeRuntime;
 
@@ -40,12 +39,9 @@ public:
 	IVoxelExecNodeRuntimeInterface() = default;
 	virtual ~IVoxelExecNodeRuntimeInterface() = default;
 
-	virtual const FVoxelQueryContext* GetContextPtr() { return nullptr; }
-
 	virtual void Tick(FVoxelRuntime& Runtime) {}
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) {}
 	virtual FVoxelOptionalBox GetBounds() const { return {}; }
-	virtual TVoxelFutureValue<FVoxelSpawnable> GenerateSpawnable(const FVoxelMergeSpawnableRef& Ref) { return {}; }
 };
 
 class VOXELGRAPHCORE_API FVoxelExecNodeRuntime
@@ -105,22 +101,39 @@ public:
 	{
 		return StaticStructFast<NodeType>();
 	}
-	virtual const FVoxelQueryContext* GetContextPtr() final override
-	{
-		return &GetContext().Get();
-	}
 
 public:
-	void CallCreate(const TSharedRef<FVoxelQueryContext>& Context);
+	void CallCreate(
+		const TSharedRef<FVoxelQueryContext>& Context,
+		TVoxelMap<FName, FVoxelRuntimePinValue>&& ConstantValues);
 
 	virtual void PreCreate() {}
 	virtual void Create() {}
 	virtual void Destroy() {}
 
+protected:
+	FORCEINLINE const FVoxelRuntimePinValue& GetConstantPin(const FVoxelPinRef& Pin) const
+	{
+		return PrivateConstantValues[Pin];
+	}
+	template<typename T>
+	FORCEINLINE auto GetConstantPin(const TVoxelPinRef<T>& Pin) const -> decltype(auto)
+	{
+		if constexpr (VoxelPassByValue<T>)
+		{
+			return PrivateConstantValues[Pin].template Get<T>();
+		}
+		else
+		{
+			return PrivateConstantValues[Pin].template GetSharedStruct<T>();
+		}
+	}
+
 private:
 	bool bIsCreated = false;
 	bool bIsDestroyed = false;
 	TSharedPtr<FVoxelQueryContext> PrivateContext;
+	TVoxelMap<FName, FVoxelRuntimePinValue> PrivateConstantValues;
 
 	void CallDestroy();
 
@@ -152,98 +165,3 @@ public:
 		return StaticStructFast<NodeType>();
 	}
 };
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-#define INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_TYPES(Name) \
-	using Name ## _RawType = decltype(NodeType::Name ## Pin)::Type; \
-	using Name ## _Type = TChooseClass<VoxelPassByValue<Name ## _RawType>, Name ## _RawType, TSharedPtr<const Name ## _RawType>>::Result;
-
-#define INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_VALUES(Name) \
-	Name ## _Type Name = FVoxelUtilities::MakeSafe<Name ## _Type>();
-
-#define INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_DYNAMIC_VALUES(Name) \
-	TVoxelDynamicValue<Name ## _RawType> Value_ ## Name; \
-	bool bIsSet_ ## Name = false;
-
-#define INTERNAL_DECLARE_VOXEL_PIN_VALUES_MAKE_VALUE(Name) \
-	ensure(!Value_ ## Name.IsValid()); \
-	Value_ ## Name = Node->GetNodeRuntime().MakeDynamicValueFactory(Node->Name ## Pin) \
-		.Thread(EVoxelTaskThread::GameThread) \
-		.Compute(Context, Parameters); \
-	\
-	Value_ ## Name.OnChanged(MakeWeakPtrLambda(Owner, [this, CallbackFunction](const Name ## _Type& NewValue) \
-	{ \
-		VOXEL_SCOPE_LOCK(CriticalSection); \
-		PinValues.Name = NewValue; \
-		bIsSet_ ## Name = true; \
-		CallbackFunction(); \
-	}));
-
-#define INTERNAL_DECLARE_VOXEL_PIN_VALUES_IS_SET(Name) && bIsSet_ ## Name
-
-#define DECLARE_VOXEL_PIN_VALUES(...) \
-	struct FPinValues \
-	{ \
-		VOXEL_FOREACH(INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_TYPES, __VA_ARGS__); \
-		VOXEL_FOREACH(INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_VALUES, __VA_ARGS__); \
-	}; \
-	struct FPinValuesProvider \
-	{ \
-		VOXEL_FOREACH(INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_TYPES, __VA_ARGS__); \
-		\
-		template<typename T> \
-		void Compute( \
-			T* Owner, \
-			const TSharedRef<const NodeType>& Node, \
-			const TSharedRef<FVoxelQueryContext>& Context, \
-			const TSharedRef<const FVoxelQueryParameters>& Parameters, \
-			TFunction<void(const FPinValues& PinValues)> OnChanged) \
-		{ \
-			const TFunction<void()> CallbackFunction = [this, Owner, OnChanged = MoveTemp(OnChanged)] \
-			{ \
-				if (!(true VOXEL_FOREACH(INTERNAL_DECLARE_VOXEL_PIN_VALUES_IS_SET, __VA_ARGS__))) \
-				{ \
-					return; \
-				} \
-				if (!ensureVoxelSlow(!Owner->IsDestroyed())) \
-				{ \
-					return; \
-				} \
-				\
-				OnChanged(PinValues); \
-			}; \
-			\
-			VOXEL_FOREACH(INTERNAL_DECLARE_VOXEL_PIN_VALUES_MAKE_VALUE, __VA_ARGS__); \
-		} \
-		template<typename T> \
-		void Compute( \
-			T* Owner, \
-			const TSharedRef<const FVoxelQueryParameters>& Parameters, \
-			TFunction<void(const FPinValues& PinValues)> OnChanged) \
-		{ \
-			Compute( \
-				Owner, \
-				CastChecked<NodeType>(Owner->NodeRef), \
-				Owner->GetContext(), \
-				Parameters, \
-				MoveTemp(OnChanged)); \
-		} \
-		template<typename T> \
-		void Compute( \
-			T* Owner, \
-			TFunction<void(const FPinValues& PinValues)> OnChanged) \
-		{ \
-			Compute( \
-				Owner, \
-				MakeVoxelShared<FVoxelQueryParameters>(), \
-				MoveTemp(OnChanged)); \
-		} \
-	private: \
-		FVoxelFastCriticalSection CriticalSection; \
-		FPinValues PinValues; \
-		VOXEL_FOREACH(INTERNAL_DECLARE_VOXEL_PIN_VALUES_DECLARE_DYNAMIC_VALUES, __VA_ARGS__); \
-	}; \
-	FPinValuesProvider PinValuesProvider;

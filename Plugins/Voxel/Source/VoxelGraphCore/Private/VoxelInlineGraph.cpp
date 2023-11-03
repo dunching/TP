@@ -123,8 +123,8 @@ void FVoxelInlineGraphData::Update()
 		const FVoxelGraphNodeRef NodeRef
 		{
 			Graph,
-			// See FEditorNode::GetNodeId
-			FName("Output." + Parameter.Guid.ToString())
+			// See FVoxelRuntimeNode::GetNodeId
+			FName("Output." + Parameter.Name.ToString())
 		};
 		const FVoxelGraphPinRef PinRef
 		{

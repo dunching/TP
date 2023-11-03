@@ -3,13 +3,18 @@
 #include "VoxelNodeMessages.h"
 #include "VoxelNode.h"
 #include "VoxelGraph.h"
+#include "VoxelRuntimeGraph.h"
+#include "VoxelCompiledGraph.h"
 #include "VoxelGraphExecutor.h"
-#include "VoxelCompilationGraph.h"
+#include "VoxelGraphCompileScope.h"
+#if WITH_EDITOR
+#include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
+#endif
 
 VOXEL_RUN_ON_STARTUP_GAME(RegisterGatherCallstack)
 {
-	FVoxelMessages::OnGatherCallstacks.AddLambda([](TVoxelArray<TSharedPtr<FVoxelMessageBuilder>>& OutCallstacks)
+	FVoxelMessages::GatherCallstacks.Add([](TVoxelArray<TSharedPtr<FVoxelMessageBuilder>>& OutCallstacks)
 	{
 		const FVoxelQueryScope* QueryScope = FVoxelQueryScope::TryGet();
 		if (!QueryScope)
@@ -25,12 +30,15 @@ VOXEL_RUN_ON_STARTUP_GAME(RegisterGatherCallstack)
 			}
 
 			const TSharedRef<FVoxelMessageBuilder> InstanceBuilder = MakeVoxelShared<FVoxelMessageBuilder>(EVoxelMessageSeverity::Info, "Instance: {0}");
-			FVoxelMessageArgProcessor::ProcessArg(*InstanceBuilder, QueryScope->QueryContext->GetRuntimeInfoRef().GetInstance());
+			FVoxelMessageArgProcessor::ProcessArg(*InstanceBuilder, QueryScope->QueryContext->RuntimeInfo->GetInstance());
 			OutCallstacks.Add(InstanceBuilder);
 
-			const TSharedRef<FVoxelMessageBuilder> CallstackBuilder = MakeVoxelShared<FVoxelMessageBuilder>(EVoxelMessageSeverity::Info, "Callstack: {0}");
-			FVoxelMessageArgProcessor::ProcessArg(*CallstackBuilder, *QueryScope->QueryContext->Callstack);
-			OutCallstacks.Add(CallstackBuilder);
+			if (QueryScope->QueryContext->Callstack->IsValid())
+			{
+				const TSharedRef<FVoxelMessageBuilder> CallstackBuilder = MakeVoxelShared<FVoxelMessageBuilder>(EVoxelMessageSeverity::Info, "Callstack: {0}");
+				FVoxelMessageArgProcessor::ProcessArg(*CallstackBuilder, *QueryScope->QueryContext->Callstack);
+				OutCallstacks.Add(CallstackBuilder);
+			}
 
 			return;
 		}
@@ -56,9 +64,12 @@ VOXEL_RUN_ON_STARTUP_GAME(RegisterGatherCallstack)
 			OutCallstacks.Add(InstanceBuilder);
 		}
 
-		const TSharedRef<FVoxelMessageBuilder> CallstackBuilder = MakeVoxelShared<FVoxelMessageBuilder>(EVoxelMessageSeverity::Info, "Callstack: {0}");
-		FVoxelMessageArgProcessor::ProcessArg(*CallstackBuilder, QueryScope->Query->GetCallstack());
-		OutCallstacks.Add(CallstackBuilder);
+		if (QueryScope->Query->GetCallstack().IsValid())
+		{
+			const TSharedRef<FVoxelMessageBuilder> CallstackBuilder = MakeVoxelShared<FVoxelMessageBuilder>(EVoxelMessageSeverity::Info, "Callstack: {0}");
+			FVoxelMessageArgProcessor::ProcessArg(*CallstackBuilder, QueryScope->Query->GetCallstack());
+			OutCallstacks.Add(CallstackBuilder);
+		}
 	});
 }
 
@@ -71,7 +82,7 @@ void TVoxelMessageArgProcessor<FVoxelNodeRuntime>::ProcessArg(FVoxelMessageBuild
 	}
 
 	{
-		static FVoxelCriticalSection CriticalSection;
+		static FVoxelFastCriticalSection CriticalSection;
 		VOXEL_SCOPE_LOCK(CriticalSection);
 
 		FVoxelNodeRuntime::FErrorMessage& ErrorMessage = NodeRuntime->ErrorMessages.FindOrAdd(Builder.Format);
@@ -101,6 +112,12 @@ void TVoxelMessageArgProcessor<FVoxelNode>::ProcessArg(FVoxelMessageBuilder& Bui
 	if (!ensure(Node))
 	{
 		FVoxelMessageArgProcessor::ProcessArg(Builder, "Null");
+		return;
+	}
+
+	if (!ensure(Node->HasNodeRuntime()))
+	{
+		FVoxelMessageArgProcessor::ProcessArg(Builder, "Invalid");
 		return;
 	}
 
@@ -160,22 +177,24 @@ void TVoxelMessageArgProcessor<FVoxelGraphNodeRef>::ProcessArg(FVoxelMessageBuil
 	{
 #if WITH_EDITOR
 		if (!NodeRef.IsExplicitlyNull() &&
-			NodeRef.EdGraphNodeName_EditorOnly != FVoxelNodeNames::Builtin)
+			NodeRef.EdGraphNodeName != FVoxelNodeNames::Builtin)
 		{
 			const UEdGraphNode* GraphNode = NodeRef.GetGraphNode_EditorOnly();
 			if (ensureVoxelSlow(GraphNode))
 			{
-				FVoxelMessageBuilder LocalBuilder({}, {});
+				FVoxelMessageBuilder LocalBuilder({}, "{0}.{1}");
+				FVoxelMessageArgProcessor::ProcessArg(LocalBuilder, NodeRef.Graph);
 				FVoxelMessageArgProcessor::ProcessArg(LocalBuilder, GraphNode);
-				LocalBuilder.Execute(Message, OutGraphs);
+				LocalBuilder.AppendTo(Message, OutGraphs);
 				return;
 			}
 		}
 #endif
 
-		FVoxelMessageBuilder LocalBuilder({}, {});
-		FVoxelMessageArgProcessor::ProcessArg(LocalBuilder, NodeRef.DebugName);
-		LocalBuilder.Execute(Message, OutGraphs);
+		FVoxelMessageBuilder LocalBuilder({}, "{0}.{1}");
+		FVoxelMessageArgProcessor::ProcessArg(LocalBuilder, NodeRef.Graph);
+		FVoxelMessageArgProcessor::ProcessArg(LocalBuilder, NodeRef.EdGraphNodeTitle);
+		LocalBuilder.AppendTo(Message, OutGraphs);
 	});
 }
 
@@ -187,21 +206,59 @@ void TVoxelMessageArgProcessor<FVoxelGraphPinRef>::ProcessArg(FVoxelMessageBuild
 		return;
 	}
 
+	if (PinRef->Node.EdGraphNodeName == FVoxelNodeNames::Builtin)
+	{
+		FVoxelMessageArgProcessor::ProcessArg(Builder, PinRef->Node.Graph);
+		return;
+	}
+
 	const TSharedRef<FVoxelMessageBuilder> ChildBuilder = MakeVoxelShared<FVoxelMessageBuilder>(Builder.Severity, "{0}.{1}");
 	FVoxelMessageArgProcessor::ProcessArg(*ChildBuilder, PinRef->Node);
 	FVoxelMessageArgProcessor::ProcessArg(*ChildBuilder, PinRef->PinName);
 	FVoxelMessageArgProcessor::ProcessArg(Builder, ChildBuilder);
 }
 
-void TVoxelMessageArgProcessor<FVoxelCompiledNode>::ProcessArg(FVoxelMessageBuilder& Builder, const FVoxelCompiledNode* Node)
+void TVoxelMessageArgProcessor<FVoxelRuntimeNode>::ProcessArg(FVoxelMessageBuilder& Builder, const FVoxelRuntimeNode* Node)
 {
-	FVoxelMessageArgProcessor::ProcessArg(Builder, Node ? &Node->Ref : nullptr);
+	if (!Node)
+	{
+		FVoxelMessageArgProcessor::ProcessArg(Builder, "<null>");
+		return;
+	}
+
+#if !WITH_EDITOR
+	FVoxelMessageArgProcessor::ProcessArg(Builder, Node->EdGraphNodeTitle);
+#else
+	if (!ensure(IsInGameThread()) ||
+		!ensure(GVoxelGraphCompileScope))
+	{
+		FVoxelMessageArgProcessor::ProcessArg(Builder, Node->EdGraphNodeTitle);
+		return;
+	}
+
+	const UEdGraph* EdGraph = GVoxelGraphCompileScope->Graph.MainEdGraph;
+	if (!ensure(EdGraph))
+	{
+		FVoxelMessageArgProcessor::ProcessArg(Builder, Node->EdGraphNodeTitle);
+		return;
+	}
+
+	for (const UEdGraphNode* EdGraphNode : EdGraph->Nodes)
+	{
+		if (EdGraphNode->GetFName() == Node->EdGraphNodeName)
+		{
+			FVoxelMessageArgProcessor::ProcessArg(Builder, EdGraphNode);
+			return;
+		}
+	}
+
+	ensure(false);
+	FVoxelMessageArgProcessor::ProcessArg(Builder, Node->EdGraphNodeTitle);
+#endif
 }
 
 void TVoxelMessageArgProcessor<Voxel::Graph::FPin>::ProcessArg(FVoxelMessageBuilder& Builder, const Voxel::Graph::FPin* Pin)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (!ensure(Pin))
 	{
 		FVoxelMessageArgProcessor::ProcessArg(Builder, "Null");
@@ -213,7 +270,7 @@ void TVoxelMessageArgProcessor<Voxel::Graph::FPin>::ProcessArg(FVoxelMessageBuil
 
 	FString PinName = Pin->Name.ToString();
 #if WITH_EDITOR
-	if (Pin->Node.Type == ENodeType::Struct)
+	if (Pin->Node.Type == Voxel::Graph::ENodeType::Struct)
 	{
 		if (const TSharedPtr<const FVoxelPin> VoxelPin = Pin->Node.GetVoxelNode().FindPin(Pin->Name))
 		{
@@ -228,8 +285,6 @@ void TVoxelMessageArgProcessor<Voxel::Graph::FPin>::ProcessArg(FVoxelMessageBuil
 
 void TVoxelMessageArgProcessor<Voxel::Graph::FNode>::ProcessArg(FVoxelMessageBuilder& Builder, const Voxel::Graph::FNode* Node)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (!ensure(Node))
 	{
 		FVoxelMessageArgProcessor::ProcessArg(Builder, "Null");

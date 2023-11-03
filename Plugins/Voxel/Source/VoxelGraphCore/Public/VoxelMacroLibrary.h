@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "VoxelCoreMinimal.h"
+#include "VoxelMinimal.h"
 #include "VoxelGraph.h"
 #include "VoxelMacroLibrary.generated.h"
 

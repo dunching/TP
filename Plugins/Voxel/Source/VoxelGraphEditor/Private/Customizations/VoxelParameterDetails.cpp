@@ -375,7 +375,6 @@ ECheckBoxState FVoxelParameterDetails::IsEnabled() const
 
 void FVoxelParameterDetails::SetEnabled(const bool bNewEnabled) const
 {
-	VOXEL_FUNCTION_COUNTER();
 	ensure(!ContainerDetails.AlwaysEnabled());
 
 	const TVoxelArray<UVoxelParameterContainer*> ParameterContainers = ContainerDetails.GetParameterContainers();
@@ -464,8 +463,6 @@ bool FVoxelParameterDetails::CanResetToDefault() const
 
 void FVoxelParameterDetails::ResetToDefault()
 {
-	VOXEL_FUNCTION_COUNTER();
-
 	if (IsOrphan())
 	{
 		for (UVoxelParameterContainer* ParameterContainer : ContainerDetails.GetParameterContainers())
@@ -529,8 +526,6 @@ void FVoxelParameterDetails::ResetToDefault()
 
 void FVoxelParameterDetails::PreEditChange() const
 {
-	VOXEL_FUNCTION_COUNTER();
-
 	for (UVoxelParameterContainer* ParameterContainer : ContainerDetails.GetParameterContainers())
 	{
 		ParameterContainer->PreEditChange(nullptr);
@@ -539,8 +534,6 @@ void FVoxelParameterDetails::PreEditChange() const
 
 void FVoxelParameterDetails::PostEditChange() const
 {
-	VOXEL_FUNCTION_COUNTER();
-
 	for (UVoxelParameterContainer* ParameterContainer : ContainerDetails.GetParameterContainers())
 	{
 		FVoxelParameterValueOverride& ValueOverride = ParameterContainer->ValueOverrides.FindOrAdd(Path);

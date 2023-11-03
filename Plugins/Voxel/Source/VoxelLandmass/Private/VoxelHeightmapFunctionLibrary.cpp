@@ -52,13 +52,14 @@ FVoxelSurface UVoxelHeightmapFunctionLibrary::MakeCubemapPlanetSurface(
 	const float PlanetRadius,
 	const float MaxHeight) const
 {
-	FVoxelSurface Surface(
+	FVoxelSurface Surface = FVoxelSurface::MakeWithLocalBounds(
 		GetNodeRef(),
-		FVoxelSurfaceBounds::Make(FVoxelBox().Extend(PlanetRadius + MaxHeight).ShiftBy(PlanetCenter)));
+		GetQuery(),
+		FVoxelBox().Extend(PlanetRadius + MaxHeight).ShiftBy(PlanetCenter));
 
-	Surface.SetDistance(this, [=](const UVoxelHeightmapFunctionLibrary& This)
+	Surface.SetLocalDistance(GetQuery(), GetNodeRef(), [=, NodeRef = GetNodeRef()](const FVoxelQuery& Query)
 	{
-		return This.MakeCubemapPlanetSurface_Distance(
+		return MakeVoxelFunctionCaller<UVoxelHeightmapFunctionLibrary>(NodeRef, Query)->MakeCubemapPlanetSurface_Distance(
 			PosX,
 			NegX,
 			PosY,
@@ -70,7 +71,7 @@ FVoxelSurface UVoxelHeightmapFunctionLibrary::MakeCubemapPlanetSurface(
 			MaxHeight);
 	});
 
-	return Surface.CreateLocalSurface(this);
+	return Surface;
 }
 
 FVoxelFloatBuffer UVoxelHeightmapFunctionLibrary::MakeCubemapPlanetSurface_Distance(

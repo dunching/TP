@@ -134,7 +134,6 @@ public:
 		else if constexpr (TIsTSubclassOf<T>::Value)
 		{
 			using Type = typename TSubclassOfType<T>::Type;
-			ensure(!Class || Class->IsChildOf(StaticClassFast<Type>()));
 			return ReinterpretCastRef<TSubclassOf<Type>>(Class);
 		}
 		else if constexpr (TIsDerivedFrom<T, UObject>::Value)

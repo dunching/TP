@@ -5,10 +5,16 @@
 #include "VoxelMinimal.h"
 
 #if WITH_EDITOR
-class VOXELGRAPHCORE_API FVoxelSourceParser
+class FVoxelSourceParser;
+
+extern VOXELGRAPHCORE_API FVoxelSourceParser* GVoxelSourceParser;
+
+class VOXELGRAPHCORE_API FVoxelSourceParser : public FVoxelSingleton
 {
 public:
-	static FVoxelSourceParser& Get();
+	//~ Begin FVoxelSingleton Interface
+	virtual void Initialize() override;
+	//~ End FVoxelSingleton Interface
 
 	FString GetPinTooltip(UScriptStruct* NodeStruct, FName PinName);
 	FString GetPropertyDefault(UFunction* Function, FName PropertyName);

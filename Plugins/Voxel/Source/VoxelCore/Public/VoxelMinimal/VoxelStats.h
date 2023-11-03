@@ -5,8 +5,8 @@
 #include "CoreMinimal.h"
 #include "Stats/Stats.h"
 #include "Stats/StatsMisc.h"
-#include "HAL/LowLevelMemStats.h"
 #include "VoxelMacros.h"
+#include "HAL/LowLevelMemStats.h"
 
 UE_TRACE_CHANNEL_EXTERN(VoxelChannel, VOXELCORE_API);
 
@@ -16,27 +16,30 @@ DECLARE_STATS_GROUP(TEXT("Voxel Memory"), STATGROUP_VoxelMemory, STATCAT_Advance
 DECLARE_STATS_GROUP(TEXT("Voxel GPU Memory"), STATGROUP_VoxelGpuMemory, STATCAT_Advanced);
 
 #if ENABLE_LOW_LEVEL_MEM_TRACKER
-DECLARE_LLM_MEMORY_STAT(TEXT("Voxel"), STAT_VoxelLLM, STATGROUP_LLMFULL);
-#endif
+LLM_DECLARE_TAG_API(Voxel, VOXELCORE_API);
+DECLARE_LLM_MEMORY_STAT_EXTERN(TEXT("Voxel"), STAT_VoxelLLM, STATGROUP_LLM, VOXELCORE_API);
 
-#define VOXEL_LLM_TAG ELLMTag(int32(ELLMTag::ProjectTagEnd) - 1)
+extern VOXELCORE_API bool GVoxelLLMDisabled;
+
+VOXELCORE_API void EnterVoxelLLMScope();
+VOXELCORE_API void ExitVoxelLLMScope();
+VOXELCORE_API void CheckVoxelLLMScope();
+
 #define VOXEL_LLM_SCOPE() \
-	LLM(if (!GVoxelLLMRegistered) { Voxel_RegisterLLM(); }) \
-	LLM_SCOPE(VOXEL_LLM_TAG)
-
-extern VOXELCORE_API bool GVoxelLLMRegistered;
-VOXELCORE_API void Voxel_RegisterLLM();
-VOXELCORE_API void Voxel_CheckLLMScopeImpl();
-
-FORCEINLINE void Voxel_CheckLLMScope()
-{
-#if ENABLE_LOW_LEVEL_MEM_TRACKER
-	if (!FLowLevelMemTracker::bIsDisabled)
-	{
-		Voxel_CheckLLMScopeImpl();
-	}
+	if (!GVoxelLLMDisabled) \
+	{ \
+		EnterVoxelLLMScope(); \
+	} \
+	ON_SCOPE_EXIT_IMPL(VoxelLLM) \
+	{ \
+		if (!GVoxelLLMDisabled) \
+		{ \
+			ExitVoxelLLMScope(); \
+		} \
+	};
+#else
+#define VOXEL_LLM_SCOPE()
 #endif
-}
 
 #if CPUPROFILERTRACE_ENABLED
 FORCEINLINE bool AreVoxelStatsEnabled()
@@ -48,6 +51,7 @@ FORCEINLINE bool AreVoxelStatsEnabled()
 #define VOXEL_TRACE_ENABLED VOXEL_APPEND_LINE(__bTraceEnabled)
 
 #define VOXEL_SCOPE_COUNTER_IMPL(Condition, Description) \
+	VOXEL_LLM_SCOPE(); \
 	const bool VOXEL_TRACE_ENABLED = AreVoxelStatsEnabled() && (Condition); \
 	if (VOXEL_TRACE_ENABLED) \
 	{ \
@@ -63,10 +67,10 @@ FORCEINLINE bool AreVoxelStatsEnabled()
 			VOXEL_ALLOW_MALLOC_SCOPE(); \
 			FCpuProfilerTrace::OutputEndEvent(); \
 		} \
-	}; \
-	VOXEL_DEBUG_ONLY(Voxel_CheckLLMScope());
+	};
 
 #define VOXEL_SCOPE_COUNTER_FNAME_COND(Condition, Description) \
+	VOXEL_LLM_SCOPE(); \
 	const bool VOXEL_TRACE_ENABLED = AreVoxelStatsEnabled() && (Condition); \
 	if (VOXEL_TRACE_ENABLED) \
 	{ \
@@ -110,7 +114,6 @@ VOXELCORE_API FString VoxelStats_CleanupFunctionName(const FString& FunctionName
 #define VOXEL_SCOPE_COUNTER_NUM(Name, Num, Threshold) VOXEL_SCOPE_COUNTER_FORMAT_COND(Num > Threshold, "%s Num=%d", *STATIC_FSTRING(Name), Num)
 #define VOXEL_FUNCTION_COUNTER_NUM(Num, Threshold) VOXEL_SCOPE_COUNTER_NUM(VOXEL_STATS_CLEAN_FUNCTION_NAME, Num, Threshold)
 
-#define VOXEL_FUNCTION_COUNTER_LLM() VOXEL_LLM_SCOPE() VOXEL_FUNCTION_COUNTER()
 #define VOXEL_LOG_FUNCTION_STATS() FScopeLogTime PREPROCESSOR_JOIN(FScopeLogTime_, __LINE__)(*STATIC_FSTRING(VOXEL_STATS_CLEAN_FUNCTION_NAME));
 #define VOXEL_LOG_SCOPE_STATS(Name) FScopeLogTime PREPROCESSOR_JOIN(FScopeLogTime_, __LINE__)(*STATIC_FSTRING(VOXEL_STATS_CLEAN_FUNCTION_NAME + "." + FString(Name)));
 #define VOXEL_TRACE_BOOKMARK() TRACE_BOOKMARK(*STATIC_FSTRING(VOXEL_STATS_CLEAN_FUNCTION_NAME));
@@ -280,27 +283,27 @@ VOXELCORE_API FString VoxelStats_CleanupFunctionName(const FString& FunctionName
 		FVoxelStatsRefHelper(const FVoxelStatsRefHelper& Other) \
 		{ \
 			AllocatedSize = Other.AllocatedSize; \
-			INC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize); \
+			INC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize.GetValue()); \
 		} \
 		FVoxelStatsRefHelper& operator=(const FVoxelStatsRefHelper& Other) \
 		{ \
 			AllocatedSize = Other.AllocatedSize; \
-			INC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize); \
+			INC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize.GetValue()); \
 			return *this; \
 		} \
 		FORCEINLINE ~FVoxelStatsRefHelper() \
 		{ \
-			DEC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize); \
+			DEC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize.GetValue()); \
 		} \
-		FVoxelStatsRefHelper& operator=(int64 InAllocatedSize) \
+		FVoxelStatsRefHelper& operator=(const int64 NewAllocatedSize) \
 		{ \
-			DEC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize); \
-			AllocatedSize = InAllocatedSize; \
-			INC_VOXEL_MEMORY_STAT_BY(StatName, AllocatedSize); \
+			const int64 OldAllocatedSize = AllocatedSize.Set(NewAllocatedSize); \
+			DEC_VOXEL_MEMORY_STAT_BY(StatName, OldAllocatedSize); \
+			INC_VOXEL_MEMORY_STAT_BY(StatName, NewAllocatedSize); \
 			return *this; \
 		} \
 	private: \
-		int64 AllocatedSize = 0; \
+		FThreadSafeCounter64 AllocatedSize; \
 	}; \
 	mutable FVoxelStatsRefHelper Name;
 
@@ -407,18 +410,50 @@ FORCEINLINE void Voxel_AddAmountToDynamicStat(FName Name, int64 Amount)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-#define VOXEL_TRACK_INSTANCES_SLOW(Struct) \
+class VOXELCORE_API FVoxelStackTrace
+{
+public:
+	FVoxelStackTrace() = default;
+
+	void Capture();
+
+private:
+	TArray<void*, TFixedAllocator<128>> StackFrames;
+};
+
+#define VOXEL_TRACK_INSTANCES_SLOW() \
 	struct FVoxelInstanceTrackerSlow \
 	{ \
 	public: \
-		FVoxelInstanceTrackerSlow(Struct* This); \
+		FVoxelInstanceTrackerSlow() \
+		{ \
+			Initialize(); \
+		} \
+		FVoxelInstanceTrackerSlow(FVoxelInstanceTrackerSlow&&) \
+		{ \
+			Initialize(); \
+		} \
+		FVoxelInstanceTrackerSlow(const FVoxelInstanceTrackerSlow&) \
+		{ \
+			Initialize(); \
+		} \
+		FVoxelInstanceTrackerSlow& operator=(const FVoxelInstanceTrackerSlow&) \
+		{ \
+			return *this; \
+		} \
+		FVoxelInstanceTrackerSlow& operator=(FVoxelInstanceTrackerSlow&&) \
+		{ \
+			return *this; \
+		} \
 		~FVoxelInstanceTrackerSlow(); \
-		UE_NONCOPYABLE(FVoxelInstanceTrackerSlow); \
 	\
 	private: \
+		void Initialize(); \
+		\
 		int32 InstanceIndex = -1; \
+		FVoxelStackTrace StackTrace; \
 	}; \
-	const FVoxelInstanceTrackerSlow VOXEL_APPEND_LINE(InstanceTracker){ this }; \
+	FVoxelInstanceTrackerSlow _InstanceTrackerSlow; \
 
 #define DEFINE_VOXEL_INSTANCE_TRACKER_SLOW(Struct) \
 	struct FVoxelInstanceTrackerSlowData ## Struct \
@@ -428,19 +463,26 @@ FORCEINLINE void Voxel_AddAmountToDynamicStat(FName Name, int64 Amount)
 	}; \
 	FVoxelInstanceTrackerSlowData ## Struct GVoxelInstanceTrackerData ## Struct; \
 	\
-	Struct::FVoxelInstanceTrackerSlow::FVoxelInstanceTrackerSlow(Struct* This) \
+	void Struct::FVoxelInstanceTrackerSlow::Initialize() \
 	{ \
-		VOXEL_SCOPE_LOCK_NO_STATS(GVoxelInstanceTrackerData ## Struct.CriticalSection); \
+		check(InstanceIndex == -1); \
+		Struct* This = reinterpret_cast<Struct*>(reinterpret_cast<uint8*>(this) - offsetof(Struct, _InstanceTrackerSlow)); \
+		VOXEL_SCOPE_LOCK(GVoxelInstanceTrackerData ## Struct.CriticalSection); \
 		InstanceIndex = GVoxelInstanceTrackerData ## Struct.InstanceIndexToThis.Add(This); \
+		\
+		StackTrace.Capture(); \
 	} \
 	Struct::FVoxelInstanceTrackerSlow::~FVoxelInstanceTrackerSlow() \
 	{ \
-		VOXEL_SCOPE_LOCK_NO_STATS(GVoxelInstanceTrackerData ## Struct.CriticalSection); \
+		VOXEL_SCOPE_LOCK(GVoxelInstanceTrackerData ## Struct.CriticalSection); \
 		GVoxelInstanceTrackerData ## Struct.InstanceIndexToThis.RemoveAt(InstanceIndex); \
 	} \
 	\
 	class FVoxelTicker_TrackInstancesSlow_ ## Struct : public FVoxelTicker { virtual void Tick() override {} }; \
-	FVoxelTicker_TrackInstancesSlow_ ## Struct GVoxelTicker_TrackInstancesSlow_ ## Struct;
+	VOXEL_RUN_ON_STARTUP_GAME(Make_ ## FVoxelTicker_TrackInstancesSlow_ ## Struct) \
+	{ \
+		new FVoxelTicker_TrackInstancesSlow_ ## Struct(); \
+	}
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////

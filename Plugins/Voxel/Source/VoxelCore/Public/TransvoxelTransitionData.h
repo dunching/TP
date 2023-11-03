@@ -37,7 +37,9 @@
 //
 //================================================================================
 
-BEGIN_VOXEL_NAMESPACE(Transvoxel, Transition);
+namespace Voxel::Transvoxel::Transition
+{
+
 /*
  * Edge index:
  * High res X:
@@ -120,4 +122,4 @@ extern VOXELCORE_API const TConstArray<FCellClass, 512> CellCodeToCellClass;
 extern VOXELCORE_API const TConstArray<FVertexDatas, 512> CellCodeToVertexDatas;
 extern VOXELCORE_API const TConstArray<FTransitionCellData, 56> CellClassToTransitionCellData;
 
-END_VOXEL_NAMESPACE(Transvoxel, Transition)
+}

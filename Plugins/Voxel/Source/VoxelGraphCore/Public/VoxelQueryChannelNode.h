@@ -33,12 +33,15 @@ struct VOXELGRAPHCORE_API FVoxelNode_QueryChannel : public FVoxelNode
 	VOXEL_INPUT_PIN(int32, MaxPriority, MAX_int16, AdvancedDisplay);
 	VOXEL_OUTPUT_PIN(FVoxelWildcard, Value);
 
+	FVoxelNode_QueryChannel();
+
 #if WITH_EDITOR
 	class FDefinition : public Super::FDefinition
 	{
 	public:
 		GENERATED_VOXEL_NODE_DEFINITION_BODY(FVoxelNode_QueryChannel);
 
+		virtual void Initialize(UEdGraphNode& EdGraphNode) override;
 		virtual bool OnPinDefaultValueChanged(FName PinName, const FVoxelPinValue& NewDefaultValue) override;
 	};
 #endif

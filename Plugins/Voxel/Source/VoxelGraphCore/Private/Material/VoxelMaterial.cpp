@@ -120,17 +120,17 @@ TVoxelFutureValue<FVoxelComputedMaterial> FVoxelMaterial::Compute(const FVoxelQu
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void FVoxelMaterialPinType::Convert(const bool bSetObject, UMaterialInterface*& Object, FVoxelMaterial& Struct) const
+void FVoxelMaterialPinType::Convert(const bool bSetObject, TWeakObjectPtr<UMaterialInterface>& Object, FVoxelMaterial& Struct) const
 {
 	if (bSetObject)
 	{
 		if (Struct.ParentMaterial)
 		{
-			Object = Struct.ParentMaterial->GetMaterial();
+			Object = Struct.ParentMaterial->GetWeakMaterial();
 		}
 	}
 	else
 	{
-		Struct.ParentMaterial = FVoxelMaterialRef::Make(ConstCast(Object));
+		Struct.ParentMaterial = FVoxelMaterialRef::Make(ConstCast(Object.Get()));
 	}
 }

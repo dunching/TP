@@ -264,6 +264,7 @@ private:
 			.ColorAndOpacity(this, &SVoxelDetailComboBox::GetOptionColor, Option);
 	}
 
+public:
 	void RefreshOptionsList()
 	{
 		VOXEL_FUNCTION_COUNTER();
@@ -293,6 +294,7 @@ private:
 				Options.Add(MakeVoxelShared<T>(Option));
 			}
 		}
+		ComboBox->RefreshOptions();
 	}
 
 private:

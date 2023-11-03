@@ -1,543 +1,558 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelGraphEditorCompiler.h"
-#include "VoxelGraphCompilerUtilities.h"
-#include "VoxelGraphEditorCompilerPasses.h"
-#include "VoxelFunctionNode.h"
-#include "VoxelGraphMessages.h"
+#include "VoxelGraph.h"
+#include "VoxelEdGraph.h"
+#include "VoxelNodeLibrary.h"
+#include "VoxelMacroLibrary.h"
+#include "VoxelParameterNode.h"
+#include "VoxelGraphCompileScope.h"
+#include "VoxelLocalVariableNodes.h"
 #include "Nodes/VoxelGraphKnotNode.h"
 #include "Nodes/VoxelGraphMacroNode.h"
 #include "Nodes/VoxelGraphStructNode.h"
 #include "Nodes/VoxelGraphParameterNode.h"
+#include "Nodes/VoxelGraphLocalVariableNode.h"
 #include "Nodes/VoxelGraphMacroParameterNode.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
-VOXELGRAPHEDITOR_API bool GIsVoxelGraphCompiling = false;
-
-VOXEL_RUN_ON_STARTUP_EDITOR(RegisterGraphTranslator)
+VOXEL_RUN_ON_STARTUP_EDITOR_COOK(RegisterGraphEditorCompiler)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
-	FCompilerUtilities::ForceTranslateGraph_EditorOnly = [](UVoxelGraph& Graph)
-	{
-		VOXEL_SCOPE_COUNTER("ForceTranslateGraph");
-
-		ensure(!GIsVoxelGraphCompiling);
-		GIsVoxelGraphCompiling = true;
-		ON_SCOPE_EXIT
-		{
-			ensure(GIsVoxelGraphCompiling);
-			GIsVoxelGraphCompiling = false;
-		};
-
-		if (!Graph.MainEdGraph)
-		{
-			// New asset
-			return;
-		}
-
-		for (UEdGraphNode* Node : Graph.MainEdGraph->Nodes)
-		{
-			Node->ReconstructNode();
-		}
-
-		FEditorCompilerUtilities::CompileGraph(Graph);
-	};
-
-	FCompilerUtilities::RaiseOrphanWarnings_EditorOnly = [](UVoxelGraph& Graph)
-	{
-		VOXEL_SCOPE_COUNTER("RaiseOrphanWarnings");
-
-		if (!ensure(Graph.MainEdGraph))
-		{
-			return;
-		}
-
-		for (const UEdGraphNode* Node : Graph.MainEdGraph->Nodes)
-		{
-			for (const UEdGraphPin* Pin : Node->Pins)
-			{
-				if (Pin->bOrphanedPin)
-				{
-					VOXEL_MESSAGE(Warning, "Orphaned pin on {0}: {1}", Node, Pin->GetDisplayName());
-				}
-			}
-		}
-	};
+	check(!GVoxelGraphEditorCompiler);
+	GVoxelGraphEditorCompiler = new FVoxelGraphEditorCompiler();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void FEditorPin::Check(const FEditorGraph& Graph) const
-{
-	ensure(!PinName.IsNone());
-	ensure(Graph.Nodes.Contains(Node));
-	ensure(Node->InputPins.Contains(this) || Node->OutputPins.Contains(this));
-
-	ensure(!LinkedTo.Contains(this));
-	for (const FEditorPin* Pin : LinkedTo)
-	{
-		ensure(Graph.Nodes.Contains(Pin->Node));
-		ensure(Pin->Node->InputPins.Contains(Pin) || Pin->Node->OutputPins.Contains(Pin));
-		ensure(Pin->LinkedTo.Contains(this));
-	}
-}
-
-FName FEditorNode::GetNodeId() const
-{
-	if (const UVoxelGraphMacroParameterNode* MacroParameterNode = Cast<UVoxelGraphMacroParameterNode>(GraphNode))
-	{
-		if (MacroParameterNode->Type == EVoxelGraphParameterType::Output)
-		{
-			// Use Output.Guid
-			return FName("Output." + MacroParameterNode->Guid.ToString());
-		}
-	}
-
-	if (const UVoxelGraphStructNode* StructNode = Cast<UVoxelGraphStructNode>(GraphNode))
-	{
-		if (ensureVoxelSlow(StructNode->Struct.IsValid()))
-		{
-			if (const FVoxelFunctionNode* FunctionNode = Cast<FVoxelFunctionNode>(*StructNode->Struct))
-			{
-				if (const UFunction* Function = FunctionNode->GetFunction())
-				{
-					// Use Class.Function.NodeId
-					return FName(Function->GetOuterUClass()->GetName() + "." + Function->GetName() + "." + GraphNode->GetName());
-				}
-			}
-
-			// Use Struct.NodeId
-			return FName(StructNode->Struct->GetStruct()->GetName() + "." + GraphNode->GetName());
-		}
-	}
-
-	return GraphNode->GetFName();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-bool FEditorCompilerUtilities::CompileGraph(UVoxelGraph& Graph)
+void FVoxelGraphEditorCompiler::CompileAll()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	if (!ensure(Graph.MainEdGraph))
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UVoxelGraph::StaticClass()->GetClassPathName());
+	Filter.ClassPaths.Add(UVoxelMacroLibrary::StaticClass()->GetClassPathName());
+
+	const IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+
+	TArray<FAssetData> AssetDatas;
+	AssetRegistry.GetAssets(Filter, AssetDatas);
+
+	TSet<UVoxelGraph*> Graphs;
+	for (const FAssetData& AssetData : AssetDatas)
 	{
-		return false;
-	}
-
-	FVoxelGraphMessages Messages(Graph.MainEdGraph);
-
-	// Clear to not have outdated errors
-	Graph.CompiledGraph.bIsValid = false;
-	Graph.CompiledGraph.Nodes = {};
-
-	for (const UEdGraphNode* Node : Graph.MainEdGraph->Nodes)
-	{
-		for (const UEdGraphPin* Pin : Node->Pins)
-		{
-			if (Pin->bOrphanedPin)
-			{
-				VOXEL_MESSAGE(Warning, "Orphaned pin on {0}: {1}", Node, Pin->GetDisplayName());
-			}
-
-			if (Pin->ParentPin)
-			{
-				ensure(Pin->ParentPin->SubPins.Contains(Pin));
-			}
-
-			for (const UEdGraphPin* SubPin : Pin->SubPins)
-			{
-				ensure(SubPin->ParentPin == Pin);
-			}
-		}
-	}
-
-	TArray<FFEditorCompilerPass> Passes;
-	Passes.Add(FEditorCompilerPasses::RemoveDisabledNodes);
-	Passes.Add(FEditorCompilerPasses::SetupPreview);
-	Passes.Add(FEditorCompilerPasses::AddToBufferNodes);
-	Passes.Add(FEditorCompilerPasses::RemoveSplitPins);
-	Passes.Add(FEditorCompilerPasses::FixupLocalVariables);
-
-	FEditorGraph EditorGraph;
-	if (!CompileGraph(*Graph.MainEdGraph, EditorGraph, Passes))
-	{
-		VOXEL_MESSAGE(Error, "Failed to translate graph");
-		return false;
-	}
-
-	FVoxelCompiledGraph CompiledGraph;
-
-	for (const FEditorNode* Node : EditorGraph.Nodes)
-	{
-		FVoxelCompiledNode CompiledNode;
-		CompiledNode.Ref.Graph = &Graph;
-		CompiledNode.Ref.NodeId = Node->GetNodeId();
-
-		if (ensure(Node->SourceGraphNode))
-		{
-			CompiledNode.Ref.DebugName = *Node->SourceGraphNode->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
-			CompiledNode.Ref.EdGraphNodeName_EditorOnly = Node->SourceGraphNode->GetFName();
-		}
-
-		if (const UVoxelGraphStructNode* StructNode = Cast<UVoxelGraphStructNode>(Node->GraphNode))
-		{
-			CompiledNode.Type = EVoxelCompiledNodeType::Struct;
-			CompiledNode.Struct = StructNode->Struct;
-		}
-		else if (const UVoxelGraphMacroNode* MacroNode = Cast<UVoxelGraphMacroNode>(Node->GraphNode))
-		{
-			CompiledNode.Type = EVoxelCompiledNodeType::Macro;
-			CompiledNode.Graph = MacroNode->GraphInterface;
-		}
-		else if (const UVoxelGraphParameterNode* ParameterNode = Cast<UVoxelGraphParameterNode>(Node->GraphNode))
-		{
-			CompiledNode.Type = EVoxelCompiledNodeType::Parameter;
-			CompiledNode.Guid = ParameterNode->Guid;
-		}
-		else if (const UVoxelGraphMacroParameterNode* MacroParameterNode = Cast<UVoxelGraphMacroParameterNode>(Node->GraphNode))
-		{
-			switch (MacroParameterNode->Type)
-			{
-			default:
-			{
-				ensure(false);
-				return false;
-			}
-			case EVoxelGraphParameterType::Input:
-			{
-				CompiledNode.Type = EVoxelCompiledNodeType::Input;
-				CompiledNode.Guid = MacroParameterNode->Guid;
-			}
-			break;
-			case EVoxelGraphParameterType::Output:
-			{
-				CompiledNode.Type = EVoxelCompiledNodeType::Output;
-				CompiledNode.Guid = MacroParameterNode->Guid;
-			}
-			break;
-			}
-		}
-		else
-		{
-			ensure(false);
-			return false;
-		}
-
-		if (!ensure(!CompiledGraph.Nodes.Contains(CompiledNode.Ref.NodeId)))
-		{
-			return false;
-		}
-
-		CompiledGraph.Nodes.Add(CompiledNode.Ref.NodeId, CompiledNode);
-	}
-
-	TMap<const FEditorPin*, FVoxelCompiledPinRef> PinMap;
-	for (const FEditorNode* Node : EditorGraph.Nodes)
-	{
-		FVoxelCompiledNode& CompiledNode = CompiledGraph.Nodes[Node->GetNodeId()];
-
-		const auto MakePin = [&](const FEditorPin& Pin)
-		{
-			FVoxelCompiledPin CompiledPin;
-			CompiledPin.Type = Pin.PinType;
-			CompiledPin.PinName = Pin.PinName;
-			CompiledPin.DefaultValue = Pin.DefaultValue;
-			return CompiledPin;
-		};
-
-		for (const FEditorPin* Pin : Node->InputPins)
-		{
-			if (!ensure(!CompiledNode.InputPins.Contains(Pin->PinName)))
-			{
-				return false;
-			}
-			CompiledNode.InputPins.Add(Pin->PinName, MakePin(*Pin));
-
-			PinMap.Add(Pin, FVoxelCompiledPinRef{ CompiledNode.Ref.NodeId, Pin->PinName, true });
-		}
-		for (const FEditorPin* Pin : Node->OutputPins)
-		{
-			if (!ensure(!CompiledNode.OutputPins.Contains(Pin->PinName)))
-			{
-				return false;
-			}
-			CompiledNode.OutputPins.Add(Pin->PinName, MakePin(*Pin));
-
-			PinMap.Add(Pin, FVoxelCompiledPinRef{ CompiledNode.Ref.NodeId, Pin->PinName, false });
-		}
-	}
-
-	// Link the pins once they're all allocated
-	for (const FEditorNode* Node : EditorGraph.Nodes)
-	{
-		const auto AddPin = [&](const FEditorPin* Pin)
-		{
-			FVoxelCompiledPin* CompiledPin = CompiledGraph.FindPin(PinMap[Pin]);
-			if (!ensure(CompiledPin))
-			{
-				return false;
-			}
-
-			for (const FEditorPin* OtherPin : Pin->LinkedTo)
-			{
-				CompiledPin->LinkedTo.Add(PinMap[OtherPin]);
-			}
-
-			return true;
-		};
-
-		for (const FEditorPin* Pin : Node->InputPins)
-		{
-			if (!ensure(AddPin(Pin)))
-			{
-				return false;
-			}
-		}
-		for (const FEditorPin* Pin : Node->OutputPins)
-		{
-			if (!ensure(AddPin(Pin)))
-			{
-				return false;
-			}
-		}
-	}
-
-	Graph.CompiledGraph.bIsValid = true;
-	Graph.CompiledGraph.Nodes = CompiledGraph.Nodes;
-
-	return true;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-
-bool FEditorCompilerUtilities::CompileGraph(
-	const UEdGraph& EdGraph,
-	FEditorGraph& OutGraph,
-	const TArray<FFEditorCompilerPass>& Passes)
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	TMap<UObject*, UObject*> CreatedObjects;
-
-	FObjectDuplicationParameters DuplicationParameters(ConstCast(&EdGraph), EdGraph.GetOuter());
-	DuplicationParameters.CreatedObjects = &CreatedObjects;
-	DuplicationParameters.ApplyFlags |= RF_Transient;
-	DuplicationParameters.FlagMask &= ~RF_Transactional;
-
-	FEditorCompiler Compiler;
-	Compiler.Graph = CastChecked<UEdGraph>(StaticDuplicateObjectEx(DuplicationParameters));
-	ON_SCOPE_EXIT
-	{
-		Compiler.Graph->MarkAsGarbage();
-	};
-
-	for (auto& It : CreatedObjects)
-	{
-		UEdGraphNode* Source = Cast<UEdGraphNode>(It.Key);
-		UEdGraphNode* Duplicate = Cast<UEdGraphNode>(It.Value);
-		if (!Source || !Duplicate)
+		UObject* Asset = AssetData.GetAsset();
+		if (!ensure(Asset))
 		{
 			continue;
 		}
 
-		Compiler.NodeSourceMap.Add(Duplicate, Source);
+		if (Asset->IsA<UVoxelMacroLibrary>())
+		{
+			Graphs.Add(CastChecked<UVoxelMacroLibrary>(Asset)->Graph);
+		}
+		else if (ensure(Asset->IsA<UVoxelGraph>()))
+		{
+			Graphs.Add(CastChecked<UVoxelGraph>(Asset));
+		}
 	}
 
-	// Remove orphaned pins from duplicated graph
-	for (UEdGraphNode* Node : Compiler.Graph->Nodes)
+	TArray<FSoftObjectPath> AssetsToOpen;
+	for (UVoxelGraph* Graph : Graphs)
 	{
-		for (UEdGraphPin* Pin : MakeCopy(Node->Pins))
+		if (!ensure(Graph))
 		{
-			if (Pin->bOrphanedPin)
+			continue;
+		}
+
+		bool bShouldOpen = false;
+		for (const UVoxelGraph* SubGraph : Graph->GetAllGraphs())
+		{
+			SubGraph->GetRuntimeGraph().ForceRecompile();
+
+			if (SubGraph->GetRuntimeGraph().HasCompileMessages())
 			{
-				Node->RemovePin(Pin);
+				bShouldOpen = true;
 			}
 		}
-	}
 
-	CheckGraph(Compiler);
-
-	if (GVoxelGraphMessages->HasError())
-	{
-		return false;
-	}
-
-	for (const FFEditorCompilerPass& Pass : Passes)
-	{
-		if (!Pass(Compiler))
+		if (bShouldOpen)
 		{
-			return false;
-		}
-
-		CheckGraph(Compiler);
-
-		if (GVoxelGraphMessages->HasError())
-		{
-			return false;
+			AssetsToOpen.Add(Graph);
 		}
 	}
-
-	return TranslateGraph(Compiler, OutGraph);
+	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorsForAssets(AssetsToOpen);
 }
 
-bool FEditorCompilerUtilities::TranslateGraph(
-	const FEditorCompiler& Compiler,
-	FEditorGraph& OutGraph)
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void FVoxelGraphEditorCompiler::ReconstructAllNodes(const UVoxelGraph& Graph)
 {
-	TMap<UEdGraphPin*, FEditorPin*> AllPins;
-	TMap<UEdGraphNode*, FEditorNode*> AllNodes;
+	VOXEL_FUNCTION_COUNTER();
 
-	const auto AllocPin = [&](UEdGraphPin* GraphPin)
+	if (!Graph.MainEdGraph)
 	{
-		FEditorPin*& Pin = AllPins.FindOrAdd(GraphPin);
-		if (!Pin)
-		{
-			Pin = OutGraph.NewPin();
-			Pin->Node = AllNodes[GraphPin->GetOwningNode()];
-			Pin->PinName = GraphPin->PinName;
-			Pin->PinType = GraphPin->PinType;
+		// New asset
+		return;
+	}
 
-			if (Pin->PinType.HasPinDefaultValue())
-			{
-				Pin->DefaultValue = FVoxelPinValue::MakeFromPinDefaultValue(*GraphPin);
-			}
-			else
-			{
-				ensure(!GraphPin->DefaultObject);
-				ensure(GraphPin->DefaultValue.IsEmpty());
-				ensure(GraphPin->AutogeneratedDefaultValue.IsEmpty());
-			}
-		}
-		return Pin;
-	};
-	const auto AllocNode = [&](UVoxelGraphNode* GraphNode)
+	UVoxelEdGraph* EdGraph = Cast<UVoxelEdGraph>(Graph.MainEdGraph);
+	if (!ensure(EdGraph))
 	{
-		FEditorNode*& Node = AllNodes.FindOrAdd(GraphNode);
-		if (!Node)
-		{
-			Node = OutGraph.NewNode();
-			Node->GraphNode = GraphNode;
-			Node->SourceGraphNode = Compiler.GetSourceNode(GraphNode);
+		return;
+	}
 
-			for (UEdGraphPin* Pin : GraphNode->GetInputPins())
-			{
-				Node->InputPins.Add(AllocPin(Pin));
-			}
-			for (UEdGraphPin* Pin : GraphNode->GetOutputPins())
-			{
-				Node->OutputPins.Add(AllocPin(Pin));
-			}
-		}
-		return Node;
-	};
+	EdGraph->MigrateAndReconstructAll();
+}
 
-	for (UEdGraphNode* GraphNode : Compiler.GetNodesCopy())
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+FVoxelRuntimeGraphData FVoxelGraphEditorCompiler::Translate(const UVoxelGraph& Graph)
+{
+	VOXEL_FUNCTION_COUNTER();
+	ensure(GVoxelGraphCompileScope);
+
+	UVoxelEdGraph* EdGraph = Cast<UVoxelEdGraph>(Graph.MainEdGraph);
+	if (!EdGraph)
 	{
-		UVoxelGraphNode* Node = Cast<UVoxelGraphNode>(GraphNode);
+		return {};
+	}
+
+	EdGraph->MigrateIfNeeded();
+
+	// Sanitize nodes, we've had cases where some nodes are null
+	EdGraph->Nodes.RemoveAllSwap([](const UEdGraphNode* Node)
+	{
+		return !IsValid(Node);
+	});
+
+	TVoxelArray<const UVoxelGraphNode*> Nodes;
+	for (const UEdGraphNode* EdGraphNode : EdGraph->Nodes)
+	{
+		const UVoxelGraphNode* Node = Cast<UVoxelGraphNode>(EdGraphNode);
 		if (!Node ||
 			Node->IsA<UVoxelGraphKnotNode>())
 		{
 			continue;
 		}
-
-		OutGraph.Nodes.Add(AllocNode(Node));
-	}
-
-	for (const auto& It : AllPins)
-	{
-		UEdGraphPin* GraphPin = It.Key;
-		FEditorPin* Pin = It.Value;
-
-		ensure(!GraphPin->ParentPin);
-		ensure(GraphPin->SubPins.Num() == 0);
-		ensure(!GraphPin->bOrphanedPin);
-
-		for (const UEdGraphPin* LinkedTo : GraphPin->LinkedTo)
-		{
-			if (UVoxelGraphKnotNode* Knot = Cast<UVoxelGraphKnotNode>(LinkedTo->GetOwningNode()))
-			{
-				for (const UEdGraphPin* LinkedToKnot : Knot->GetLinkedPins(GraphPin->Direction))
-				{
-					if (ensure(AllPins.Contains(LinkedToKnot)))
-					{
-						Pin->LinkedTo.Add(AllPins[LinkedToKnot]);
-					}
-				}
-				continue;
-			}
-
-			if (ensure(AllPins.Contains(LinkedTo)))
-			{
-				Pin->LinkedTo.Add(AllPins[LinkedTo]);
-			}
-		}
-	}
-
-	for (const FEditorNode* Node : OutGraph.Nodes)
-	{
-		check(Node->GraphNode);
-
-		for (const FEditorPin* Pin : Node->InputPins)
-		{
-			check(Pin->Node == Node);
-			Pin->Check(OutGraph);
-		}
-		for (const FEditorPin* Pin : Node->OutputPins)
-		{
-			check(Pin->Node == Node);
-			Pin->Check(OutGraph);
-		}
-	}
-
-	return true;
-}
-
-void FEditorCompilerUtilities::CheckGraph(const FEditorCompiler& Compiler)
-{
-	for (const UEdGraphNode* Node : Compiler.GetNodesCopy())
-	{
-		if (!ensure(Node))
-		{
-			VOXEL_MESSAGE(Error, "{0} is invalid", Node);
-			return;
-		}
-
-		ensure(Node->HasAllFlags(RF_Transient));
-		ensure(Compiler.GetSourceNode(Node));
+		Nodes.Add(Node);
 
 		for (const UEdGraphPin* Pin : Node->Pins)
 		{
 			if (!ensure(Pin))
 			{
-				VOXEL_MESSAGE(Error, "{0} is invalid", Pin);
-				return;
+				VOXEL_MESSAGE(Error, "Invalid pin on {0}", Node);
+				return {};
+			}
+
+			if (Pin->ParentPin)
+			{
+				if (!ensure(Pin->ParentPin->SubPins.Contains(Pin)))
+				{
+					VOXEL_MESSAGE(Error, "Invalid sub-pin: {0}", Pin);
+					return {};
+				}
+			}
+
+			for (const UEdGraphPin* SubPin : Pin->SubPins)
+			{
+				if (!ensure(SubPin->ParentPin == Pin))
+				{
+					VOXEL_MESSAGE(Error, "Invalid parent pin: {0}", Pin);
+					return {};
+				}
 			}
 
 			for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
 			{
 				if (!ensure(LinkedPin))
 				{
-					VOXEL_MESSAGE(Error, "{0} is invalid", LinkedPin);
-					return;
+					VOXEL_MESSAGE(Error, "Invalid pin linked to {0}", Pin);
+					return {};
 				}
 
 				if (!ensure(LinkedPin->LinkedTo.Contains(Pin)))
 				{
 					VOXEL_MESSAGE(Error, "Link from {0} to {1} is invalid", Pin, LinkedPin);
-					return;
+					return {};
 				}
 			}
 		}
 	}
-}
 
-END_VOXEL_NAMESPACE(Graph)
+	FVoxelRuntimeGraphData Data;
+
+	for (const UEdGraphNode* EdGraphNode : Nodes)
+	{
+		FVoxelRuntimeNode RuntimeNode;
+		RuntimeNode.VoxelNode = INLINE_LAMBDA -> TVoxelInstancedStruct<FVoxelNode>
+		{
+			if (const UVoxelGraphStructNode* GraphNode = Cast<UVoxelGraphStructNode>(EdGraphNode))
+			{
+				return GraphNode->Struct;
+			}
+
+			if (const UVoxelGraphMacroNode* GraphNode = Cast<UVoxelGraphMacroNode>(EdGraphNode))
+			{
+				FVoxelNode_FunctionCall Node;
+				Node.GraphInterface = GraphNode->GraphInterface;
+				Node.Type = GraphNode->Type;
+				Node.FixupPins();
+				return Node;
+			}
+
+			if (const UVoxelGraphParameterNode* GraphNode = Cast<UVoxelGraphParameterNode>(EdGraphNode))
+			{
+				const FVoxelGraphParameter Parameter = GraphNode->GetParameterSafe();
+
+				FVoxelNode_Parameter Node;
+				Node.ParameterName = Parameter.Name;
+				Node.ParameterGuid = Parameter.Guid;
+				Node.GetPin(Node.ValuePin).SetType(Parameter.Type);
+				return Node;
+			}
+
+			if (const UVoxelGraphMacroParameterInputNode* GraphNode = Cast<UVoxelGraphMacroParameterInputNode>(EdGraphNode))
+			{
+				const FVoxelGraphParameter Parameter = GraphNode->GetParameterSafe();
+
+				if (GraphNode->bExposeDefaultPin)
+				{
+					FVoxelNode_FunctionCallInput_WithDefaultPin Node;
+					Node.Name = Parameter.Name;
+					Node.GetPin(Node.DefaultPin).SetType(Parameter.Type);
+					Node.GetPin(Node.ValuePin).SetType(Parameter.Type);
+					return Node;
+				}
+				else
+				{
+					FVoxelNode_FunctionCallInput_WithoutDefaultPin Node;
+					Node.Name = Parameter.Name;
+					Node.DefaultValue = Parameter.DefaultValue;
+					Node.GetPin(Node.ValuePin).SetType(Parameter.Type);
+					return Node;
+				}
+			}
+
+			if (const UVoxelGraphMacroParameterOutputNode* GraphNode = Cast<UVoxelGraphMacroParameterOutputNode>(EdGraphNode))
+			{
+				const FVoxelGraphParameter Parameter = GraphNode->GetParameterSafe();
+
+				FVoxelNode_FunctionCallOutput Node;
+				Node.Name = Parameter.Name;
+				Node.GetPin(Node.ValuePin).SetType(Parameter.Type);
+				return Node;
+			}
+
+			if (const UVoxelGraphLocalVariableDeclarationNode* GraphNode = Cast<UVoxelGraphLocalVariableDeclarationNode>(EdGraphNode))
+			{
+				const FVoxelGraphParameter Parameter = GraphNode->GetParameterSafe();
+
+				FVoxelLocalVariableDeclaration Node;
+				Node.Guid = Parameter.Guid;
+				Node.GetPin(Node.InputPinPin).SetType(Parameter.Type);
+				Node.GetPin(Node.OutputPinPin).SetType(Parameter.Type);
+				return Node;
+			}
+
+			if (const UVoxelGraphLocalVariableUsageNode* GraphNode = Cast<UVoxelGraphLocalVariableUsageNode>(EdGraphNode))
+			{
+				const FVoxelGraphParameter Parameter = GraphNode->GetParameterSafe();
+
+				FVoxelLocalVariableUsage Node;
+				Node.Guid = Parameter.Guid;
+				Node.GetPin(Node.OutputPinPin).SetType(Parameter.Type);
+				return Node;
+			}
+
+			if (EdGraphNode->IsA<UDEPRECATED_VoxelGraphMacroParameterNode>())
+			{
+				// RuntimeGraph will automatically migrated on failure
+				return {};
+			}
+
+			ensure(false);
+			return {};
+		};
+
+		if (RuntimeNode.VoxelNode)
+		{
+			RuntimeNode.StructName = RuntimeNode.VoxelNode.GetScriptStruct()->GetFName();
+		}
+
+		RuntimeNode.EdGraphNodeName = EdGraphNode->GetFName();
+		RuntimeNode.EdGraphNodeTitle = *EdGraphNode->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+
+		ensure(!Data.NodeNameToNode.Contains(RuntimeNode.EdGraphNodeName));
+		Data.NodeNameToNode.Add(RuntimeNode.EdGraphNodeName, RuntimeNode);
+	}
+
+	TMap<const UEdGraphPin*, FVoxelRuntimePinRef> EdGraphPinToPinRef;
+	for (const UVoxelGraphNode* EdGraphNode : Nodes)
+	{
+		FVoxelRuntimeNode& RuntimeNode = Data.NodeNameToNode[EdGraphNode->GetFName()];
+
+		const auto MakePin = [&](const UEdGraphPin* EdGraphPin)
+		{
+			ensure(!EdGraphPin->bOrphanedPin);
+
+			FVoxelRuntimePin RuntimePin;
+			RuntimePin.Type = EdGraphPin->PinType;
+			RuntimePin.PinName = EdGraphPin->PinName;
+
+			if (const UEdGraphPin* ParentPin = EdGraphPin->ParentPin)
+			{
+				const FVoxelPinType Type(ParentPin->PinType);
+				if (ParentPin->Direction == EGPD_Input)
+				{
+					Data.TypeToMakeNode.Add(Type);
+				}
+				else
+				{
+					check(ParentPin->Direction == EGPD_Output);
+					Data.TypeToBreakNode.Add(Type);
+				}
+
+				RuntimePin.ParentPinName = ParentPin->PinName;
+			}
+
+			if (RuntimePin.Type.HasPinDefaultValue())
+			{
+				RuntimePin.DefaultValue = FVoxelPinValue::MakeFromPinDefaultValue(*EdGraphPin);
+			}
+			else
+			{
+				ensure(!EdGraphPin->DefaultObject);
+				ensure(EdGraphPin->DefaultValue.IsEmpty());
+				ensure(EdGraphPin->AutogeneratedDefaultValue.IsEmpty());
+			}
+
+			return RuntimePin;
+		};
+
+		for (const UEdGraphPin* Pin : EdGraphNode->GetInputPins())
+		{
+			if (Pin->bOrphanedPin)
+			{
+				VOXEL_MESSAGE(Warning, "Orphaned pin {0}", Pin);
+				RuntimeNode.Errors.Add("Orphaned pin " + Pin->GetDisplayName().ToString());
+				continue;
+			}
+
+			if (!ensure(!RuntimeNode.InputPins.Contains(Pin->PinName)))
+			{
+				continue;
+			}
+
+			RuntimeNode.InputPins.Add(Pin->PinName, MakePin(Pin));
+			EdGraphPinToPinRef.Add(Pin, FVoxelRuntimePinRef{ EdGraphNode->GetFName(), Pin->PinName, true });
+		}
+		for (const UEdGraphPin* Pin : EdGraphNode->GetOutputPins())
+		{
+			if (Pin->bOrphanedPin)
+			{
+				VOXEL_MESSAGE(Warning, "Orphaned pin {0}", Pin);
+				RuntimeNode.Errors.Add("Orphaned pin " + Pin->GetDisplayName().ToString());
+				continue;
+			}
+
+			if (!ensure(!RuntimeNode.OutputPins.Contains(Pin->PinName)))
+			{
+				continue;
+			}
+
+			RuntimeNode.OutputPins.Add(Pin->PinName, MakePin(Pin));
+			EdGraphPinToPinRef.Add(Pin, FVoxelRuntimePinRef{ EdGraphNode->GetFName(), Pin->PinName, false });
+		}
+	}
+
+	for (auto& It : Data.TypeToMakeNode)
+	{
+		const FVoxelNode* Node = FVoxelNodeLibrary::FindMakeNode(It.Key);
+		if (!ensure(Node))
+		{
+			continue;
+		}
+
+		It.Value = FVoxelInstancedStruct::Make(*Node);
+	}
+	for (auto& It : Data.TypeToBreakNode)
+	{
+		const FVoxelNode* Node = FVoxelNodeLibrary::FindBreakNode(It.Key);
+		if (!ensure(Node))
+		{
+			continue;
+		}
+
+		It.Value = FVoxelInstancedStruct::Make(*Node);
+	}
+
+	// Link the pins once they're all allocated
+	for (const UVoxelGraphNode* EdGraphNode : Nodes)
+	{
+		FVoxelRuntimeNode* RuntimeNode = Data.NodeNameToNode.Find(EdGraphNode->GetFName());
+		if (!ensure(RuntimeNode))
+		{
+			continue;
+		}
+
+		const auto AddPin = [&](const UEdGraphPin* Pin)
+		{
+			if (!ensure(EdGraphPinToPinRef.Contains(Pin)))
+			{
+				return false;
+			}
+
+			FVoxelRuntimePin* RuntimePin = Data.FindPin(EdGraphPinToPinRef[Pin]);
+			if (!ensure(RuntimePin))
+			{
+				return false;
+			}
+
+			for (const UEdGraphPin* LinkedTo : Pin->LinkedTo)
+			{
+				if (LinkedTo->bOrphanedPin)
+				{
+					if (Pin->Direction == EGPD_Input)
+					{
+						RuntimeNode->Errors.Add(Pin->GetDisplayName().ToString() + " is connected to an orphaned pin");
+					}
+					continue;
+				}
+
+				if (UVoxelGraphKnotNode* Knot = Cast<UVoxelGraphKnotNode>(LinkedTo->GetOwningNode()))
+				{
+					for (const UEdGraphPin* LinkedToKnot : Knot->GetLinkedPins(Pin->Direction))
+					{
+						if (LinkedToKnot->bOrphanedPin)
+						{
+							continue;
+						}
+
+						if (ensure(EdGraphPinToPinRef.Contains(LinkedToKnot)))
+						{
+							RuntimePin->LinkedTo.Add(EdGraphPinToPinRef[LinkedToKnot]);
+						}
+					}
+					continue;
+				}
+
+				if (ensure(EdGraphPinToPinRef.Contains(LinkedTo)))
+				{
+					RuntimePin->LinkedTo.Add(EdGraphPinToPinRef[LinkedTo]);
+				}
+			}
+
+			return true;
+		};
+
+		for (const UEdGraphPin* Pin : EdGraphNode->GetInputPins())
+		{
+			if (Pin->bOrphanedPin)
+			{
+				continue;
+			}
+
+			if (!ensure(AddPin(Pin)))
+			{
+				return {};
+			}
+		}
+		for (const UEdGraphPin* Pin : EdGraphNode->GetOutputPins())
+		{
+			if (Pin->bOrphanedPin)
+			{
+				continue;
+			}
+
+			if (!ensure(AddPin(Pin)))
+			{
+				return {};
+			}
+		}
+	}
+
+	for (const UVoxelGraphNode* Node : Nodes)
+	{
+		if (!Node->bEnableDebug)
+		{
+			continue;
+		}
+
+		Data.DebuggedNodes.Add(Node->GetFName());
+	}
+
+	INLINE_LAMBDA
+	{
+		VOXEL_SCOPE_COUNTER("Setup preview");
+
+		TVoxelArray<UEdGraphPin*> PreviewedPins;
+		for (const UVoxelGraphNode* Node : Nodes)
+		{
+			if (!Node->bEnablePreview)
+			{
+				continue;
+			}
+
+			UEdGraphPin* PreviewedPin = Node->FindPin(Node->PreviewedPin);
+			if (!PreviewedPin)
+			{
+				VOXEL_MESSAGE(Warning, "{0}: Invalid pin to preview", Node);
+				continue;
+			}
+
+			PreviewedPins.Add(PreviewedPin);
+		}
+
+		if (PreviewedPins.Num() > 1)
+		{
+			VOXEL_MESSAGE(Warning, "Multiple pins being previewed, resetting");
+
+			for (const UEdGraphPin* PreviewedPin : PreviewedPins)
+			{
+				CastChecked<UVoxelGraphNode>(PreviewedPin->GetOwningNode())->bEnablePreview = false;
+			}
+			return;
+		}
+
+		if (PreviewedPins.Num() == 0)
+		{
+			return;
+		}
+
+		const UEdGraphPin& PreviewedPin = *PreviewedPins[0];
+		UVoxelGraphNode* PreviewedNode = CastChecked<UVoxelGraphNode>(PreviewedPin.GetOwningNode());
+
+		FVoxelInstancedStruct PreviewHandler;
+		for (const FVoxelPinPreviewSettings& PreviewSettings : PreviewedNode->PreviewSettings)
+		{
+			if (PreviewSettings.PinName == PreviewedPin.PinName)
+			{
+				ensure(!PreviewHandler.IsValid());
+				PreviewHandler = PreviewSettings.PreviewHandler;
+			}
+		}
+		if (!PreviewHandler.IsValid())
+		{
+			VOXEL_MESSAGE(Warning, "{0}: Invalid preview settings", PreviewedNode);
+			return;
+		}
+
+		Data.PreviewedPin = FVoxelRuntimePinRef
+		{
+			PreviewedNode->GetFName(),
+			PreviewedPin.PinName,
+			PreviewedPin.Direction == EGPD_Input
+		};
+
+		Data.PreviewedPinType = PreviewedPin.PinType;
+		Data.PreviewHandler = PreviewHandler;
+	};
+
+	return Data;
+}

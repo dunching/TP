@@ -4,7 +4,6 @@
 
 #include "VoxelMinimal.h"
 #include "VoxelBufferStorage.h"
-#include "VoxelBufferInterface.h"
 #include "VoxelComplexBufferStorage.h"
 #include "VoxelBuffer.generated.h"
 
@@ -77,11 +76,11 @@ public:
 public:
 	FORCEINLINE int32 NumTerminalBuffers() const
 	{
-		return PrivateBufferOffsets->Num();
+		return PrivateBufferOffsets.Num();
 	}
 	FORCEINLINE FVoxelTerminalBuffer& GetTerminalBuffer(const int32 Index)
 	{
-		return *reinterpret_cast<FVoxelTerminalBuffer*>(reinterpret_cast<uint8*>(this) + (*PrivateBufferOffsets)[Index]);
+		return *reinterpret_cast<FVoxelTerminalBuffer*>(reinterpret_cast<uint8*>(this) + PrivateBufferOffsets[Index]);
 	}
 	FORCEINLINE const FVoxelTerminalBuffer& GetTerminalBuffer(const int32 Index) const
 	{
@@ -114,11 +113,11 @@ public:
 		};
 		FIterator begin() const
 		{
-			return { Buffer, Buffer->PrivateBufferOffsets->GetData() };
+			return { Buffer, Buffer->PrivateBufferOffsets.GetData() };
 		}
 		FIterator end() const
 		{
-			return { Buffer, Buffer->PrivateBufferOffsets->GetData() + Buffer->PrivateBufferOffsets->Num() };
+			return { Buffer, Buffer->PrivateBufferOffsets.GetData() + Buffer->PrivateBufferOffsets.Num() };
 		}
 	};
 	FORCEINLINE TVoxelTerminalBufferIterator<FVoxelTerminalBuffer> GetTerminalBuffers()
@@ -152,28 +151,33 @@ protected:
 		struct FStatics
 		{
 			FVoxelPinType Type = FVoxelPinType::Make<T>();
-			TVoxelArray<int64> BufferOffsets;
+			TArray<int64> BufferOffsets;
 
 			explicit FStatics(const FVoxelBuffer* Template)
 			{
 				ComputeBuffers(Template, BufferOffsets);
 			}
 		};
-		static const FStatics Statics = FStatics(this);
 
-		PrivateInnerType = Statics.Type;
-		PrivateBufferOffsets = &Statics.BufferOffsets;
+		static const FStatics* Statics = nullptr;
+		if (!Statics)
+		{
+			Statics = new FStatics(this);
+		}
+
+		PrivateInnerType = Statics->Type;
+		PrivateBufferOffsets = Statics->BufferOffsets;
 	}
 
 private:
 	FVoxelPinType PrivateInnerType;
-	const TVoxelArray<int64>* PrivateBufferOffsets = nullptr;
+	TConstVoxelArrayView<int64> PrivateBufferOffsets;
 
 	void UpdateNum();
 
 	static void ComputeBuffers(
 		const FVoxelBuffer* Template,
-		TVoxelArray<int64>& BufferOffsets);
+		TArray<int64>& BufferOffsets);
 
 	friend FVoxelTerminalBuffer;
 	friend FVoxelSimpleTerminalBuffer;
@@ -290,7 +294,7 @@ protected:
 		{
 			FVoxelPinType Type = FVoxelPinType::Make<T>();
 			TSharedRef<TVoxelBufferStorage<T>> Storage = MakeVoxelShared<TVoxelBufferStorage<T>>();
-			TVoxelArray<int64> BufferOffsets = { 0 };
+			TArray<int64> BufferOffsets = { 0 };
 
 			FStatics()
 			{
@@ -300,13 +304,19 @@ protected:
 				ClearSharedRefReferencer(Storage);
 			}
 		};
-		static const FStatics Statics;
 
-		PrivateStorage = Statics.Storage;
+		static const FStatics* Statics = nullptr;
+		if (!Statics)
+		{
+			VOXEL_ALLOW_LEAK_SCOPE();
+			Statics = new FStatics();
+		}
+
+		PrivateStorage = Statics->Storage;
 		PrivateNum = PrivateStorage->Num();
-		PrivateInnerType = Statics.Type;
-		PrivateInnerType = Statics.Type;
-		PrivateBufferOffsets = &Statics.BufferOffsets;
+		PrivateInnerType = Statics->Type;
+		PrivateInnerType = Statics->Type;
+		PrivateBufferOffsets = Statics->BufferOffsets;
 
 		checkVoxelSlow(IsDefault());
 	}

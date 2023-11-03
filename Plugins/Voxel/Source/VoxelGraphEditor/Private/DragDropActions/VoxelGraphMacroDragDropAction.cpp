@@ -5,9 +5,7 @@
 #include "VoxelGraphToolkit.h"
 #include "VoxelMacroLibrary.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void FMacroDragDropAction::HoverTargetChanged()
+void FVoxelGraphMacroDragDropAction::HoverTargetChanged()
 {
 	if (const UEdGraph* EdGraph = GetHoveredGraph())
 	{
@@ -42,7 +40,7 @@ void FMacroDragDropAction::HoverTargetChanged()
 	FVoxelMembersBaseDragDropAction::HoverTargetChanged();
 }
 
-FReply FMacroDragDropAction::DroppedOnPanel(const TSharedRef<SWidget>& Panel, FVector2D ScreenPosition, FVector2D GraphPosition, UEdGraph& EdGraph)
+FReply FVoxelGraphMacroDragDropAction::DroppedOnPanel(const TSharedRef<SWidget>& Panel, FVector2D ScreenPosition, FVector2D GraphPosition, UEdGraph& EdGraph)
 {
 	UVoxelGraph* Graph = WeakMacroGraph.Get();
 	if (!ensure(Graph))
@@ -75,5 +73,3 @@ FReply FMacroDragDropAction::DroppedOnPanel(const TSharedRef<SWidget>& Panel, FV
 
 	return FReply::Handled();
 }
-
-END_VOXEL_NAMESPACE(Graph)

@@ -15,6 +15,8 @@
 #include "GlobalRenderResources.h"
 #include "DataDrivenShaderPlatformInfo.h"
 
+DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelMarchingCubeVertexFactoryBase);
+
 DEFINE_VOXEL_SHADER_HOOK(
 	VoxelMarchingCubeVertexFactory,
 	MaterialVertexParameters,
@@ -165,6 +167,21 @@ void FVoxelMarchingCubeVertexFactoryBase::ModifyCompilationEnvironment(const FVe
 	}
 }
 
+void FVoxelMarchingCubeVertexFactoryBase::GetPSOPrecacheVertexFetchElements(
+	const EVertexInputStreamType VertexInputStreamType,
+	FVertexDeclarationElementList& Elements,
+	const bool bHasVertexNormals)
+{
+	Elements.Add(FVertexElement(0, 0, VET_Float3, 0, 0, false));
+	Elements.Add(FVertexElement(1, 0, VET_UInt, 1, 0, false));
+	Elements.Add(FVertexElement(2, 0, VET_UInt, 2, 0, true));
+
+	if (bHasVertexNormals)
+	{
+		Elements.Add(FVertexElement(3, 0, VET_Float3, 3, 0, false));
+	}
+}
+
 void FVoxelMarchingCubeVertexFactoryBase::InitRHI(UE_503_ONLY(FRHICommandListBase& RHICmdList))
 {
 	FVertexFactory::InitRHI(UE_503_ONLY(RHICmdList));
@@ -221,27 +238,9 @@ IMPLEMENT_VERTEX_FACTORY_TYPE(FVoxelMarchingCubeVertexFactory_WithVertexNormals,
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedPtr<FVoxelMaterialRef> GVoxelMarchingCubeMesh_VoxelVF_DebugMaterial;
-
-VOXEL_CONSOLE_VARIABLE(
-	VOXELGRAPHNODES_API, bool, GVoxelMarchingCubeMesh_VoxelVF_EnableDebug, false,
-	"voxel.DetailTexturesDebug",
-	"");
-
-VOXEL_CONSOLE_SINK(DetailTexturesDebugSink)
-{
-	if (GVoxelMarchingCubeMesh_VoxelVF_EnableDebug &&
-		!GVoxelMarchingCubeMesh_VoxelVF_DebugMaterial)
-	{
-		UMaterialInterface* DebugMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/VoxelPlugin/EditorAssets/M_DetailTexturesDebug.M_DetailTexturesDebug"));
-		ensure(DebugMaterial);
-		GVoxelMarchingCubeMesh_VoxelVF_DebugMaterial = FVoxelMaterialRef::Make(DebugMaterial);
-	}
-}
-
 void FVoxelMarchingCubeMesh::SetTransitionMask_GameThread(uint8 NewTransitionMask)
 {
-	ENQUEUE_RENDER_COMMAND(SetTransitionMask_RenderThread)(MakeWeakPtrLambda(this, [this, NewTransitionMask](FRHICommandList& RHICmdList)
+	VOXEL_ENQUEUE_RENDER_COMMAND(SetTransitionMask_RenderThread)(MakeWeakPtrLambda(this, [this, NewTransitionMask](FRHICommandList& RHICmdList)
 	{
 		SetTransitionMask_RenderThread(RHICmdList, NewTransitionMask);
 	}));
@@ -654,7 +653,7 @@ int64 FVoxelMarchingCubeMesh::GetGpuAllocatedSize() const
 
 TSharedPtr<FVoxelMaterialRef> FVoxelMarchingCubeMesh::GetMaterial() const
 {
-	return GVoxelMarchingCubeMesh_VoxelVF_EnableDebug ? GVoxelMarchingCubeMesh_VoxelVF_DebugMaterial : Material;
+	return Material;
 }
 
 void FVoxelMarchingCubeMesh::Initialize_GameThread()
@@ -724,7 +723,7 @@ void FVoxelMarchingCubeMesh::Initialize_GameThread()
 					return;
 				}
 
-				ENQUEUE_RENDER_COMMAND(UpdateTexture)([VertexFactory = VertexFactory, ResourceA, ResourceB](FRHICommandListImmediate& RHICmdList)
+				VOXEL_ENQUEUE_RENDER_COMMAND(UpdateTexture)([VertexFactory = VertexFactory, ResourceA, ResourceB](FRHICommandListImmediate& RHICmdList)
 				{
 					ensure(ResourceA->GetSizeX() == ResourceB->GetSizeX());
 
@@ -792,7 +791,7 @@ void FVoxelMarchingCubeMesh::Initialize_GameThread()
 					return;
 				}
 
-				ENQUEUE_RENDER_COMMAND(UpdateTexture)([VertexFactory = VertexFactory, Resource](FRHICommandListImmediate& RHICmdList)
+				VOXEL_ENQUEUE_RENDER_COMMAND(UpdateTexture)([VertexFactory = VertexFactory, Resource](FRHICommandListImmediate& RHICmdList)
 				{
 					VertexFactory->Normal_Texture = Resource->GetTexture2DRHI();
 					VertexFactory->Normal_Texture_Size = Resource->GetSizeX();
@@ -841,7 +840,7 @@ void FVoxelMarchingCubeMesh::Initialize_RenderThread(FRHICommandList& RHICmdList
 		FRHIResourceCreateInfo CreateInfo(TEXT("CellTextureCoordinates"), &ResourceArray);
 		CellTextureCoordinatesBuffer->VertexBufferRHI = UE_503_SWITCH(RHICreateVertexBuffer, RHICmdList.CreateVertexBuffer)(
 			CellTextureCoordinates.Num() * sizeof(FVoxelDetailTextureCoordinate),
-			BUF_Static,
+			BUF_Static | BUF_ShaderResource,
 			CreateInfo);
 
 		CellTextureCoordinatesBuffer->ShaderResourceViewRHI = UE_503_SWITCH(RHICreateShaderResourceView, RHICmdList.CreateShaderResourceView)(

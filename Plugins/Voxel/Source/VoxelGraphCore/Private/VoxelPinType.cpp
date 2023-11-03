@@ -2,18 +2,27 @@
 
 #include "VoxelPinType.h"
 #include "VoxelNode.h"
+#include "VoxelSurface.h"
 #include "VoxelExposedSeed.h"
 #include "VoxelBufferBuilder.h"
 #include "VoxelObjectPinType.h"
 #include "VoxelFunctionLibrary.h"
 #include "VoxelPinValueInterface.h"
 #include "Buffer/VoxelBaseBuffers.h"
+#include "VoxelChannelAsset_DEPRECATED.h"
 #include "Engine/Texture2D.h"
 #include "EdGraph/EdGraphPin.h"
 
 #if WITH_EDITOR && VOXEL_DEBUG
 VOXEL_RUN_ON_STARTUP_EDITOR(TestVoxelPinTypes)
 {
+	{
+		FVoxelPinValue Value(FVoxelPinType::Make<TSubclassOf<UObject>>());
+		Value.Get<TSubclassOf<UObject>>() = AActor::StaticClass();
+		ensure(Value.Get<TSubclassOf<AActor>>() == AActor::StaticClass());
+		ensure(Value.Get<TSubclassOf<AVolume>>() == nullptr);
+	}
+
 	for (const FVoxelPinType& Type : FVoxelPinTypeSet::All().GetTypes())
 	{
 		const FVoxelPinValue ExposedValue(Type.GetExposedType());
@@ -23,9 +32,11 @@ VOXEL_RUN_ON_STARTUP_EDITOR(TestVoxelPinTypes)
 		const FEdGraphPinType GraphType = Type.GetEdGraphPinType();
 		ensure(FVoxelPinType(GraphType) == Type);
 
-		if (!Type.IsBufferArray())
+		// Array flag is not preserved when going through K2
+		// K2 only support doubles
+		if (!Type.IsBufferArray() &&
+			!Type.GetInnerType().Is<float>())
 		{
-			// Array flag is not preserved when going through K2
 			const FEdGraphPinType K2Type = Type.GetEdGraphPinType_K2();
 			ensure(FVoxelPinType::MakeFromK2(K2Type) == Type);
 		}
@@ -126,7 +137,8 @@ FVoxelPinType::FVoxelPinType(const FEdGraphPinType& PinType)
 			InternalType = EVoxelPinInternalType::Object;
 			PrivateInternalField = Cast<UField>(PinType.PinSubCategoryObject.Get());
 		}
-		else if (PinType.PinCategory == GetClassFName<FStructProperty>() || (
+		else if (
+			PinType.PinCategory == GetClassFName<FStructProperty>() || (
 			PinType.PinCategory.IsNone() &&
 			PinType.PinSubCategoryObject.IsValid() &&
 			PinType.PinSubCategoryObject->IsA<UScriptStruct>()))
@@ -145,7 +157,14 @@ FVoxelPinType::FVoxelPinType(const FEdGraphPinType& PinType)
 				UScriptStruct* Struct = Cast<UScriptStruct>(PinType.PinSubCategoryObject.Get());
 				if (ensure(Struct))
 				{
-					*this = MakeStruct(Struct);
+					if (Struct->IsChildOf(FVoxelBuffer::StaticStruct()))
+					{
+						*this = TVoxelInstancedStruct<FVoxelBuffer>(Struct)->GetInnerType().GetBufferType();
+					}
+					else
+					{
+						*this = MakeStruct(Struct);
+					}
 				}
 			}
 		}
@@ -181,6 +200,18 @@ FVoxelPinType::FVoxelPinType(const FEdGraphPinType& PinType)
 			{
 				*this = MakeEnum(Enum);
 			}
+		}
+	}
+
+	if (GetInnerType().Is<FVoxelDistance_DEPRECATED>())
+	{
+		if (IsBuffer())
+		{
+			*this = Make<FVoxelSurface>();
+		}
+		else
+		{
+			*this = Make<float>();
 		}
 	}
 
@@ -546,12 +577,8 @@ FEdGraphPinType FVoxelPinType::GetEdGraphPinType_K2() const
 		PinType.PinCategory = STATIC_FNAME("bool");
 		return PinType;
 	}
+	// Always use double with blueprints
 	case EVoxelPinInternalType::Float:
-	{
-		PinType.PinCategory = STATIC_FNAME("real");
-		PinType.PinSubCategory = STATIC_FNAME("float");
-		return PinType;
-	}
 	case EVoxelPinInternalType::Double:
 	{
 		PinType.PinCategory = STATIC_FNAME("real");
@@ -645,16 +672,8 @@ bool FVoxelPinType::CanBeCastedTo(const FVoxelPinType& Other) const
 	}
 	case EVoxelPinInternalType::Class:
 	{
-		const UClass* Class = Cast<UClass>(GetInternalField());
-		const UClass* OtherClass = Cast<UClass>(Other.GetInternalField());
-
-		if (!ensureVoxelSlow(Class) ||
-			!ensureVoxelSlow(OtherClass))
-		{
-			return false;
-		}
-
-		return Class->IsChildOf(OtherClass);
+		// Classes can always be casted, check is done in TSubclassOf::Get
+		return true;
 	}
 	case EVoxelPinInternalType::Object:
 	{
@@ -685,11 +704,44 @@ bool FVoxelPinType::CanBeCastedTo(const FVoxelPinType& Other) const
 	}
 }
 
-bool FVoxelPinType::CanBeCastedTo_CheckArray(const FVoxelPinType& Other) const
+bool FVoxelPinType::CanBeCastedTo_K2(const FVoxelPinType& Other) const
 {
-	return
-		CanBeCastedTo(Other) &&
-		bIsBufferArray == Other.bIsBufferArray;
+	if (IsBuffer() == Other.IsBuffer() &&
+		InternalType == EVoxelPinInternalType::Float &&
+		Other.InternalType == EVoxelPinInternalType::Double)
+	{
+		return true;
+	}
+
+	return CanBeCastedTo(Other);
+}
+
+bool FVoxelPinType::CanBeCastedTo_Schema(const FVoxelPinType& Other) const
+{
+	if (bIsBufferArray != Other.bIsBufferArray)
+	{
+		return false;
+	}
+
+	if (!CanBeCastedTo(Other) &&
+		// Inner to buffer
+		!CanBeCastedTo(Other.GetInnerType()))
+	{
+		return false;
+	}
+
+	// Do strict inheritance checks for the schema (ie, the user UI)
+	// At runtime we allow implicit conversions between classes as TSubclassOf::Get does the inheritance checks
+	if (InternalType == EVoxelPinInternalType::Class)
+	{
+		check(Other.InternalType == EVoxelPinInternalType::Class);
+
+		const UClass* Class = CastChecked<UClass>(GetInternalField());
+		const UClass* OtherClass = CastChecked<UClass>(Other.GetInternalField());
+		return Class->IsChildOf(OtherClass);
+	}
+
+	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -704,6 +756,14 @@ using FVoxelPinTypeCustomVersion = DECLARE_VOXEL_VERSION
 
 constexpr FVoxelGuid GVoxelPinTypeCustomVersionGUID = MAKE_VOXEL_GUID("2A19FDEF616A4DC493F3266E3B35047B");
 FCustomVersionRegistration GRegisterVoxelPinTypeCustomVersionGUID(GVoxelPinTypeCustomVersionGUID, FVoxelPinTypeCustomVersion::LatestVersion, TEXT("VoxelPinTypeVer"));
+
+void FVoxelPinType::PostSerialize(const FArchive& Ar)
+{
+	if (IsValid())
+	{
+		*this = FVoxelPinType(GetEdGraphPinType());
+	}
+}
 
 bool FVoxelPinType::Serialize(const FStructuredArchive::FSlot Slot)
 {
@@ -779,7 +839,7 @@ FVoxelPinType FVoxelPinType::GetPinDefaultValueType() const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FVoxelGraphSeedStatics
+class FVoxelGraphSeedStatics : public FVoxelSingleton
 {
 public:
 	FVoxelSeed Hash(const FVoxelExposedSeed& Seed)
@@ -815,7 +875,7 @@ private:
 	FVoxelFastCriticalSection CriticalSection;
 	TVoxelAddOnlyMap<FVoxelSeed, FString> LookupMap;
 };
-FVoxelGraphSeedStatics GVoxelGraphSeedStatics;
+FVoxelGraphSeedStatics* GVoxelGraphSeedStatics = MakeVoxelSingleton(FVoxelGraphSeedStatics);
 
 FVoxelRuntimePinValue FVoxelPinType::MakeRuntimeValue(
 	const FVoxelPinType& RuntimeType,
@@ -824,7 +884,7 @@ FVoxelRuntimePinValue FVoxelPinType::MakeRuntimeValue(
 	ensure(IsInGameThread() || IsInAsyncLoadingThread());
 
 	if (!ensure(!RuntimeType.IsWildcard()) ||
-		!ensure(RuntimeType.GetExposedType() == ExposedValue.GetType()))
+		!ensure(ExposedValue.GetType().CanBeCastedTo(RuntimeType.GetExposedType())))
 	{
 		return {};
 	}
@@ -853,7 +913,7 @@ FVoxelRuntimePinValue FVoxelPinType::MakeRuntimeValue(
 
 	if (ExposedValue.Is<FVoxelExposedSeed>())
 	{
-		const FVoxelSeed Seed = GVoxelGraphSeedStatics.Hash(ExposedValue.Get<FVoxelExposedSeed>());
+		const FVoxelSeed Seed = GVoxelGraphSeedStatics->Hash(ExposedValue.Get<FVoxelExposedSeed>());
 		return FVoxelRuntimePinValue::Make(Seed);
 	}
 
@@ -939,7 +999,7 @@ FVoxelPinValue FVoxelPinType::MakeExposedValue(
 
 		if (bIsArray)
 		{
-			FVoxelPinValue ExposedValue(RuntimeValue.GetType().GetExposedType());
+			FVoxelPinValue ExposedValue(RuntimeValue.GetType().WithBufferArray(true).GetExposedType());
 			for (int32 Index = 0; Index < Buffer.Num(); Index++)
 			{
 				const FVoxelRuntimePinValue InnerValue = Buffer.GetGeneric(Index).WithType(RuntimeValue.GetType().GetInnerType());
@@ -961,7 +1021,7 @@ FVoxelPinValue FVoxelPinType::MakeExposedValue(
 
 	if (RuntimeValue.Is<FVoxelSeed>())
 	{
-		const FVoxelExposedSeed Seed = GVoxelGraphSeedStatics.Lookup(RuntimeValue.Get<FVoxelSeed>());
+		const FVoxelExposedSeed Seed = GVoxelGraphSeedStatics->Lookup(RuntimeValue.Get<FVoxelSeed>());
 		return FVoxelPinValue::Make(Seed);
 	}
 
@@ -1036,6 +1096,8 @@ struct FVoxelPinTypeSetRegistry
 	TVoxelSet<FVoxelPinType> AllUniformsAndBufferArrays;
 	TVoxelSet<FVoxelPinType> AllExposedTypes;
 	TVoxelSet<FVoxelPinType> AllMaterials;
+	TVoxelSet<FVoxelPinType> AllEnums;
+	TVoxelSet<FVoxelPinType> AllObjects;
 
 	FVoxelPinTypeSetRegistry()
 	{
@@ -1146,10 +1208,21 @@ struct FVoxelPinTypeSetRegistry
 			AllUniformsAndBufferArrays.Add(Type.GetInnerType());
 			AllUniformsAndBufferArrays.Add(Type.GetBufferType().WithBufferArray(true));
 			AllExposedTypes.Add(Type.GetExposedType());
+
+			if (Type.GetInnerExposedType().IsObject())
+			{
+				AllObjects.Add(Type.GetInnerType());
+				AllObjects.Add(Type.GetBufferType().WithBufferArray(false));
+			}
 		}
 
 		AllMaterials = AllExposedTypes;
 		AllMaterials.Add(FVoxelPinType::Make<UTexture2D>());
+
+		ForEachObjectOfClass<UEnum>([&](UEnum* Enum)
+		{
+			AllEnums.Add(FVoxelPinType::MakeEnum(Enum));
+		});
 	}
 };
 
@@ -1164,6 +1237,12 @@ const TVoxelSet<FVoxelPinType>& FVoxelPinTypeSet::GetTypes() const
 	if (!Registry)
 	{
 		Registry = new FVoxelPinTypeSetRegistry();
+
+		GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
+		{
+			delete Registry;
+			Registry = nullptr;
+		});
 	}
 
 	switch (SetType)
@@ -1176,6 +1255,8 @@ const TVoxelSet<FVoxelPinType>& FVoxelPinTypeSet::GetTypes() const
 	case EVoxelPinTypeSetType::AllUniformsAndBufferArrays: return Registry->AllUniformsAndBufferArrays;
 	case EVoxelPinTypeSetType::AllExposed: return Registry->AllExposedTypes;
 	case EVoxelPinTypeSetType::AllMaterials: return Registry->AllMaterials;
+	case EVoxelPinTypeSetType::AllEnums: return Registry->AllEnums;
+	case EVoxelPinTypeSetType::AllObjects: return Registry->AllObjects;
 	}
 }
 

@@ -1,52 +1,70 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Point/VoxelPointHandle.h"
-#include "VoxelSpawnable.h"
+#include "Point/VoxelPointSet.h"
+#include "VoxelRuntime.h"
+#include "VoxelExecNode.h"
 
 TSharedPtr<FVoxelRuntime> FVoxelPointHandle::GetRuntime(FString* OutError) const
 {
-	return SpawnableRef.MergeSpawnableRef.GetRuntime(OutError);
+	return ChunkRef.ChunkProviderRef.GetRuntime(OutError);
 }
 
 bool FVoxelPointHandle::GetAttributes(
-	TVoxelMap<FName, FVoxelPinValue>& OutAttributes,
+	TVoxelMap<FName, FVoxelPinValue>& InOutAttributes,
 	FString* OutError) const
 {
-	const TSharedPtr<FVoxelSpawnable> Spawnable = SpawnableRef.Resolve(OutError);
-	if (!Spawnable.IsValid())
+	VOXEL_FUNCTION_COUNTER();
+
+	const TSharedPtr<const FVoxelPointSet> PointSet = ChunkRef.GetPoints(OutError);
+	if (!PointSet)
 	{
+		ensure(!OutError || !OutError->IsEmpty());
 		return false;
 	}
 
-	TVoxelArray<FVoxelPointId> PointIds;
-	PointIds.Add(PointId);
-
-	TVoxelMap<FName, TSharedPtr<const FVoxelBuffer>> Attributes;
-	if (!Spawnable->GetPointAttributes(PointIds, Attributes))
+	const int32 Index = PointSet->GetPointIdToIndex().Find(PointId);
+	if (Index == -1)
 	{
 		if (OutError)
 		{
-			*OutError = "Failed to get attributes";
+			*OutError = "Failed to find matching point id";
 		}
 		return false;
 	}
 
-	ensure(Attributes.Num() > 0);
-	for (const auto& It : Attributes)
+	for (auto& It : InOutAttributes)
 	{
-		ensure(It.Value->Num() == 1);
+		const TSharedPtr<const FVoxelBuffer> Buffer = PointSet->Find(It.Key);
+		if (!Buffer)
+		{
+			continue;
+		}
 
-		const FVoxelRuntimePinValue RuntimeValue = It.Value->GetGeneric(0);
+		const FVoxelRuntimePinValue RuntimeValue = Buffer->GetGeneric(Index);
 		const FVoxelPinValue ExposedValue = FVoxelPinType::MakeExposedValue(RuntimeValue, false);
 		if (!ensure(ExposedValue.IsValid()))
 		{
 			continue;
 		}
 
-		OutAttributes.Add(It.Key, ExposedValue);
+		It.Value = ExposedValue;
 	}
-
 	return true;
+}
+
+bool FVoxelPointHandle::Serialize(FArchive& Ar)
+{
+	VOXEL_FUNCTION_COUNTER();
+
+	Ar << ChunkRef;
+	Ar << PointId.PointId;
+	return true;
+}
+
+bool FVoxelPointHandle::Identical(const FVoxelPointHandle* Other, uint32 PortFlags) const
+{
+	return *this == *Other;
 }
 
 bool FVoxelPointHandle::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess)
@@ -75,7 +93,7 @@ bool FVoxelPointHandle::NetSerializeImpl(FArchive& Ar, UPackageMap& Map)
 			return true;
 		}
 
-		if (!ensure(SpawnableRef.NetSerialize(Ar, Map)))
+		if (!ensure(ChunkRef.NetSerialize(Ar, Map)))
 		{
 			return false;
 		}
@@ -94,13 +112,12 @@ bool FVoxelPointHandle::NetSerializeImpl(FArchive& Ar, UPackageMap& Map)
 			return true;
 		}
 
-		if (!ensure(SpawnableRef.NetSerialize(Ar, Map)))
+		if (!ensure(ChunkRef.NetSerialize(Ar, Map)))
 		{
 			return false;
 		}
 
 		Ar << PointId.PointId;
-
 		return true;
 	}
 	else

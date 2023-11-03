@@ -92,7 +92,10 @@ public:
 			ensureMsgf(false, TEXT("%s"), *Error);
 		}
 	}
-	bool Set(const FName Name, const FVoxelPinValue& Value, FString* OutError = nullptr);
+	bool Set(
+		FName Name,
+		FVoxelPinValue Value,
+		FString* OutError = nullptr);
 
 private:
 	FSharedVoidPtr DelegatePtr;

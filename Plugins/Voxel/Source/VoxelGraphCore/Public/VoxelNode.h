@@ -11,7 +11,6 @@
 class UVoxelGraph;
 class IVoxelSubsystem;
 class FVoxelNodeDefinition;
-struct FVoxelCompiledNode;
 
 enum class EVoxelPinFlags : uint32
 {
@@ -21,7 +20,18 @@ enum class EVoxelPinFlags : uint32
 };
 ENUM_CLASS_FLAGS(EVoxelPinFlags);
 
-struct FVoxelPinMetadata
+struct FVoxelPinMetadataFlags
+{
+	bool bArrayPin = false;
+	bool bVirtualPin = false;
+	bool bConstantPin = false;
+	bool bOptionalPin = false;
+	bool bDisplayLast = false;
+	bool bNoDefault = false;
+	bool bShowInDetail = false;
+};
+
+struct FVoxelPinMetadata : FVoxelPinMetadataFlags
 {
 #if WITH_EDITOR
 	FString DisplayName;
@@ -31,13 +41,6 @@ struct FVoxelPinMetadata
 	int32 Line = 0;
 	UScriptStruct* Struct = nullptr;
 #endif
-
-	bool bArrayPin = false;
-	bool bVirtualPin = false;
-	bool bOptionalPin = false;
-	bool bDisplayLast = false;
-	bool bNoDefault = false;
-	bool bShowInDetail = false;
 
 	UClass* BaseClass = nullptr;
 };
@@ -275,20 +278,18 @@ public:
 		return bIsCallNode;
 	}
 
-	TSharedRef<const FVoxelComputeValue> GetCompute(const FVoxelPinRef& Pin) const;
-	FVoxelCachedValueFactory MakeCachedValueFactory(const FVoxelPinRef& Pin) const;
+	TSharedRef<const FVoxelComputeValue> GetCompute(
+		const FVoxelPinRef& Pin,
+		const TSharedRef<FVoxelQueryContext>& Context) const;
+
 	FVoxelDynamicValueFactory MakeDynamicValueFactory(const FVoxelPinRef& Pin) const;
 
-	template<typename T>
-	TSharedRef<const TVoxelComputeValue<T>> GetCompute(const TVoxelPinRef<T>& Pin) const
+	template<typename T, typename = typename TEnableIf<!std::is_same_v<T, FVoxelWildcard> && !std::is_same_v<T, FVoxelWildcardBuffer>>::Type>
+	TSharedRef<const TVoxelComputeValue<T>> GetCompute(
+		const TVoxelPinRef<T>& Pin,
+		const TSharedRef<FVoxelQueryContext>& Context) const
 	{
-		return ReinterpretCastRef<TSharedRef<const TVoxelComputeValue<T>>>(this->GetCompute(FVoxelPinRef(Pin)));
-	}
-
-	template<typename T>
-	TVoxelCachedValueFactory<T> MakeCachedValueFactory(const TVoxelPinRef<T>& Pin) const
-	{
-		return TVoxelDynamicValueFactory<T>(this->MakeCachedValueFactory(FVoxelPinRef(Pin)));
+		return ReinterpretCastSharedPtr<const TVoxelComputeValue<T>>(this->GetCompute(FVoxelPinRef(Pin), Context));
 	}
 	template<typename T>
 	TVoxelDynamicValueFactory<T> MakeDynamicValueFactory(const TVoxelPinRef<T>& Pin) const
@@ -303,6 +304,7 @@ public:
 		const bool bIsInput;
 		const FName StatName;
 		const FVoxelPinRuntimeId PinId;
+		const FVoxelPinMetadataFlags Metadata;
 
 		TSharedPtr<const FVoxelComputeValue> Compute;
 
@@ -310,11 +312,16 @@ public:
 			const FVoxelPinType& Type,
 			const bool bIsInput,
 			const FName StatName,
-			const FVoxelGraphPinRef& PinRef);
+			const FVoxelGraphPinRef& PinRef,
+			const FVoxelPinMetadataFlags& Metadata);
 	};
 	const FPinData& GetPinData(const FName PinName) const
 	{
 		return *PinDatas[PinName];
+	}
+	const TVoxelMap<FName, TSharedPtr<FPinData>>& GetPinDatas() const
+	{
+		return PinDatas;
 	}
 
 private:
@@ -374,15 +381,9 @@ struct TVoxelNodeRuntimeForward : public NodeType
 	}
 
 	template<typename T, typename = typename TEnableIf<TIsDerivedFrom<T, FVoxelPinRef>::Value>::Type>
-	FORCEINLINE auto GetCompute(const T& Pin) const -> decltype(auto)
+	FORCEINLINE auto GetCompute(const T& Pin, const TSharedRef<FVoxelQueryContext>& Context) const -> decltype(auto)
 	{
-		return GetNodeRuntime().GetCompute(Pin);
-	}
-
-	template<typename T, typename = typename TEnableIf<TIsDerivedFrom<T, FVoxelPinRef>::Value>::Type>
-	FORCEINLINE auto MakeCachedValueFactory(const T& Pin) const -> decltype(auto)
-	{
-		return GetNodeRuntime().MakeCachedValueFactory(Pin);
+		return GetNodeRuntime().GetCompute(Pin, Context);
 	}
 	template<typename T, typename = typename TEnableIf<TIsDerivedFrom<T, FVoxelPinRef>::Value>::Type>
 	FORCEINLINE auto MakeDynamicValueFactory(const T& Pin) const -> decltype(auto)
@@ -557,7 +558,7 @@ private:
 public:
 #if WITH_EDITOR
 	using FDefinition = FVoxelNodeDefinition;
-	virtual TSharedRef<IVoxelNodeDefinition> GetNodeDefinition();
+	virtual TSharedRef<FVoxelNodeDefinition> GetNodeDefinition();
 #endif
 
 #if WITH_EDITOR
@@ -935,6 +936,8 @@ public:
 	{
 	}
 
+	virtual void Initialize(UEdGraphNode& EdGraphNode) {}
+
 	virtual TSharedPtr<const FNode> GetInputs() const override;
 	virtual TSharedPtr<const FNode> GetOutputs() const override;
 	TSharedPtr<const FNode> GetPins(const bool bInput) const;
@@ -963,7 +966,7 @@ public:
 
 #if WITH_EDITOR
 #define IMPL_GENERATED_VOXEL_NODE_EDITOR_BODY() \
-	virtual TSharedRef<IVoxelNodeDefinition> GetNodeDefinition() override { return MakeVoxelShared<FDefinition>(*this); }
+	virtual TSharedRef<FVoxelNodeDefinition> GetNodeDefinition() override { return MakeVoxelShared<FDefinition>(*this); }
 #else
 #define IMPL_GENERATED_VOXEL_NODE_EDITOR_BODY()
 #endif
@@ -975,9 +978,14 @@ public:
 namespace FVoxelPinMetadataBuilder
 {
 	struct ArrayPin {};
+	// If the sub-graph changes, the value will update but this node won't be re-created
 	struct VirtualPin {};
+	// For exec nodes only. If set, the pin value will be computed before Create is called
+	// Implies VirtualPin
+	struct ConstantPin {};
 	struct OptionalPin {};
 	struct DisplayLast {};
+	// Will error out if pin is unlinked
 	struct NoDefault {};
 	struct ShowInDetail {};
 	struct AdvancedDisplay {};
@@ -1054,6 +1062,13 @@ namespace FVoxelPinMetadataBuilder
 		{
 			ensure(!Metadata.bVirtualPin);
 			Metadata.bVirtualPin = true;
+		}
+		static void MakeImpl(FVoxelPinMetadata& Metadata, ConstantPin)
+		{
+			ensure(!Metadata.bVirtualPin);
+			Metadata.bVirtualPin = true;
+			ensure(!Metadata.bConstantPin);
+			Metadata.bConstantPin = true;
 		}
 		static void MakeImpl(FVoxelPinMetadata& Metadata, OptionalPin)
 		{

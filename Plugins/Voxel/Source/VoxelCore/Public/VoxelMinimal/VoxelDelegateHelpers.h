@@ -79,11 +79,11 @@ struct FVoxelDelegateUtilities
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-template<typename, typename>
+template<typename, typename, typename>
 class TSharedPtrLambdaDelegateInstance;
 
-template<typename ReturnType, typename... ArgTypes>
-class TSharedPtrLambdaDelegateInstance<ReturnType, TVoxelTypes<ArgTypes...>> final : public IBaseDelegateInstance<ReturnType(ArgTypes...), FDefaultDelegateUserPolicy>
+template<typename UserPolicy, typename ReturnType, typename... ArgTypes>
+class TSharedPtrLambdaDelegateInstance<UserPolicy, ReturnType, TVoxelTypes<ArgTypes...>> final : public IBaseDelegateInstance<ReturnType(ArgTypes...), UserPolicy>
 {
 public:
 	const FDelegateHandle Handle = FDelegateHandle(FDelegateHandle::GenerateNewHandle);
@@ -193,13 +193,22 @@ FORCEINLINE auto MakeLambdaDelegate(LambdaType Lambda)
 	return TDelegate<typename TVoxelLambdaInfo<LambdaType>::FuncType>::CreateLambda(MoveTemp(Lambda));
 }
 
-template<typename T, typename LambdaType>
+template<typename UserPolicy = FDefaultDelegateUserPolicy, typename T, typename LambdaType>
 FORCEINLINE auto MakeWeakPtrDelegate(const T& Ptr, LambdaType Lambda)
 {
 	using Info = TVoxelLambdaInfo<LambdaType>;
-	TDelegate<typename Info::FuncType> Delegate;
-	TSharedPtrLambdaDelegateInstance<typename Info::ReturnType, typename Info::ArgTypes>::Create(Delegate, MakeWeakVoidPtr(MakeWeakPtr(Ptr)), MoveTemp(Lambda));
+	TDelegate<typename Info::FuncType, UserPolicy> Delegate;
+	TSharedPtrLambdaDelegateInstance<
+		UserPolicy,
+		typename Info::ReturnType,
+		typename Info::ArgTypes>::Create(Delegate, MakeWeakVoidPtr(MakeWeakPtr(Ptr)), MoveTemp(Lambda));
 	return Delegate;
+}
+
+template<typename T, typename LambdaType>
+FORCEINLINE auto MakeTSWeakPtrDelegate(const T& Ptr, LambdaType Lambda)
+{
+	return MakeWeakPtrDelegate<FDefaultTSDelegateUserPolicy>(Ptr, MoveTemp(Lambda));
 }
 
 ///////////////////////////////////////////////////////////////////////////////

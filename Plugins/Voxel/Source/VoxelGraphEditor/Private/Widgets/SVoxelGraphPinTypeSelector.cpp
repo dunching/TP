@@ -3,7 +3,6 @@
 #include "Widgets/SVoxelGraphPinTypeSelector.h"
 #include "VoxelSurface.h"
 #include "VoxelChannel.h"
-#include "VoxelSpawnable.h"
 #include "VoxelGraphVisuals.h"
 #include "Point/VoxelPointSet.h"
 #include "SListViewSelectorDropdownMenu.h"
@@ -364,7 +363,6 @@ void SVoxelPinTypeSelector::FillTypesList()
 				!ExposedType.Is<FTransform>() &&
 				!ExposedType.Is<FVoxelSurface>() &&
 				!ExposedType.Is<FVoxelPointSet>() &&
-				!ExposedType.Is<FVoxelSpawnable>() &&
 				!ExposedType.Is<FVoxelChannelName>())
 			{
 				TargetCategory = "Structs";

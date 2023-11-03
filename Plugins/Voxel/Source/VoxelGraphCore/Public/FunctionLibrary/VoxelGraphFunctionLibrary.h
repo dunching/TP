@@ -3,6 +3,7 @@
 #pragma once
 
 #include "VoxelMinimal.h"
+#include "VoxelChannel.h"
 #include "Buffer/VoxelBaseBuffers.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "VoxelGraphFunctionLibrary.generated.h"
@@ -50,6 +51,38 @@ public:
 		TConstVoxelArrayView<FVector3f> Positions,
 		int32 LOD = 0,
 		float GradientStep = 100.f);
+
+public:
+	static TSharedPtr<FVoxelBrushRef> RegisterBrush(
+		const UWorld* World,
+		FName Channel,
+		FName DebugName,
+		const FVoxelPinType& Type,
+		FVoxelComputeValue Compute,
+		const FVoxelBox& LocalBounds,
+		const FVoxelTransformRef& LocalToWorld,
+		const FVoxelBrushPriority& Priority);
+
+	template<typename T>
+	static TSharedPtr<FVoxelBrushRef> RegisterBrush(
+		const UWorld* World,
+		const FName Channel,
+		const FName DebugName,
+		TVoxelComputeValue<T> Compute,
+		const FVoxelBox& LocalBounds = FVoxelBox::Infinite,
+		const FVoxelTransformRef& LocalToWorld = FVoxelTransformRef::Identity(),
+		const FVoxelBrushPriority& Priority = FVoxelBrushPriority::Max())
+	{
+		return UVoxelGraphFunctionLibrary::RegisterBrush(
+			World,
+			Channel,
+			DebugName,
+			FVoxelPinType::Make<T>(),
+			MoveTemp(ReinterpretCastRef<FVoxelComputeValue>(Compute)),
+			LocalBounds,
+			LocalToWorld,
+			Priority);
+	}
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "Voxel", meta = (WorldContext = "WorldContextObject"))

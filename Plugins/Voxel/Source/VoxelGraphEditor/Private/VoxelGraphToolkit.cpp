@@ -1,37 +1,36 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelGraphToolkit.h"
 #include "VoxelNode.h"
+#include "VoxelNodeStats.h"
 #include "VoxelEdGraph.h"
+#include "VoxelRuntimeGraph.h"
 #include "VoxelGraph.h"
 #include "VoxelGraphSchema.h"
 #include "VoxelGraphSearchManager.h"
 #include "Widgets/SVoxelGraphSearch.h"
 #include "Widgets/SVoxelGraphMembers.h"
 #include "Widgets/SVoxelGraphPreview.h"
-#include "VoxelGraphCompilerUtilities.h"
-#include "VoxelGraphEditorCompiler.h"
+#include "Widgets/SVoxelGraphMessages.h"
 #include "Nodes/VoxelGraphKnotNode.h"
 #include "Nodes/VoxelGraphStructNode.h"
-#include "Nodes/VoxelGraphParameterNode.h"
-#include "Nodes/VoxelGraphLocalVariableNode.h"
 #include "Nodes/VoxelGraphMacroParameterNode.h"
 #include "Customizations/VoxelGraphNodeCustomization.h"
 #include "Customizations/VoxelGraphPreviewSettingsCustomization.h"
 #include "Customizations/VoxelGraphParameterSelectionCustomization.h"
 
 #include "SGraphPanel.h"
-#include "MessageLogModule.h"
-#include "IMessageLogListing.h"
-#include "VoxelGraphMessages.h"
 
 class FVoxelGraphCommands : public TVoxelCommands<FVoxelGraphCommands>
 {
 public:
+	TSharedPtr<FUICommandInfo> Compile;
+	TSharedPtr<FUICommandInfo> CompileAll;
 	TSharedPtr<FUICommandInfo> EnableStats;
 	TSharedPtr<FUICommandInfo> FindInGraph;
 	TSharedPtr<FUICommandInfo> FindInGraphs;
 	TSharedPtr<FUICommandInfo> ReconstructAllNodes;
+	TSharedPtr<FUICommandInfo> ToggleDebug;
 	TSharedPtr<FUICommandInfo> TogglePreview;
 
 	virtual void RegisterCommands() override;
@@ -41,23 +40,47 @@ DEFINE_VOXEL_COMMANDS(FVoxelGraphCommands);
 
 void FVoxelGraphCommands::RegisterCommands()
 {
-	VOXEL_UI_COMMAND(EnableStats, "Enable Stats", "Enable stats)", EUserInterfaceActionType::ToggleButton, FInputChord());
+	VOXEL_UI_COMMAND(Compile, "Compile", "Recompile the graph, done automatically whenever the graph is changed", EUserInterfaceActionType::Button, FInputChord());
+	VOXEL_UI_COMMAND(CompileAll, "Compile All", "Recompile all graphs and open all the graphs with errors or warnings", EUserInterfaceActionType::Button, FInputChord());
+	VOXEL_UI_COMMAND(EnableStats, "Enable Stats", "Enable stats", EUserInterfaceActionType::ToggleButton, FInputChord());
 	VOXEL_UI_COMMAND(FindInGraph, "Find", "Finds references to functions, variables, and pins in the current Graph (use Ctrl+Shift+F to search in all Graphs)", EUserInterfaceActionType::Button, FInputChord(EModifierKey::Control, EKeys::F));
 	VOXEL_UI_COMMAND(FindInGraphs, "Find in Graphs", "Find references to functions and variables in ALL Graphs", EUserInterfaceActionType::Button, FInputChord(EModifierKey::Control | EModifierKey::Shift, EKeys::F));
 	VOXEL_UI_COMMAND(ReconstructAllNodes, "Reconstruct all nodes", "Reconstructs all nodes in the graph", EUserInterfaceActionType::Button, FInputChord());
-	VOXEL_UI_COMMAND(TogglePreview, "Toggle Preview", "Toggle node preview", EUserInterfaceActionType::Button, FInputChord(EKeys::D));
+	VOXEL_UI_COMMAND(ToggleDebug, "Toggle Debug", "Toggle node debug", EUserInterfaceActionType::Button, FInputChord(EKeys::D));
+	VOXEL_UI_COMMAND(TogglePreview, "Toggle Preview", "Toggle node preview", EUserInterfaceActionType::Button, FInputChord(EKeys::R));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TObjectPtr<UEdGraph> FVoxelGraphToolkit::CreateGraph(UVoxelGraph* Owner)
+void FVoxelGraphToolkit::FixupGraph(UVoxelGraph* Graph)
 {
-	UVoxelEdGraph* Graph = NewObject<UVoxelEdGraph>(Owner, NAME_None, RF_Transactional);
-	Graph->Schema = UVoxelGraphSchema::StaticClass();
-	Graph->WeakToolkit = SharedThis(this);
-	return Graph;
+	VOXEL_FUNCTION_COUNTER();
+
+	if (!ensure(Graph))
+	{
+		return;
+	}
+
+	if (!Graph->MainEdGraph)
+	{
+		Graph->MainEdGraph = NewObject<UVoxelEdGraph>(Graph, NAME_None, RF_Transactional);
+	}
+
+	UVoxelEdGraph* EdGraph = CastChecked<UVoxelEdGraph>(Graph->MainEdGraph);
+	EdGraph->Schema = UVoxelGraphSchema::StaticClass();
+	EdGraph->SetToolkit(SharedThis(this));
+	EdGraph->MigrateAndReconstructAll();
+
+	Graph->OnParametersChanged.RemoveAll(this);
+	Graph->OnParametersChanged.AddSP(this, &FVoxelGraphToolkit::FixupGraphParameters);
+
+	Graph->GetRuntimeGraph().OnMessagesChanged.RemoveAll(this);
+	Graph->GetRuntimeGraph().OnMessagesChanged.Add(MakeWeakPtrDelegate(this, [=]
+	{
+		bMessageUpdateQueued = true;
+	}));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -68,126 +91,15 @@ void FVoxelGraphToolkit::Initialize()
 {
 	Super::Initialize();
 
-	VOXEL_USE_NAMESPACE(Graph);
-
-	if (!Asset->MainEdGraph)
-	{
-		Asset->MainEdGraph = CreateGraph(Asset);
-	}
-
-	for (const UVoxelGraph* Graph : Asset->GetAllGraphs())
-	{
-		Graph->OnParametersChanged.AddSP(this, &FVoxelGraphToolkit::FixupGraphParameters);
-	}
-
-	FVoxelMessages::OnNodeMessageLogged.Add(MakeWeakPtrDelegate(this, [=](const UEdGraph* Graph, const TSharedRef<FTokenizedMessage>& Message)
-	{
-		check(IsInGameThread());
-
-		if (!Graph ||
-			Asset != Graph->GetOuter() ||
-			// MessagesListing might be null if the error is triggered from a graph using this graph as macro
-			!MessagesListing)
-		{
-			return;
-		}
-
-		const FString MessageString = Message->ToText().ToString();
-		if (MessageListingMessages.Contains(MessageString))
-		{
-			return;
-		}
-
-		MessageListingMessages.Add(MessageString);
-		MessagesListing->AddMessage(Message);
-	}));
-
-	FVoxelMessages::OnClearNodeMessages.Add(MakeWeakPtrDelegate(this, [=](const UEdGraph* Graph)
-	{
-		check(IsInGameThread());
-
-		if (!Graph ||
-			Asset != Graph->GetOuter() ||
-			// MessagesListing might be null if the error is triggered from a graph using this graph as macro
-			!MessagesListing)
-		{
-			return;
-		}
-
-		MessageListingMessages.Reset();
-		MessagesListing->ClearMessages();
-
-		const UEdGraph* ActiveGraph = GetActiveEdGraph();
-		if (!ActiveGraph)
-		{
-			return;
-		}
-
-		for (const UEdGraphNode* Node : ActiveGraph->Nodes)
-		{
-			for (const UEdGraphPin* Pin : Node->Pins)
-			{
-				if (!Pin->bOrphanedPin)
-				{
-					continue;
-				}
-
-				FVoxelMessageBuilder Builder(EVoxelMessageSeverity::Warning, "Orphaned pin on {0}: {1}");
-				FVoxelMessageArgProcessor::ProcessArgs(Builder, Node, Pin->GetDisplayName());
-
-				TSet<const UEdGraph*> Graphs;
-				MessagesListing->AddMessage(Builder.BuildMessage(Graphs));
-			}
-		}
-	}));
-
 	{
 		ensure(!bDisableOnGraphChanged);
 		TGuardValue<bool> OnGraphChangedGuard(bDisableOnGraphChanged, true);
 
-		// Disable SetDirty
-		ensure(!GIsEditorLoadingPackage);
-		TGuardValue<bool> SetDirtyGuard(GIsEditorLoadingPackage, true);
-
-		const auto FixupEdGraph = [&](UEdGraph* EdGraph)
+		for (UVoxelGraph* Graph : Asset->GetAllGraphs())
 		{
-			if (!ensure(EdGraph))
-			{
-				return;
-			}
-
-			CastChecked<UVoxelEdGraph>(EdGraph)->WeakToolkit = SharedThis(this);
-
-			for (UEdGraphNode* Node : EdGraph->Nodes)
-			{
-				Node->ReconstructNode();
-			}
-		};
-
-		for (UEdGraph* EdGraph : GetAllEdGraphs())
-		{
-			FixupEdGraph(EdGraph);
-		}
-
-		for (UVoxelGraph* Graph : Asset->GetAllParameterGraphs())
-		{
-			if (!Graph->MainEdGraph)
-			{
-				Graph->MainEdGraph = CreateGraph(Graph);
-				continue;
-			}
-
-			FixupEdGraph(Graph->MainEdGraph);
+			FixupGraph(Graph);
 		}
 	}
-
-	FVoxelSystemUtilities::DelayedCall(MakeWeakPtrLambda(this, [this]
-	{
-		for (const UEdGraph* EdGraph : GetAllEdGraphs())
-		{
-			OnGraphChanged(EdGraph);
-		}
-	}));
 
 	GraphPreview =
 		SNew(SVoxelGraphPreview)
@@ -206,16 +118,9 @@ void FVoxelGraphToolkit::Initialize()
 		SNew(SVoxelGraphSearch)
 		.Toolkit(SharedThis(this));
 
-	{
-		FMessageLogInitializationOptions LogOptions;
-		LogOptions.MaxPageCount = 1;
-		LogOptions.bAllowClear = false;
-		LogOptions.bShowInLogWindow = false;
-
-		FMessageLogModule& MessageLogModule = FModuleManager::LoadModuleChecked<FMessageLogModule>("MessageLog");
-		MessagesListing = MessageLogModule.CreateLogListing("VoxelGraphErrors", LogOptions);
-		MessagesWidget = MessageLogModule.CreateLogListingWidget(MessagesListing.ToSharedRef());
-	}
+	GraphMessages =
+		SNew(SVoxelGraphMessages)
+		.Graph(Asset);
 
 	{
 		FDetailsViewArgs Args;
@@ -268,23 +173,35 @@ void FVoxelGraphToolkit::Initialize()
 		}));
 	}
 
-	for (UEdGraph* Graph : GetAllEdGraphs())
-	{
-		if (!ensure(Graph->Schema == UVoxelGraphSchema::StaticClass()))
+	GetCommands()->MapAction(
+		FVoxelGraphCommands::Get().Compile,
+		MakeLambdaDelegate([=]
 		{
-			Graph->Schema = UVoxelGraphSchema::StaticClass();
-		}
-	}
+			for (const UVoxelGraph* Graph : Asset->GetAllGraphs())
+			{
+				Graph->GetRuntimeGraph().ForceRecompile();
+			}
+		}));
+
+	GetCommands()->MapAction(
+		FVoxelGraphCommands::Get().CompileAll,
+		MakeLambdaDelegate([=]
+		{
+			GVoxelGraphEditorCompiler->CompileAll();
+		}));
 
 	GetCommands()->MapAction(
 		FVoxelGraphCommands::Get().EnableStats,
 		MakeLambdaDelegate([=]
 		{
-			IVoxelGraphNodeStatInterface::bEnableStats = !IVoxelGraphNodeStatInterface::bEnableStats;
+			GVoxelEnableNodeStats = !GVoxelEnableNodeStats;
 
-			if (!IVoxelGraphNodeStatInterface::bEnableStats)
+			if (!GVoxelEnableNodeStats)
 			{
-				GVoxelOnClearNodeStats.Broadcast();
+				for (IVoxelNodeStatProvider* Provider : GVoxelNodeStatProviders)
+				{
+					Provider->ClearStats();
+				}
 			}
 		}),
 		MakeLambdaDelegate([]
@@ -293,7 +210,7 @@ void FVoxelGraphToolkit::Initialize()
 		}),
 		MakeLambdaDelegate([]
 		{
-			return IVoxelGraphNodeStatInterface::bEnableStats;
+			return GVoxelEnableNodeStats;
 		}));
 
 	GetCommands()->MapAction(FGraphEditorCommands::Get().FindReferences,
@@ -312,9 +229,25 @@ void FVoxelGraphToolkit::Initialize()
 		FExecuteAction::CreateSP(this, &FVoxelGraphToolkit::ReconstructAllNodes)
 	);
 
+	GetCommands()->MapAction(FVoxelGraphCommands::Get().ToggleDebug,
+		FExecuteAction::CreateSP(this, &FVoxelGraphToolkit::ToggleDebug)
+	);
+
 	GetCommands()->MapAction(FVoxelGraphCommands::Get().TogglePreview,
 		FExecuteAction::CreateSP(this, &FVoxelGraphToolkit::TogglePreview)
 	);
+
+	// Once everything is ready, update errors
+	for (const UVoxelGraph* Graph : Asset->GetAllGraphs())
+	{
+		UVoxelRuntimeGraph& RuntimeGraph = Graph->GetRuntimeGraph();
+		const TArray<TSharedRef<FTokenizedMessage>> RuntimeMessages = RuntimeGraph.RuntimeMessages;
+
+		RuntimeGraph.ForceRecompile();
+
+		// Add back runtime messages, we don't want to clear them when simply opening the asset
+		RuntimeGraph.RuntimeMessages.Append(RuntimeMessages);
+	}
 }
 
 void FVoxelGraphToolkit::Tick()
@@ -325,11 +258,28 @@ void FVoxelGraphToolkit::Tick()
 
 	FlushNodesToReconstruct();
 
+	if (bMessageUpdateQueued)
+	{
+		bMessageUpdateQueued = false;
+
+		// Focus Messages tab
+		const TSharedPtr<FTabManager> TabManager = GetTabManager();
+		if (ensure(TabManager))
+		{
+			const TSharedPtr<SDockTab> MessagesTab = TabManager->FindExistingLiveTab(FTabId(MessagesTabId));
+			if (ensure(MessagesTab) &&
+				// Only focus if asset is focused
+				TabManager->GetOwnerTab()->HasAnyUserFocus())
+			{
+				MessagesTab->DrawAttention();
+			}
+		}
+
+		GraphMessages->UpdateNodes();
+	}
+
 	if (GraphsToCompile.Num() > 0)
 	{
-		VOXEL_USE_NAMESPACE(Graph);
-		const FCompilationScope CompilationScope;
-
 		const TSet<TWeakObjectPtr<UVoxelGraph>> GraphsToCompileCopy = MoveTemp(GraphsToCompile);
 		ensure(GraphsToCompile.Num() == 0);
 
@@ -340,22 +290,7 @@ void FVoxelGraphToolkit::Tick()
 				continue;
 			}
 
-			ensure(!GIsVoxelGraphCompiling);
-			GIsVoxelGraphCompiling = true;
-			const bool bSuccess = FEditorCompilerUtilities::CompileGraph(*Graph);
-			ensure(GIsVoxelGraphCompiling);
-			GIsVoxelGraphCompiling = false;
-
-			if (!bSuccess)
-			{
-				continue;
-			}
-
-			Graph->PostGraphCompiled();
-
-			// Compile for errors
-			FVoxelGraphMessages Messages(Graph->MainEdGraph);
-			FCompilerUtilities::TranslateCompiledGraph(*Graph);
+			Graph->ForceRecompile();
 		}
 
 		GraphPreview->QueueUpdate();
@@ -391,6 +326,8 @@ void FVoxelGraphToolkit::BuildToolbar(FToolBarBuilder& ToolbarBuilder)
 	Super::BuildToolbar(ToolbarBuilder);
 
 	ToolbarBuilder.BeginSection("Voxel");
+	ToolbarBuilder.AddToolBarButton(FVoxelGraphCommands::Get().Compile);
+	ToolbarBuilder.AddToolBarButton(FVoxelGraphCommands::Get().CompileAll);
 	ToolbarBuilder.AddToolBarButton(FVoxelGraphCommands::Get().EnableStats);
 	ToolbarBuilder.EndSection();
 }
@@ -468,7 +405,7 @@ void FVoxelGraphToolkit::RegisterTabs(const FRegisterTab RegisterTab)
 	RegisterTab(DetailsTabId, INVTEXT("Details"), "LevelEditor.Tabs.Details", DetailsTabWidget);
 	RegisterTab(PreviewDetailsTabId, INVTEXT("Preview Settings"), "LevelEditor.Tabs.Details", PreviewDetailsView);
 	RegisterTab(MembersTabId, INVTEXT("Members"), "ClassIcon.BlueprintCore", GraphMembers);
-	RegisterTab(MessagesTabId, INVTEXT("Messages"), "MessageLog.TabIcon", MessagesWidget);
+	RegisterTab(MessagesTabId, INVTEXT("Messages"), "MessageLog.TabIcon", GraphMessages);
 	RegisterTab(SearchTabId, INVTEXT("Find Results"), "Kismet.Tabs.FindResults", SearchWidget);
 }
 
@@ -518,7 +455,6 @@ void FVoxelGraphToolkit::LoadDocuments()
 void FVoxelGraphToolkit::OnGraphChangedImpl(const UEdGraph* EdGraph)
 {
 	VOXEL_FUNCTION_COUNTER();
-	VOXEL_USE_NAMESPACE(Graph);
 
 	UVoxelGraph* Graph = Asset->FindGraph(EdGraph);
 	if (!ensure(Graph))
@@ -535,54 +471,6 @@ void FVoxelGraphToolkit::OnGraphChangedImpl(const UEdGraph* EdGraph)
 		}
 	}
 
-	// Fixup parameters
-	{
-		TSet<FGuid> UnusedParameters;
-		for (const FVoxelGraphParameter& Parameter : Graph->Parameters)
-		{
-			if (Parameter.ParameterType != EVoxelGraphParameterType::Input &&
-				Parameter.ParameterType != EVoxelGraphParameterType::Output)
-			{
-				continue;
-			}
-
-			UnusedParameters.Add(Parameter.Guid);
-		}
-
-		for (UEdGraphNode* GraphNode : EdGraph->Nodes)
-		{
-			if (const UVoxelGraphMacroParameterNode* MacroParameterNode = Cast<UVoxelGraphMacroParameterNode>(GraphNode))
-			{
-				UnusedParameters.Remove(MacroParameterNode->Guid);
-			}
-			else if (const UVoxelGraphLocalVariableDeclarationNode* LocalVariableNode = Cast<UVoxelGraphLocalVariableDeclarationNode>(GraphNode))
-			{
-				if (const FVoxelGraphParameter* Parameter = LocalVariableNode->GetParameter())
-				{
-					if (Parameter->Type.HasPinDefaultValue())
-					{
-						UEdGraphPin* InputPin = LocalVariableNode->GetInputPin(0);
-						Parameter->DefaultValue.ApplyToPinDefaultValue(*InputPin);
-					}
-				}
-			}
-		}
-
-		if (UnusedParameters.Num() > 0)
-		{
-			TGuardValue<bool> Guard(bDisableOnGraphChanged, true);
-			const FVoxelTransaction Transaction(Graph);
-
-			for (const FGuid& Guid : UnusedParameters)
-			{
-				Graph->Parameters.RemoveAll([&](const FVoxelGraphParameter& Parameter)
-				{
-					return Parameter.Guid == Guid;
-				});
-			}
-		}
-	}
-
 	GraphsToCompile.Add(Graph);
 }
 
@@ -590,89 +478,28 @@ void FVoxelGraphToolkit::FixupGraphParameters(const UVoxelGraph::EParameterChang
 {
 	VOXEL_FUNCTION_COUNTER();
 
+	FVoxelGraphDelayOnGraphChangedScope DelayScope;
+
+	if (ChangeType == UVoxelGraph::EParameterChangeType::DefaultValue)
+	{
+		return;
+	}
+
 	for (UVoxelGraph* Graph : Asset->GetAllGraphs())
 	{
-		FVoxelGraphDelayOnGraphChangedScope DelayScope;
-
-		bool bHasNewParameter = false;
-		TArray<UEdGraphNode*> NodesToDelete;
-
-		TSet<FGuid> ParametersToAdd;
-		TMap<FGuid, const FVoxelGraphParameter*> Parameters;
-		for (const FVoxelGraphParameter& Parameter : Graph->Parameters)
-		{
-			Parameters.Add(Parameter.Guid, &Parameter);
-
-			if (Parameter.ParameterType == EVoxelGraphParameterType::Input ||
-				Parameter.ParameterType == EVoxelGraphParameterType::Output)
-			{
-				ParametersToAdd.Add(Parameter.Guid);
-			}
-		}
+		FixupGraph(Graph);
 
 		for (UEdGraphNode* Node : Graph->MainEdGraph->Nodes)
 		{
-			if (UVoxelGraphParameterNode* ParameterNode = Cast<UVoxelGraphParameterNode>(Node))
+			if (!ensure(IsValid(Node)))
+			{
+				continue;
+			}
+
+			if (Node->IsA<UVoxelGraphParameterNodeBase>())
 			{
 				// Reconstruct to be safe
-				ParameterNode->ReconstructNode();
-			}
-			else if (UVoxelGraphMacroParameterNode* MacroParameterNode = Cast<UVoxelGraphMacroParameterNode>(Node))
-			{
-				const FVoxelGraphParameter* Parameter = Parameters.FindRef(MacroParameterNode->Guid);
-				if (!Parameter)
-				{
-					NodesToDelete.Add(MacroParameterNode);
-					continue;
-				}
-
-				ParametersToAdd.Remove(MacroParameterNode->Guid);
-
-				if (ChangeType == UVoxelGraph::EParameterChangeType::DefaultValue)
-				{
-					MacroParameterNode->PostReconstructNode();
-				}
-				else
-				{
-					// Reconstruct to be safe
-					MacroParameterNode->ReconstructNode();
-				}
-			}
-			else if (UVoxelGraphLocalVariableNode* LocalVariableNode = Cast<UVoxelGraphLocalVariableNode>(Node))
-			{
-				if (ChangeType == UVoxelGraph::EParameterChangeType::DefaultValue)
-				{
-					LocalVariableNode->PostReconstructNode();
-				}
-				else
-				{
-					// Reconstruct to be safe
-					LocalVariableNode->ReconstructNode();
-				}
-			}
-		}
-
-		for (const FGuid& Guid : ParametersToAdd)
-		{
-			FVector2D Position;
-			Position.X = 400; // TODO: Better search for location...?
-			Position.Y = 200; // TODO: Better search for location...?
-
-			FVoxelGraphSchemaAction_NewParameterUsage Action;
-			Action.Guid = Guid;
-			Action.ParameterType = Graph->FindParameterByGuid(Guid)->ParameterType;
-			Action.PerformAction(Graph->MainEdGraph, nullptr, Position);
-		}
-
-		bHasNewParameter |= ParametersToAdd.Num() > 0;
-
-		DeleteNodes(NodesToDelete);
-
-		if (bHasNewParameter)
-		{
-			if (const TSharedPtr<SGraphEditor> GraphEditor = FindGraphEditor(Graph->MainEdGraph))
-			{
-				GraphEditor->ZoomToFit(true);
+				Node->ReconstructNode();
 			}
 		}
 	}
@@ -765,8 +592,6 @@ const FSlateBrush* FVoxelGraphToolkit::GetGraphIcon(UEdGraph* EdGraph) const
 
 void FVoxelGraphToolkit::OnSelectedNodesChanged(const TSet<UObject*>& NewSelection)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (NewSelection.Num() == 0)
 	{
 		UpdateDetailsView(GetActiveEdGraph());
@@ -799,17 +624,29 @@ void FVoxelGraphToolkit::ClearSavedDocuments()
 	Asset->LastEditedDocuments.Empty();
 }
 
-TArray<UEdGraph*> FVoxelGraphToolkit::GetAllEdGraphs() const
+void FVoxelGraphToolkit::PostUndo()
 {
-	TArray<UEdGraph*> EdGraphs;
+	Super::PostUndo();
+
+	CloseInvalidGraphs();
+
+	// Clear selection, to avoid holding refs to nodes that go away
+
 	for (const UVoxelGraph* Graph : Asset->GetAllGraphs())
 	{
-		if (ensure(Graph->MainEdGraph))
+		if (!ensure(Graph->MainEdGraph))
 		{
-			EdGraphs.Add(Graph->MainEdGraph);
+			continue;
 		}
+
+		if (const TSharedPtr<SGraphEditor> GraphEditor = FindGraphEditor(Graph->MainEdGraph))
+		{
+			GraphEditor->ClearSelectionSet();
+			GraphEditor->NotifyGraphChanged();
+		}
+
+		OnGraphChanged(Graph->MainEdGraph);
 	}
-	return EdGraphs;
 }
 
 void FVoxelGraphToolkit::AddReferencedObjects(FReferenceCollector& Collector)
@@ -972,14 +809,14 @@ void FVoxelGraphToolkit::ToggleGlobalSearchWindow() const
 
 void FVoxelGraphToolkit::ReconstructAllNodes() const
 {
-	for (UEdGraph* EdGraph : GetAllEdGraphs())
+	for (const UVoxelGraph* Graph : Asset->GetAllGraphs())
 	{
-		if (!ensure(EdGraph))
+		if (!ensure(Graph->MainEdGraph))
 		{
 			continue;
 		}
 
-		for (UEdGraphNode* Node : EdGraph->Nodes)
+		for (UEdGraphNode* Node : Graph->MainEdGraph->Nodes)
 		{
 			if (!ensure(Node))
 			{
@@ -989,6 +826,46 @@ void FVoxelGraphToolkit::ReconstructAllNodes() const
 			Node->ReconstructNode();
 		}
 	}
+}
+
+void FVoxelGraphToolkit::ToggleDebug() const
+{
+	TVoxelArray<UVoxelGraphNodeBase*> Nodes;
+	for (UEdGraphNode* Node : GetSelectedNodes())
+	{
+		if (UVoxelGraphNodeBase* VoxelNode = Cast<UVoxelGraphNodeBase>(Node))
+		{
+			Nodes.Add(VoxelNode);
+		}
+	}
+
+	if (Nodes.Num() != 1)
+	{
+		return;
+	}
+
+	UVoxelGraphNodeBase* Node = Nodes[0];
+
+	if (Node->bEnableDebug)
+	{
+		Node->bEnableDebug = false;
+		UVoxelGraphSchema::OnGraphChanged(Node);
+		return;
+	}
+
+	for (const TObjectPtr<UEdGraphNode>& OtherNode : Node->GetGraph()->Nodes)
+	{
+		if (UVoxelGraphNodeBase* OtherVoxelNode = Cast<UVoxelGraphNodeBase>(OtherNode.Get()))
+		{
+			if (OtherVoxelNode->bEnableDebug)
+			{
+				OtherVoxelNode->bEnableDebug = false;
+			}
+		}
+	}
+
+	Node->bEnableDebug = true;
+	UVoxelGraphSchema::OnGraphChanged(Node);
 }
 
 void FVoxelGraphToolkit::TogglePreview() const
@@ -1035,13 +912,11 @@ void FVoxelGraphToolkit::TogglePreview() const
 
 void FVoxelGraphToolkit::UpdateDetailsView(UObject* Object)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	if (const UVoxelGraphParameterNodeBase* ParameterNode = Cast<UVoxelGraphParameterNodeBase>(Object))
 	{
-		DetailsView->SetGenericLayoutDetailsDelegate(MakeLambdaDelegate([this, ParameterNode]() -> TSharedRef<IDetailCustomization>
+		DetailsView->SetGenericLayoutDetailsDelegate(MakeLambdaDelegate([this, EdGraph = MakeWeakObjectPtr(ParameterNode->GetGraph()), Guid = ParameterNode->Guid, Object = MakeWeakObjectPtr(Object)]() -> TSharedRef<IDetailCustomization>
 		{
-			return MakeVoxelShared<FVoxelGraphParameterSelectionCustomization>(SharedThis(this), ParameterNode->Guid);
+			return MakeVoxelShared<FVoxelGraphParameterSelectionCustomization>(EdGraph, Guid, Object);
 		}));
 	}
 	else if (UVoxelGraphStructNode* StructNode = Cast<UVoxelGraphStructNode>(Object))
@@ -1103,55 +978,65 @@ void FVoxelGraphToolkit::UpdateDetailsView(UObject* Object)
 
 void FVoxelGraphToolkit::SelectMember(UObject* Object, const bool bRequestRename, const bool bRefreshMembers) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
+	using ESection = SVoxelGraphMembers::ESection;
 
 	if (UEdGraph* EdGraph = Cast<UEdGraph>(Object))
 	{
 		const UVoxelGraph* Graph = Asset->FindGraph(EdGraph);
 
-		EMembersNodeSection Section = EMembersNodeSection::None;
+		ESection Section = ESection::None;
 		if (bIsMacroLibrary)
 		{
-			Section = EMembersNodeSection::MacroLibraries;
+			Section = ESection::MacroLibraries;
 		}
 		else if (Graph != Asset)
 		{
-			Section = EMembersNodeSection::InlineMacros;
+			Section = ESection::InlineMacros;
 		}
 
-		GraphMembers->SelectMember(FName(GetGraphName(EdGraph)), GetSectionId(Section), bRequestRename, bRefreshMembers);
+		GraphMembers->SelectMember(FName(GetGraphName(EdGraph)), SVoxelGraphMembers::GetSectionId(Section), bRequestRename, bRefreshMembers);
 		return;
 	}
 
 	if (const UVoxelGraph* Graph = Cast<UVoxelGraph>(Object))
 	{
-		EMembersNodeSection Section = EMembersNodeSection::None;
+		ESection Section = ESection::None;
 		if (bIsMacroLibrary)
 		{
-			Section = EMembersNodeSection::MacroLibraries;
+			Section = ESection::MacroLibraries;
 		}
 		else if (Graph != Asset)
 		{
-			Section = EMembersNodeSection::InlineMacros;
+			Section = ESection::InlineMacros;
 		}
 
-		GraphMembers->SelectMember(FName(GetGraphName(Graph->MainEdGraph)), GetSectionId(Section), bRequestRename, bRefreshMembers);
+		GraphMembers->SelectMember(
+			FName(GetGraphName(Graph->MainEdGraph)),
+			SVoxelGraphMembers::GetSectionId(Section),
+			bRequestRename,
+			bRefreshMembers);
 		return;
 	}
 
 	if (const UVoxelGraphParameterNodeBase* ParameterNode = Cast<UVoxelGraphParameterNodeBase>(Object))
 	{
-		GraphMembers->SelectMember(ParameterNode->CachedParameter.Name, GetSectionId(ParameterNode->CachedParameter.ParameterType), bRequestRename, bRefreshMembers);
+		GraphMembers->SelectMember(
+			ParameterNode->CachedParameter.Name,
+			SVoxelGraphMembers::GetSectionId(ParameterNode->CachedParameter.ParameterType),
+			bRequestRename,
+			bRefreshMembers);
 		return;
 	}
 
-	GraphMembers->SelectMember("", GetSectionId(EMembersNodeSection::None), false, bRefreshMembers);
+	GraphMembers->SelectMember(
+		"",
+		SVoxelGraphMembers::GetSectionId(ESection::None),
+		false,
+		bRefreshMembers);
 }
 
-void FVoxelGraphToolkit::SelectParameter(UVoxelGraph* Graph, FGuid Guid, const bool bRequestRename, const bool bRefreshMembers)
+void FVoxelGraphToolkit::SelectParameter(UVoxelGraph* Graph, const FGuid Guid, const bool bRequestRename, const bool bRefreshMembers)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	const FVoxelGraphParameter* Parameter = Graph->FindParameterByGuid(Guid);
 	if (!ensure(Parameter))
 	{
@@ -1160,11 +1045,31 @@ void FVoxelGraphToolkit::SelectParameter(UVoxelGraph* Graph, FGuid Guid, const b
 		return;
 	}
 
-	GraphMembers->SelectMember(Parameter->Name, GetSectionId(Parameter->ParameterType), bRequestRename, bRefreshMembers);
+	GraphMembers->SelectMember(
+		Parameter->Name,
+		SVoxelGraphMembers::GetSectionId(Parameter->ParameterType),
+		bRequestRename,
+		bRefreshMembers);
 
-	DetailsView->SetGenericLayoutDetailsDelegate(MakeLambdaDelegate([this, Guid]() -> TSharedRef<IDetailCustomization>
+	// Find the selected node if any
+	// This is needed as SelectParameter will be called when changing bExposeDefaultPin,
+	// essentially unselecting the node from the detail panel
+	TWeakObjectPtr<UEdGraphNode> SelectedNode;
+	for (UEdGraphNode* Node : GetSelectedNodes())
 	{
-		return MakeVoxelShared<FVoxelGraphParameterSelectionCustomization>(SharedThis(this), Guid);
+		if (SelectedNode.IsValid())
+		{
+			// More than one selected
+			SelectedNode = {};
+			break;
+		}
+
+		SelectedNode = Node;
+	}
+
+	DetailsView->SetGenericLayoutDetailsDelegate(MakeLambdaDelegate([=, EdGraph = MakeWeakObjectPtr(Graph->MainEdGraph)]() -> TSharedRef<IDetailCustomization>
+	{
+		return MakeVoxelShared<FVoxelGraphParameterSelectionCustomization>(EdGraph, Guid, SelectedNode);
 	}));
 	DetailsView->SetObject(Graph);
 	DetailsView->ForceRefresh();
@@ -1172,10 +1077,11 @@ void FVoxelGraphToolkit::SelectParameter(UVoxelGraph* Graph, FGuid Guid, const b
 	UpdateParameterGraph(Graph->ParameterGraphs.FindRef(Guid));
 }
 
-void FVoxelGraphToolkit::UpdateParameterGraph(UVoxelGraph* Graph)
+void FVoxelGraphToolkit::UpdateParameterGraph(const UVoxelGraph* Graph)
 {
 	if (!Graph ||
-		!Graph->bParameterGraph)
+		!ensure(Graph->MainEdGraph) ||
+		!ensure(Graph->bIsParameterGraph))
 	{
 		if (ParametersBoxSplitter->GetChildren()->Num() > 1)
 		{
@@ -1193,11 +1099,6 @@ void FVoxelGraphToolkit::UpdateParameterGraph(UVoxelGraph* Graph)
 		[
 			ParameterGraphEditorBox.ToSharedRef()
 		];
-	}
-
-	if (!Graph->MainEdGraph)
-	{
-		Graph->MainEdGraph = CreateGraph(Graph);
 	}
 
 	ParameterGraphEditorBox->SetContent(CreateGraphEditor(Graph->MainEdGraph, false));

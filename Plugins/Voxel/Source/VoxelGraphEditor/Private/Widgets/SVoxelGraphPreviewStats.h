@@ -4,27 +4,22 @@
 
 #include "VoxelEditorMinimal.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-struct FStatsRow
-{
-	FText Header;
-	FText Tooltip;
-	TAttribute<FText> Value;
-};
-
-class SPreviewStats : public SCompoundWidget
+class SVoxelGraphPreviewStats : public SCompoundWidget
 {
 public:
 	VOXEL_SLATE_ARGS() {};
 
-	TArray<TSharedPtr<FStatsRow>> Rows;
-	TSharedPtr<SListView<TSharedPtr<FStatsRow>>> RowsView;
+	struct FRow
+	{
+		FText Header;
+		FText Tooltip;
+		TAttribute<FText> Value;
+	};
+	TArray<TSharedPtr<FRow>> Rows;
+	TSharedPtr<SListView<TSharedPtr<FRow>>> RowsView;
 
 	void Construct(const FArguments& Args);
 
 private:
-	TSharedRef<ITableRow> CreateRow(TSharedPtr<FStatsRow> StatsRow, const TSharedRef<STableViewBase>& OwnerTable) const;
+	TSharedRef<ITableRow> CreateRow(TSharedPtr<FRow> StatsRow, const TSharedRef<STableViewBase>& OwnerTable) const;
 };
-
-END_VOXEL_NAMESPACE(Graph)

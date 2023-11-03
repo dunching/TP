@@ -2,6 +2,7 @@
 
 #include "SVoxelGraphNodeBase.h"
 #include "VoxelPinType.h"
+#include "VoxelSurface.h"
 #include "SVoxelToolTip.h"
 #include "Point/VoxelPointSet.h"
 
@@ -46,6 +47,9 @@ TSharedPtr<SGraphPin> SVoxelGraphNodeBase::CreatePinWidget(UEdGraphPin* Pin) con
 		static const FSlateBrush* PointSetConnectedIcon = FVoxelEditorStyle::GetBrush("Pin.PointSet.Connected");
 		static const FSlateBrush* PointSetDisconnectedIcon = FVoxelEditorStyle::GetBrush("Pin.PointSet.Disconnected");
 
+		static const FSlateBrush* SurfaceConnectedIcon = FVoxelEditorStyle::GetBrush("Pin.Surface.Connected");
+		static const FSlateBrush* SurfaceDisconnectedIcon = FVoxelEditorStyle::GetBrush("Pin.Surface.Disconnected");
+
 		static const FSlateBrush* ArrayConnectedIcon = FAppStyle::GetBrush("Graph.ArrayPin.Connected");
 		static const FSlateBrush* ArrayDisconnectedIcon = FAppStyle::GetBrush("Graph.ArrayPin.Disconnected");
 
@@ -62,6 +66,7 @@ TSharedPtr<SGraphPin> SVoxelGraphNodeBase::CreatePinWidget(UEdGraphPin* Pin) con
 		const bool bIsBuffer = PinType.IsBuffer();
 		const bool bIsBufferArray = PinType.IsBufferArray();
 		const bool bIsPointSet = PinType.Is<FVoxelPointSet>();
+		const bool bIsSurface = PinType.Is<FVoxelSurface>();
 
 		PinImage.SetLayerBrush(0, MakeAttributeLambda([=]() -> const FSlateBrush*
 		{
@@ -108,6 +113,18 @@ TSharedPtr<SGraphPin> SVoxelGraphNodeBase::CreatePinWidget(UEdGraphPin* Pin) con
 				else
 				{
 					return PointSetDisconnectedIcon;
+				}
+			}
+
+			if (bIsSurface)
+			{
+				if (PinForIcon->IsConnected())
+				{
+					return SurfaceConnectedIcon;
+				}
+				else
+				{
+					return SurfaceDisconnectedIcon;
 				}
 			}
 

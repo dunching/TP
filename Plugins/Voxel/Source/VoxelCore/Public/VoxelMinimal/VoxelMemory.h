@@ -35,9 +35,9 @@ struct VOXELCORE_API FVoxelMemory
 {
 public:
 #if ENABLE_VOXEL_ALLOCATOR && VOXEL_DEBUG
-	static void CheckIsVoxelAlloc(void* Original);
+	static void CheckIsVoxelAlloc(const void* Original);
 #else
-	FORCEINLINE static void CheckIsVoxelAlloc(void* Original) {}
+	FORCEINLINE static void CheckIsVoxelAlloc(const void* Original) {}
 #endif
 
 	static void* MallocImpl(SIZE_T Count, uint32 Alignment);
@@ -69,6 +69,19 @@ public:
 		FMemory::Free(Original);
 #endif
 	}
+
+public:
+	template<typename T>
+	FORCEINLINE static void Delete(const T* Object)
+	{
+		if (!Object)
+		{
+			return;
+		}
+
+		Object->~T();
+		FVoxelMemory::Free(ConstCast(Object));
+	}
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -87,13 +100,7 @@ struct TVoxelMemoryDeleter
 
 	FORCEINLINE void operator()(T* Object) const
 	{
-		if (!Object)
-		{
-			return;
-		}
-
-		Object->~T();
-		FVoxelMemory::Free(ConstCast(Object));
+		FVoxelMemory::Delete(Object);
 	}
 };
 

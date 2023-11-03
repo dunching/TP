@@ -3,9 +3,7 @@
 #include "SVoxelGraphPreviewRuler.h"
 #include "Fonts/FontMeasure.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SPreviewRuler::Construct(const FArguments& InArgs)
+void SVoxelGraphPreviewRuler::Construct(const FArguments& InArgs)
 {
 	Value = InArgs._Value;
 	Resolution = InArgs._Resolution;
@@ -79,7 +77,7 @@ void SPreviewRuler::Construct(const FArguments& InArgs)
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-void SPreviewRuler::StartRuler(const FVector2D& ScreenSpacePosition, const FVector2D& TransformedPosition)
+void SVoxelGraphPreviewRuler::StartRuler(const FVector2D& ScreenSpacePosition, const FVector2D& TransformedPosition)
 {
 	ImageBox->SetVisibility(EVisibility::HitTestInvisible);
 	TextBox->SetVisibility(EVisibility::HitTestInvisible);
@@ -93,13 +91,13 @@ void SPreviewRuler::StartRuler(const FVector2D& ScreenSpacePosition, const FVect
 	DistanceText = GetDistanceText();
 }
 
-void SPreviewRuler::StopRuler() const
+void SVoxelGraphPreviewRuler::StopRuler() const
 {
 	ImageBox->SetVisibility(EVisibility::Collapsed);
 	TextBox->SetVisibility(EVisibility::Collapsed);
 }
 
-void SPreviewRuler::UpdateRuler(const FVector2D& ScreenSpacePosition, const FVector2D& TransformedPosition)
+void SVoxelGraphPreviewRuler::UpdateRuler(const FVector2D& ScreenSpacePosition, const FVector2D& TransformedPosition)
 {
 	EndPosition = Canvas->GetCachedGeometry().AbsoluteToLocal(ScreenSpacePosition);
 	TransformedEndPosition = TransformedPosition;
@@ -111,7 +109,7 @@ void SPreviewRuler::UpdateRuler(const FVector2D& ScreenSpacePosition, const FVec
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-double SPreviewRuler::GetPixelSize() const
+double SVoxelGraphPreviewRuler::GetPixelSize() const
 {
 	const TSharedPtr<SWidget> Widget = SizeWidget.Get().Pin();
 	if (!ensure(Widget.IsValid()))
@@ -130,7 +128,7 @@ double SPreviewRuler::GetPixelSize() const
 	return PixelSize;
 }
 
-double SPreviewRuler::GetRulerDistance() const
+double SVoxelGraphPreviewRuler::GetRulerDistance() const
 {
 	const double RawDistance = FVector2D::Distance(TransformedEndPosition, TransformedStartPosition);
 
@@ -143,7 +141,7 @@ double SPreviewRuler::GetRulerDistance() const
 	return RawDistance / (double(Resolution.Get()) / FMath::Min(Widget->GetCachedGeometry().Size.X, Widget->GetCachedGeometry().Size.Y));
 }
 
-FString SPreviewRuler::GetDistanceText() const
+FString SVoxelGraphPreviewRuler::GetDistanceText() const
 {
 	FNumberFormattingOptions Options;
 	Options.MinimumFractionalDigits = 2.f;
@@ -174,5 +172,3 @@ FString SPreviewRuler::GetDistanceText() const
 
 	return FText::AsNumber(Size, &Options).ToString() + " " + MeasurementType;
 }
-
-END_VOXEL_NAMESPACE(Graph)

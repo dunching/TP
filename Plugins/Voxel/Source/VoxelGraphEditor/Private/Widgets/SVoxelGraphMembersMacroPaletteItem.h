@@ -5,13 +5,10 @@
 #include "VoxelEditorMinimal.h"
 #include "SGraphPalette.h"
 
+class SMembers;
 struct FVoxelGraphMembersMacroSchemaAction;
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SMembers;
-
-class SMacroPaletteItem : public SGraphPaletteItem
+class SVoxelGraphMembersMacroPaletteItem : public SGraphPaletteItem
 {
 public:
 	VOXEL_SLATE_ARGS()
@@ -30,5 +27,3 @@ protected:
 private:
 	TSharedPtr<FVoxelGraphMembersMacroSchemaAction> GetAction() const;
 };
-
-END_VOXEL_NAMESPACE(Graph)

@@ -305,6 +305,8 @@ TSharedPtr<FVoxelMembersBaseSchemaAction> SVoxelMembers::GetAction() const
 
 void SVoxelMembers::CollectAllActions(FGraphActionListBuilderBase& OutAllActions)
 {
+	VOXEL_FUNCTION_COUNTER();
+
 	FVoxelMembersActionsSortHelper ActionsList;
 	CollectSortedActions(ActionsList);
 	ActionsList.GetAllActions(OutAllActions);

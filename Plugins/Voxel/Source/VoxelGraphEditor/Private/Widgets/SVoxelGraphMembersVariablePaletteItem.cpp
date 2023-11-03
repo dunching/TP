@@ -8,9 +8,7 @@
 #include "Widgets/SVoxelGraphPinTypeComboBox.h"
 #include "SchemaActions/VoxelGraphMembersVariableSchemaAction.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SVariablePaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActionData* const InCreateData)
+void SVoxelGraphMembersVariablePaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActionData* const InCreateData)
 {
 	WeakMembersWidget = InArgs._MembersWidget;
 	ActionPtr = InCreateData->Action;
@@ -31,7 +29,7 @@ void SVariablePaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForA
 		CategoriesCount = Categories.Num();
 
 		Type = Action->GetPinType();
-		bIsParameters = GetSection(Action->SectionID) == EMembersNodeSection::Parameters;
+		bIsParameters = SVoxelGraphMembers::GetSection(Action->SectionID) == SVoxelGraphMembers::ESection::Parameters;
 	}
 
 	ChildSlot
@@ -118,7 +116,7 @@ void SVariablePaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForA
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedRef<SWidget> SVariablePaletteItem::CreateTextSlotWidget(FCreateWidgetForActionData* const InCreateData, const TAttribute<bool> bIsReadOnly)
+TSharedRef<SWidget> SVoxelGraphMembersVariablePaletteItem::CreateTextSlotWidget(FCreateWidgetForActionData* const InCreateData, const TAttribute<bool> bIsReadOnly)
 {
 	if (InCreateData->bHandleMouseButtonDown)
 	{
@@ -130,10 +128,10 @@ TSharedRef<SWidget> SVariablePaletteItem::CreateTextSlotWidget(FCreateWidgetForA
 		+ SOverlay::Slot()
 		[
 			SAssignNew(InlineRenameWidget, SInlineEditableTextBlock)
-			.Text(this, &SVariablePaletteItem::GetDisplayText)
+			.Text(this, &SVoxelGraphMembersVariablePaletteItem::GetDisplayText)
 			.HighlightText(InCreateData->HighlightText)
-			.OnVerifyTextChanged(this, &SVariablePaletteItem::OnNameTextVerifyChanged)
-			.OnTextCommitted(this, &SVariablePaletteItem::OnNameTextCommitted)
+			.OnVerifyTextChanged(this, &SVoxelGraphMembersVariablePaletteItem::OnNameTextVerifyChanged)
+			.OnTextCommitted(this, &SVoxelGraphMembersVariablePaletteItem::OnNameTextCommitted)
 			.IsSelected(InCreateData->IsRowSelectedDelegate)
 			.IsReadOnly(bIsReadOnly)
 		];
@@ -143,7 +141,7 @@ TSharedRef<SWidget> SVariablePaletteItem::CreateTextSlotWidget(FCreateWidgetForA
 	return DisplayWidget;
 }
 
-void SVariablePaletteItem::OnNameTextCommitted(const FText& NewText, ETextCommit::Type InTextCommit)
+void SVoxelGraphMembersVariablePaletteItem::OnNameTextCommitted(const FText& NewText, ETextCommit::Type InTextCommit)
 {
 	const TSharedPtr<FVoxelGraphMembersVariableSchemaAction> Action = GetAction();
 	if (!ensure(Action))
@@ -154,7 +152,7 @@ void SVariablePaletteItem::OnNameTextCommitted(const FText& NewText, ETextCommit
 	Action->SetName(NewText.ToString());
 }
 
-FText SVariablePaletteItem::GetDisplayText() const
+FText SVoxelGraphMembersVariablePaletteItem::GetDisplayText() const
 {
 	const TSharedPtr<FVoxelGraphMembersVariableSchemaAction> Action = GetAction();
 	if (!ensure(Action))
@@ -169,7 +167,7 @@ FText SVariablePaletteItem::GetDisplayText() const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedPtr<FVoxelGraphMembersVariableSchemaAction> SVariablePaletteItem::GetAction() const
+TSharedPtr<FVoxelGraphMembersVariableSchemaAction> SVoxelGraphMembersVariablePaletteItem::GetAction() const
 {
 	const TSharedPtr<FEdGraphSchemaAction> Action = ActionPtr.Pin();
 	if (!Action)
@@ -179,5 +177,3 @@ TSharedPtr<FVoxelGraphMembersVariableSchemaAction> SVariablePaletteItem::GetActi
 
 	return StaticCastSharedPtr<FVoxelGraphMembersVariableSchemaAction>(Action);
 }
-
-END_VOXEL_NAMESPACE(Graph)

@@ -82,8 +82,24 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelGraphParameter)(const TSharedRef<IProperty
 		FVoxelEditorUtilities::SetStructPropertyValue<FVoxelGraphParameter>(Handle, Parameter);
 	};
 
+	const FString* ShowDefaultValue = PropertyHandle->GetInstanceMetaData("ShowDefaultValue");
+	if (!ensure(ShowDefaultValue))
+	{
+		return;
+	}
+
+	const bool bShowDefaultValue = *ShowDefaultValue == "true";
+	ensure(bShowDefaultValue || *ShowDefaultValue == "false");
+
+	if (!bShowDefaultValue)
+	{
+		return;
+	}
+
+	IDetailCategoryBuilder& DefaultValueCategory = ChildBuilder.GetParentCategory().GetParentLayout().EditCategory("Default Value", INVTEXT("Default Value"));
+
 	FVoxelPinValueCustomizationHelper::CreatePinValueRangeSetter(
-		ChildBuilder.AddCustomRow(INVTEXT("Slider Range")),
+		DefaultValueCategory.AddCustomRow(INVTEXT("Slider Range")),
 		PropertyHandle,
 		INVTEXT("Slider Range"),
 		INVTEXT("Allows setting the minimum and maximum values for the UI slider for this variable."),
@@ -93,7 +109,7 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelGraphParameter)(const TSharedRef<IProperty
 		SetMetaData);
 
 	FVoxelPinValueCustomizationHelper::CreatePinValueRangeSetter(
-		ChildBuilder.AddCustomRow(INVTEXT("Value Range")),
+		DefaultValueCategory.AddCustomRow(INVTEXT("Value Range")),
 		PropertyHandle,
 		INVTEXT("Value Range"),
 		INVTEXT("The range of values allowed by this variable. Values outside of this will be clamped to the range."),
@@ -103,15 +119,6 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelGraphParameter)(const TSharedRef<IProperty
 		SetMetaData);
 
 	const FVoxelGraphParameter& Parameter = FVoxelEditorUtilities::GetStructPropertyValue<FVoxelGraphParameter>(PropertyHandle);
-	if (Parameter.ParameterType == EVoxelGraphParameterType::Input)
-	{
-		ChildBuilder.AddProperty(PropertyHandle->GetChildHandleStatic(FVoxelGraphParameter, bExposeInputDefaultAsPin));
-	}
-
-	if (Parameter.bExposeInputDefaultAsPin)
-	{
-		return;
-	}
 
 	const TSharedRef<IPropertyHandle> DefaultValueHandle = PropertyHandle->GetChildHandleStatic(FVoxelGraphParameter, DefaultValue);
 	for (const auto& It : Parameter.MetaData)
@@ -119,5 +126,5 @@ VOXEL_CUSTOMIZE_STRUCT_CHILDREN(FVoxelGraphParameter)(const TSharedRef<IProperty
 		DefaultValueHandle->SetInstanceMetaData(It.Key, It.Value);
 	}
 
-	ChildBuilder.AddProperty(DefaultValueHandle);
+	DefaultValueCategory.AddProperty(DefaultValueHandle);
 }

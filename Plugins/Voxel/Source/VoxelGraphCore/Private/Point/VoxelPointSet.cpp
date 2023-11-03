@@ -1,4 +1,4 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Point/VoxelPointSet.h"
 #include "VoxelNode.h"
@@ -84,7 +84,7 @@ FVoxelQuery FVoxelPointSet::MakeQuery(const FVoxelQuery& Query) const
 	if (Position &&
 		Position->IsA<FVoxelVectorBuffer>())
 	{
-		Parameters->Add<FVoxelPositionQueryParameter>().InitializeSparse(Position->AsChecked<FVoxelVectorBuffer>());
+		Parameters->Add<FVoxelPositionQueryParameter>().Initialize(Position->AsChecked<FVoxelVectorBuffer>());
 	}
 
 	return Query.MakeNewQuery(Parameters);
@@ -158,6 +158,48 @@ TVoxelArray<FVoxelFloatBuffer> FVoxelPointSet::FindCustomDatas(const FVoxelGraph
 		CustomDatas.Add(CastChecked<FVoxelFloatBuffer>(*Buffer));
 	}
 	return CustomDatas;
+}
+
+int64 FVoxelPointSet::GetAllocatedSize() const
+{
+	int64 AllocatedSize = Attributes.GetAllocatedSize();
+	for (const auto& It : Attributes)
+	{
+		AllocatedSize += It.Value->GetAllocatedSize();
+	}
+	AllocatedSize += PointIdToIndex_RequiresLock.GetAllocatedSize();
+	return AllocatedSize;
+}
+
+const TVoxelAddOnlySet<FVoxelPointId>& FVoxelPointSet::GetPointIdToIndex() const
+{
+	VOXEL_SCOPE_LOCK(PointIdToIndexCriticalSection);
+
+	if (PointIdToIndex_RequiresLock.Num() == Num())
+	{
+		return PointIdToIndex_RequiresLock;
+	}
+	ensure(PointIdToIndex_RequiresLock.Num() == 0);
+
+	const TSharedPtr<const FVoxelBuffer> Buffer = Find(FVoxelPointAttributes::Id);
+	if (!Buffer ||
+		!ensure(Buffer->IsA<FVoxelPointIdBuffer>()))
+	{
+		return PointIdToIndex_RequiresLock;
+	}
+
+	VOXEL_FUNCTION_COUNTER_NUM(Num(), 128);
+
+	PointIdToIndex_RequiresLock.Reserve(Num());
+
+	const FVoxelPointIdBuffer& PointIds = CastChecked<FVoxelPointIdBuffer>(*Buffer);
+	if (!ensure(PointIds.Num() == Num()))
+	{
+		return PointIdToIndex_RequiresLock;
+	}
+
+	PointIdToIndex_RequiresLock.BulkAdd(PointIds);
+	return PointIdToIndex_RequiresLock;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -40,7 +40,6 @@ void UVoxelGraphSchemaBase::OnGraphChanged(const UEdGraph* EdGraph)
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit(EdGraph);
 	if (!Toolkit)
 	{
-		ensure(GIsVoxelGraphCompiling);
 		return;
 	}
 
@@ -515,38 +514,6 @@ void UVoxelGraphSchemaBase::GetContextMenuActions(UToolMenu* Menu, UGraphNodeCon
 							VoxelNode->CollapsedOutputCategories.Num() > 0;
 					}))
 				);
-			}
-
-			if (VoxelNode->GetOutputPins().Num() == 0)
-			{
-				FToolMenuSection& Section = Menu->AddSection("VoxelGraphNodeEdit", INVTEXT("Node Actions"));
-
-				if (VoxelNode->IsNodeEnabled())
-				{
-					Section.AddMenuEntry(
-						"DisableNode",
-						INVTEXT("Disable node"),
-						INVTEXT("Disable this node"),
-						FSlateIcon(),
-						FUIAction(MakeLambdaDelegate([=]
-						{
-							const FVoxelTransaction Transaction(ConstCast(Node), "Disable node");
-							ConstCast(VoxelNode)->SetEnabledState(ENodeEnabledState::Disabled);
-						})));
-				}
-				else
-				{
-					Section.AddMenuEntry(
-						"EnableNode",
-						INVTEXT("Enable node"),
-						INVTEXT("Enable this node"),
-						FSlateIcon(),
-						FUIAction(MakeLambdaDelegate([=]
-						{
-							const FVoxelTransaction Transaction(ConstCast(Node), "Enable node");
-							ConstCast(VoxelNode)->SetEnabledState(ENodeEnabledState::Enabled);
-						})));
-				}
 			}
 		}
 

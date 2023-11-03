@@ -11,8 +11,33 @@ FVoxelGraphParameter* UVoxelGraphParameterNodeBase::GetParameter() const
 		return nullptr;
 	}
 
-	return Graph->FindParameterByGuid(Guid);
+	FVoxelGraphParameter* Parameter = Graph->FindParameterByGuid(Guid);
+	if (!Parameter)
+	{
+		return nullptr;
+	}
+
+	if (!ensure(Parameter->ParameterType == GetParameterType()))
+	{
+		return nullptr;
+	}
+
+	return Parameter;
 }
+
+const FVoxelGraphParameter& UVoxelGraphParameterNodeBase::GetParameterSafe() const
+{
+	if (FVoxelGraphParameter* Parameter = GetParameter())
+	{
+		return *Parameter;
+	}
+
+	return CachedParameter;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 
 void UVoxelGraphParameterNodeBase::AllocateDefaultPins()
 {
@@ -24,6 +49,7 @@ void UVoxelGraphParameterNodeBase::AllocateDefaultPins()
 	else
 	{
 		AllocateParameterPins(CachedParameter);
+
 		for (UEdGraphPin* Pin : Pins)
 		{
 			Pin->bOrphanedPin = true;
@@ -33,9 +59,9 @@ void UVoxelGraphParameterNodeBase::AllocateDefaultPins()
 	Super::AllocateDefaultPins();
 }
 
-bool UVoxelGraphParameterNodeBase::CanCreateUnderSpecifiedSchema(const UEdGraphSchema* Schema) const
+FLinearColor UVoxelGraphParameterNodeBase::GetNodeTitleColor() const
 {
-	return Schema->IsA<UVoxelGraphSchema>();
+	return GetSchema()->GetPinTypeColor(GetParameterSafe().Type.GetEdGraphPinType());
 }
 
 void UVoxelGraphParameterNodeBase::PrepareForCopying()
@@ -51,12 +77,35 @@ void UVoxelGraphParameterNodeBase::PrepareForCopying()
 	CachedParameter = *Parameter;
 }
 
-const FVoxelGraphParameter& UVoxelGraphParameterNodeBase::GetParameterSafe() const
+void UVoxelGraphParameterNodeBase::PostPasteNode()
 {
-	if (FVoxelGraphParameter* Parameter = GetParameter())
+	Super::PostPasteNode();
+
+	UVoxelGraph* Graph = GetTypedOuter<UVoxelGraph>();
+	if (!ensure(Graph))
 	{
-		return *Parameter;
+		return;
 	}
 
-	return CachedParameter;
+	if (Graph->Parameters.FindByKey(Guid))
+	{
+		return;
+	}
+
+	const FVoxelGraphParameter* Parameter = Graph->Parameters.FindByKey(CachedParameter.Name);
+	if (Parameter &&
+		Parameter->Type == CachedParameter.Type &&
+		Parameter->ParameterType == GetParameterType())
+	{
+		// Update Guid
+		Guid = Parameter->Guid;
+		return;
+	}
+
+	// Add new parameter
+	// Regenerate guid to be safe
+	Guid = FGuid::NewGuid();
+	CachedParameter.Guid = Guid;
+
+	Graph->Parameters.Add(CachedParameter);
 }

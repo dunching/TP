@@ -8,9 +8,7 @@
 class SVoxelMembers;
 struct FVoxelGraphMembersVariableSchemaAction;
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-class SVariablePaletteItem : public SGraphPaletteItem
+class SVoxelGraphMembersVariablePaletteItem : public SGraphPaletteItem
 {
 public:
 	VOXEL_SLATE_ARGS()
@@ -34,5 +32,3 @@ private:
 	TWeakPtr<SVoxelMembers> WeakMembersWidget;
 	int32 CategoriesCount = 0;
 };
-
-END_VOXEL_NAMESPACE(Graph)

@@ -3,7 +3,6 @@
 #include "Point/VoxelPruneByBoundsNode.h"
 #include "Point/VoxelPointUtilities.h"
 #include "VoxelAABBTree.h"
-#include "VoxelGraphNodeStatInterface.h"
 #include "Buffer/VoxelStaticMeshBuffer.h"
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_PruneByBounds, Out)

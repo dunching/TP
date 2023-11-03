@@ -11,7 +11,9 @@
 #include "VoxelRuntimeParameter.h"
 
 struct FVoxelNode;
+struct FVoxelExecNode;
 struct FVoxelSubsystem;
+struct FVoxelTaskGroupScope;
 class FVoxelRuntime;
 class FVoxelDependency;
 class FVoxelDependencyTracker;
@@ -20,16 +22,14 @@ class FVoxelQueryCache;
 class FVoxelQueryContext;
 class FVoxelRuntimeInfo;
 class FVoxelParameterValues;
-class FVoxelExecNodeRuntime;
 class FVoxelInlineGraphData;
+class FVoxelExecNodeRuntimeWrapper;
 
 extern VOXELGRAPHCORE_API int32 GVoxelMaxRecursionDepth;
 
 class VOXELGRAPHCORE_API FVoxelRuntimeInfoBase
 {
 public:
-	TVoxelAtomic<bool> bIsDestroyed;
-
 	TWeakObjectPtr<UWorld> WeakWorld;
 	bool bIsGameWorld = false;
 	bool bIsPreviewScene = false;
@@ -175,6 +175,10 @@ public:
 	{
 		return *this;
 	}
+	FORCEINLINE bool ShouldExitTask() const
+	{
+		return bDestroyStarted.Load(std::memory_order_relaxed);
+	}
 	FORCEINLINE bool IsDestroyed() const
 	{
 		return bIsDestroyed.Load();
@@ -187,7 +191,14 @@ public:
 private:
 	explicit FVoxelRuntimeInfo(const FVoxelRuntimeInfoBase& RuntimeInfoBase);
 
-	friend FVoxelQueryContext;
+	TVoxelAtomic<bool> bDestroyStarted;
+	TVoxelAtomic<bool> bIsDestroyed;
+
+	FVoxelCacheLinePadding Padding;
+	mutable FThreadSafeCounter NumActiveTasks;
+
+	friend FVoxelTask;
+	friend FVoxelTaskGroupScope;
 	friend FVoxelRuntimeInfoBase;
 	template<typename>
 	friend struct TVoxelRuntimeInfo;
@@ -195,8 +206,17 @@ private:
 
 struct VOXELGRAPHCORE_API FVoxelCallstack
 {
+public:
 	FVoxelGraphNodeRef Node;
 	TSharedPtr<const FVoxelCallstack> Parent;
+
+public:
+	FORCEINLINE bool IsValid() const
+	{
+		return !Node.IsExplicitlyNull() || Parent;
+	}
+
+	FString ToDebugString() const;
 };
 
 using FVoxelComputePreviousOutput = TVoxelUniqueFunction<FVoxelFutureValue(const FVoxelQuery& Query, FName OutputName)>;
@@ -306,10 +326,6 @@ public:
 
 	VOXEL_COUNT_INSTANCES();
 
-	FORCEINLINE const FVoxelRuntimeInfo& GetRuntimeInfoRef() const
-	{
-		return *RuntimeInfo;
-	}
 	FORCEINLINE int32 GetDepth() const
 	{
 		return Path.NodeRefs.Num();
@@ -317,9 +333,7 @@ public:
 
 	TSharedRef<FVoxelQueryContext> EnterScope(const FVoxelGraphNodeRef& Node);
 	TSharedRef<FVoxelQueryContext> GetChildContext(const FVoxelChildQueryContextKey& Key);
-	TSharedRef<FVoxelExecNodeRuntime> FindOrAddExecNodeRuntime(
-		FName NodeId,
-		const TSharedRef<FVoxelExecNodeRuntime>& NodeRuntime);
+	TSharedRef<FVoxelExecNodeRuntimeWrapper> FindOrAddExecNodeRuntimeWrapper(const TSharedRef<FVoxelExecNode>& Node);
 
 private:
 	FVoxelQueryContext(
@@ -347,7 +361,7 @@ private:
 	}
 
 	FVoxelFastCriticalSection CriticalSection;
-	TVoxelAddOnlyMap<FName, TWeakPtr<FVoxelExecNodeRuntime>> NodeIdToWeakRuntime_RequiresLock;
+	TVoxelAddOnlyMap<FName, TWeakPtr<FVoxelExecNodeRuntimeWrapper>> NodeIdToWeakRuntimeWrapper_RequiresLock;
 	// Make sure to keep all child contexts alive, even if they're just scope contexts
 	TVoxelAddOnlyMap<FVoxelGraphNodeRef, TSharedPtr<FVoxelQueryContext>> ScopeToChildQueryContext_RequiresLock;
 	TVoxelAddOnlyMap<FVoxelChildQueryContextKey, TSharedPtr<FVoxelQueryContext>> KeyToChildQueryContext_RequiresLock;
@@ -392,7 +406,7 @@ public:
 	{
 		return Info == EVoxelQueryInfo::Query
 			? *QueryRuntimeInfo
-			: Context->GetRuntimeInfoRef();
+			: *Context->RuntimeInfo;
 	}
 
 	FORCEINLINE FVoxelQueryContext& GetContext() const
@@ -427,12 +441,7 @@ public:
 	}
 	FORCEINLINE FVoxelQueryCache& GetQueryCache() const
 	{
-#if VOXEL_DEBUG
-		{
-			VOXEL_SCOPE_LOCK(SharedCache->CriticalSection);
-			checkVoxelSlow(&QueryCache == SharedCache->NodePathToQueryCache_RequiresLock.FindChecked(Context->Path).Get());
-		}
-#endif
+		checkVoxelSlow(&QueryCache == &SharedCache->GetQueryCache(*Context));
 		return QueryCache;
 	}
 
@@ -446,14 +455,23 @@ public:
 		return GetParameters().Clone();
 	}
 
+public:
+	FVoxelTransformRef GetLocalToWorld() const;
+	FVoxelTransformRef GetQueryToWorld() const;
+
+	FVoxelTransformRef GetLocalToQuery() const;
+	FVoxelTransformRef GetQueryToLocal() const;
+
 private:
 	struct FSharedCache
 	{
 		mutable FVoxelFastCriticalSection CriticalSection;
-		mutable TVoxelAddOnlyMap<FVoxelNodePath, TSharedPtr<FVoxelQueryCache>> NodePathToQueryCache_RequiresLock;
+		// Key by runtime and path
+		// Path might be empty or the same for different runtimes when working with brushes
+		mutable TVoxelAddOnlyMap<TPair<TWeakPtr<const FVoxelRuntimeInfo>, FVoxelNodePath>, TSharedPtr<FVoxelQueryCache>> RuntimeInfoAndNodePathToQueryCache_RequiresLock;
 
 		FSharedCache();
-		FVoxelQueryCache& GetQueryCache(const FVoxelNodePath& Path) const;
+		FVoxelQueryCache& GetQueryCache(const FVoxelQueryContext& QueryContext) const;
 	};
 
 	// The RuntimeInfo of the object making this query

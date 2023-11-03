@@ -1,12 +1,11 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "Point/VoxelPointStorageNode.h"
 #include "Point/VoxelPointStorage.h"
 #include "Point/VoxelPointStorageData.h"
-#include "VoxelSpawnable.h"
+#include "Point/VoxelChunkedPointSet.h"
 #include "VoxelDependency.h"
 #include "VoxelBufferBuilder.h"
-#include "VoxelGraphNodeStatInterface.h"
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_ApplyPointStorage, Out)
 {
@@ -14,7 +13,7 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_ApplyPointStorage, Out)
 
 	return VOXEL_ON_COMPLETE(Points)
 	{
-		FindVoxelQueryParameter(FVoxelSpawnableRefQueryParameter, SpawnableRefQueryParameter);
+		FindVoxelQueryParameter(FVoxelPointChunkRefQueryParameter, ChunkRefQueryParameter);
 		FindVoxelPointSetAttribute(*Points, FVoxelPointAttributes::Id, FVoxelPointIdBuffer, PointIds);
 
 		const TSharedPtr<const FVoxelRuntimeParameter_PointStorage> RuntimeParameter = Query.GetInfo(EVoxelQueryInfo::Local).FindParameter<FVoxelRuntimeParameter_PointStorage>();
@@ -24,24 +23,19 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_ApplyPointStorage, Out)
 			return Points;
 		}
 
-		const FVoxelPointStorageData& PointStorageData = *RuntimeParameter->Data;
+		FVoxelPointStorageData& PointStorageData = *RuntimeParameter->Data;
 		Query.GetDependencyTracker().AddDependency(PointStorageData.Dependency);
 
-		const TSharedPtr<const FVoxelPointStorageSpawnableData> SpawnableData = PointStorageData.FindSpawnableData(SpawnableRefQueryParameter->SpawnableRef);
-		if (!SpawnableData)
-		{
-			return Points;
-		}
+		const TSharedRef<const FVoxelPointStorageChunkData> ChunkData = PointStorageData.FindOrAddChunkData(ChunkRefQueryParameter->ChunkRef);
 
-		const FVoxelPointStorageSpawnableData& Data = *SpawnableData;
+		const FVoxelPointStorageChunkData& Data = *ChunkData;
 		Query.GetDependencyTracker().AddDependency(Data.Dependency);
 
 		VOXEL_SCOPE_LOCK(Data.CriticalSection);
 
-		if (Points->Num() == 0 &&
-			Data.NewPointIds.Num() == 0)
+		if (Data.NameToAttributeOverride.Num() == 0)
 		{
-			return {};
+			return Points;
 		}
 
 		FVoxelNodeStatScope StatScope(*this, Points->Num());
@@ -58,17 +52,16 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_ApplyPointStorage, Out)
 		AttributeNames.Remove(FVoxelPointAttributes::Id);
 
 		const TSharedRef<FVoxelPointSet> NewPoints = MakeVoxelShared<FVoxelPointSet>();
-		NewPoints->SetNum(Points->Num() + Data.NewPointIds.Num());
+		NewPoints->SetNum(Points->Num());
 
 		const TSharedRef<FVoxelPointIdBufferStorage> NewPointIds = MakeVoxelShared<FVoxelPointIdBufferStorage>();
 		NewPointIds->Append(PointIds.GetStorage(), Points->Num());
-		NewPointIds->Append(Data.NewPointIds, Data.NewPointIds.Num());
 		NewPoints->Add(FVoxelPointAttributes::Id, FVoxelPointIdBuffer::Make(NewPointIds));
 
 		for (const FName AttributeName : AttributeNames)
 		{
 			const TSharedPtr<const FVoxelBuffer> ExistingBuffer = Points->Find(AttributeName);
-			const TSharedPtr<FVoxelPointStorageSpawnableData::FAttribute> AttributeOverride = Data.NameToAttributeOverride.FindRef(AttributeName);
+			const TSharedPtr<FVoxelPointStorageChunkData::FAttribute> AttributeOverride = Data.NameToAttributeOverride.FindRef(AttributeName);
 			check(ExistingBuffer || AttributeOverride);
 
 			TSharedPtr<FVoxelBufferBuilder> BufferBuilder;
@@ -83,8 +76,6 @@ DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_ApplyPointStorage, Out)
 				FVoxelPointAttributes::AddDefaulted(*BufferBuilder, AttributeName, Points->Num());
 			}
 			check(BufferBuilder->Num() == Points->Num());
-
-			FVoxelPointAttributes::AddDefaulted(*BufferBuilder, AttributeName, Data.NewPointIds.Num());
 
 			if (AttributeOverride)
 			{

@@ -134,6 +134,14 @@ public:
 		}
 		return ValueType();
 	}
+	FORCEINLINE auto* FindSharedPtr(const KeyType& Key) const
+	{
+		if (const ValueType* Value = this->Find(Key))
+		{
+			return Value->Get();
+		}
+		return nullptr;
+	}
 
 	FORCEINLINE ValueType& FindChecked(const KeyType& Key)
 	{

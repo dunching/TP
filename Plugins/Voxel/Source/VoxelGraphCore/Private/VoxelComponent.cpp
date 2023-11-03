@@ -32,7 +32,7 @@ UVoxelComponent::~UVoxelComponent()
 
 void UVoxelComponent::OnRegister()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::OnRegister();
 
@@ -44,7 +44,7 @@ void UVoxelComponent::OnRegister()
 
 void UVoxelComponent::OnUnregister()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (IsRuntimeCreated())
 	{
@@ -56,7 +56,7 @@ void UVoxelComponent::OnUnregister()
 
 void UVoxelComponent::PostLoad()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::PostLoad();
 
@@ -72,7 +72,7 @@ void UVoxelComponent::PostLoad()
 
 void UVoxelComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	// We don't want to tick the BP in preview
 	if (GetWorld()->IsGameWorld())
@@ -108,7 +108,7 @@ void UVoxelComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActor
 #if WITH_EDITOR
 void UVoxelComponent::PostEditUndo()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	Super::PostEditUndo();
 
@@ -135,7 +135,7 @@ void UVoxelComponent::PostEditUndo()
 
 void UVoxelComponent::QueueCreateRuntime()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (FVoxelRuntime::CanBeCreated(false))
 	{
@@ -149,7 +149,7 @@ void UVoxelComponent::QueueCreateRuntime()
 
 void UVoxelComponent::CreateRuntime()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	if (!FVoxelRuntime::CanBeCreated(true))
 	{
@@ -169,11 +169,13 @@ void UVoxelComponent::CreateRuntime()
 		*this,
 		{},
 		*ParameterContainer);
+
+	OnRuntimeCreated.Broadcast();
 }
 
 void UVoxelComponent::DestroyRuntime()
 {
-	VOXEL_FUNCTION_COUNTER_LLM();
+	VOXEL_FUNCTION_COUNTER();
 
 	// Clear RuntimeRecreate queue
 	bRuntimeRecreateQueued = false;
@@ -182,6 +184,8 @@ void UVoxelComponent::DestroyRuntime()
 	{
 		return;
 	}
+
+	OnRuntimeDestroyed.Broadcast();
 
 	Runtime->Destroy();
 	Runtime.Reset();

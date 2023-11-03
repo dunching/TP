@@ -325,7 +325,11 @@ struct VOXELCORE_API FVoxelBox
 	}
 	FORCEINLINE FVoxelBox Extend(const FVector3d& Amount) const
 	{
-		FVoxelBox Result = { Min - Amount, Max + Amount };
+		FVoxelBox Result;
+		// Skip constructor checks
+		Result.Min = Min - Amount;
+		Result.Max = Max + Amount;
+
 		if (Result.Min.X > Result.Max.X)
 		{
 			const double NewX = (Result.Min.X + Result.Max.X) / 2;

@@ -1,4 +1,4 @@
-﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
+// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -9,6 +9,7 @@
 #include "VoxelPointSet.generated.h"
 
 class FVoxelBufferBuilder;
+struct FVoxelGraphNodeRef;
 INTELLISENSE_ONLY(FVoxelPointId);
 
 struct VOXELGRAPHCORE_API FVoxelPointAttributes
@@ -71,6 +72,8 @@ public:
 	bool CheckNum(const FVoxelNode* Node, int32 BufferNum) const;
 	TSharedRef<FVoxelPointSet> Gather(const FVoxelInt32Buffer& Indices) const;
 	TVoxelArray<FVoxelFloatBuffer> FindCustomDatas(const FVoxelGraphNodeRef& NodeRef) const;
+	int64 GetAllocatedSize() const;
+	const TVoxelAddOnlySet<FVoxelPointId>& GetPointIdToIndex() const;
 
 public:
 	static TSharedRef<const FVoxelPointSet> Merge(TVoxelArray<TSharedRef<const FVoxelPointSet>> PointSets);
@@ -85,6 +88,9 @@ public:
 private:
 	int32 PrivateNum = 0;
 	TVoxelMap<FName, TSharedPtr<const FVoxelBuffer>> Attributes;
+
+	mutable FVoxelFastCriticalSection_NoPadding PointIdToIndexCriticalSection;
+	mutable TVoxelAddOnlySet<FVoxelPointId> PointIdToIndex_RequiresLock;
 };
 
 USTRUCT()

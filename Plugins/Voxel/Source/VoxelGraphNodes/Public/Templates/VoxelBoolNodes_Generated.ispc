@@ -58,6 +58,20 @@ export void VoxelNode_VoxelNode_Equal_Bool(const FVoxelBuffer* uniform Buffers, 
 	}
 }
 
+export void VoxelNode_VoxelNode_Equal_Byte(const FVoxelBuffer* uniform Buffers, const uniform int32 Num)
+{
+	FOREACH(Index, 0, Num)
+	{
+		const uint8 A = LoadByte(Buffers[0], Index);
+		const uint8 B = LoadByte(Buffers[1], Index);
+		bool ReturnValue;
+
+		ReturnValue = A == B;
+
+		StoreBool(Buffers[2], Index, ReturnValue);
+	}
+}
+
 export void VoxelNode_VoxelNode_Equal_Double(const FVoxelBuffer* uniform Buffers, const uniform int32 Num)
 {
 	FOREACH(Index, 0, Num)
@@ -304,6 +318,20 @@ export void VoxelNode_VoxelNode_NotEqual_Bool(const FVoxelBuffer* uniform Buffer
 	{
 		const bool A = LoadBool(Buffers[0], Index);
 		const bool B = LoadBool(Buffers[1], Index);
+		bool ReturnValue;
+
+		ReturnValue = A != B;
+
+		StoreBool(Buffers[2], Index, ReturnValue);
+	}
+}
+
+export void VoxelNode_VoxelNode_NotEqual_Byte(const FVoxelBuffer* uniform Buffers, const uniform int32 Num)
+{
+	FOREACH(Index, 0, Num)
+	{
+		const uint8 A = LoadByte(Buffers[0], Index);
+		const uint8 B = LoadByte(Buffers[1], Index);
 		bool ReturnValue;
 
 		ReturnValue = A != B;

@@ -46,7 +46,6 @@ void FVoxelRootExecuteNodeRuntime::Tick(FVoxelRuntime& Runtime)
 		return;
 	}
 
-	FVoxelQueryScope Scope(nullptr, NodeRuntime_GameThread->GetContextPtr());
 	NodeRuntime_GameThread->Tick(Runtime);
 }
 
@@ -59,7 +58,6 @@ void FVoxelRootExecuteNodeRuntime::AddReferencedObjects(FReferenceCollector& Col
 		return;
 	}
 
-	FVoxelQueryScope Scope(nullptr, NodeRuntime_GameThread->GetContextPtr());
 	NodeRuntime_GameThread->AddReferencedObjects(Collector);
 }
 
@@ -72,21 +70,7 @@ FVoxelOptionalBox FVoxelRootExecuteNodeRuntime::GetBounds() const
 		return {};
 	}
 
-	FVoxelQueryScope Scope(nullptr, NodeRuntime_GameThread->GetContextPtr());
 	return NodeRuntime_GameThread->GetBounds();
-}
-
-TVoxelFutureValue<FVoxelSpawnable> FVoxelRootExecuteNodeRuntime::GenerateSpawnable(const FVoxelMergeSpawnableRef& Ref)
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	if (!NodeRuntime_GameThread)
-	{
-		return {};
-	}
-
-	FVoxelQueryScope Scope(nullptr, NodeRuntime_GameThread->GetContextPtr());
-	return NodeRuntime_GameThread->GenerateSpawnable(Ref);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -95,7 +79,7 @@ TVoxelFutureValue<FVoxelSpawnable> FVoxelRootExecuteNodeRuntime::GenerateSpawnab
 
 DEFINE_VOXEL_NODE_COMPUTE(FVoxelNode_MergeExecs, Exec)
 {
-	const TVoxelArray<TValue<FVoxelExec>> Execs = Get(ExecsPins, Query);
+	const TVoxelArray<TValue<FVoxelExec>> Execs = Get(ExecsPins, Query.MakeNewQuery(Query.GetContext().EnterScope(GetNodeRef())));
 	return VOXEL_ON_COMPLETE(Execs)
 	{
 		FVoxelExec MergedExec;
@@ -134,7 +118,6 @@ void FVoxelMergeExecsNodeRuntime::Tick(FVoxelRuntime& Runtime)
 
 	for (const TSharedPtr<IVoxelExecNodeRuntimeInterface>& NodeRuntime : NodeRuntimes)
 	{
-		FVoxelQueryScope Scope(nullptr, NodeRuntime->GetContextPtr());
 		NodeRuntime->Tick(Runtime);
 	}
 }
@@ -145,7 +128,6 @@ void FVoxelMergeExecsNodeRuntime::AddReferencedObjects(FReferenceCollector& Coll
 
 	for (const TSharedPtr<IVoxelExecNodeRuntimeInterface>& NodeRuntime : NodeRuntimes)
 	{
-		FVoxelQueryScope Scope(nullptr, NodeRuntime->GetContextPtr());
 		NodeRuntime->AddReferencedObjects(Collector);
 	}
 }
@@ -157,31 +139,9 @@ FVoxelOptionalBox FVoxelMergeExecsNodeRuntime::GetBounds() const
 	FVoxelOptionalBox Bounds;
 	for (const TSharedPtr<IVoxelExecNodeRuntimeInterface>& NodeRuntime : NodeRuntimes)
 	{
-		FVoxelQueryScope Scope(nullptr, NodeRuntime->GetContextPtr());
 		Bounds += NodeRuntime->GetBounds();
 	}
 	return Bounds;
-}
-
-TVoxelFutureValue<FVoxelSpawnable> FVoxelMergeExecsNodeRuntime::GenerateSpawnable(const FVoxelMergeSpawnableRef& Ref)
-{
-	VOXEL_FUNCTION_COUNTER();
-
-	TVoxelFutureValue<FVoxelSpawnable> Result;
-	for (const TSharedPtr<IVoxelExecNodeRuntimeInterface>& NodeRuntime : NodeRuntimes)
-	{
-		FVoxelQueryScope Scope(nullptr, NodeRuntime->GetContextPtr());
-
-		const TVoxelFutureValue<FVoxelSpawnable> Spawnable = NodeRuntime->GenerateSpawnable(Ref);
-		if (!Spawnable.IsValid())
-		{
-			continue;
-		}
-
-		ensure(!Result.IsValid());
-		Result = Spawnable;
-	}
-	return Result;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

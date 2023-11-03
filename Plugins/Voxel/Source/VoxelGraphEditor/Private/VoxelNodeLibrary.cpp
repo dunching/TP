@@ -6,13 +6,19 @@
 
 FVoxelNodeLibrary* GVoxelNodeLibrary = nullptr;
 
-VOXEL_RUN_ON_STARTUP_EDITOR(RegisterVoxelNodeLibrary)
+VOXEL_RUN_ON_STARTUP_EDITOR_COOK(RegisterVoxelNodeLibrary)
 {
 	GVoxelNodeLibrary = new FVoxelNodeLibrary();
 	GOnVoxelModuleUnloaded_DoCleanup.AddLambda([]
 	{
 		delete GVoxelNodeLibrary;
 		GVoxelNodeLibrary = nullptr;
+	});
+
+	FCoreUObjectDelegates::ReloadCompleteDelegate.AddLambda([](EReloadCompleteReason)
+	{
+		delete GVoxelNodeLibrary;
+		GVoxelNodeLibrary = new FVoxelNodeLibrary();
 	});
 }
 
@@ -39,7 +45,7 @@ FVoxelNodeLibrary::FVoxelNodeLibrary()
 				continue;
 			}
 
-			FVoxelFunctionNode* Node = new FVoxelFunctionNode();
+			FVoxelFunctionNode* Node = new (GVoxelMemory) FVoxelFunctionNode();
 			Node->SetFunction_EditorOnly(Function);
 			Nodes.Add(Node);
 		}
@@ -191,7 +197,7 @@ FVoxelNodeLibrary::~FVoxelNodeLibrary()
 {
 	for (const FVoxelNode* Node : Nodes)
 	{
-		delete Node;
+		FVoxelMemory::Delete(Node);
 	}
 }
 

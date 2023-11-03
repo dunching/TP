@@ -10,7 +10,7 @@ struct FStreamableHandle;
 class FVoxelWorldChannel;
 class FVoxelChannelManager;
 
-USTRUCT(DisplayName = "Channel")
+USTRUCT(BlueprintType, DisplayName = "Voxel Channel")
 struct VOXELGRAPHCORE_API FVoxelChannelName
 {
 	GENERATED_BODY()
@@ -257,16 +257,16 @@ private:
 	friend class FVoxelWorldChannel;
 };
 
-class VOXELGRAPHCORE_API FVoxelRuntimeChannelCache
+class VOXELGRAPHCORE_API FVoxelRuntimeChannelCache : public TSharedFromThis<FVoxelRuntimeChannelCache>
 {
 public:
-	FVoxelRuntimeChannelCache() = default;
-
-	VOXEL_COUNT_INSTANCES();
+	static TSharedRef<FVoxelRuntimeChannelCache> Create();
 
 private:
 	FVoxelFastCriticalSection CriticalSection;
 	TVoxelMap<FName, TSharedPtr<FVoxelRuntimeChannel>> Channels_RequiresLock;
+
+	FVoxelRuntimeChannelCache() = default;
 
 	friend class FVoxelWorldChannel;
 };
@@ -287,6 +287,8 @@ public:
 	TSharedRef<FVoxelRuntimeChannel> GetRuntimeChannel(
 		const FVoxelTransformRef& RuntimeLocalToWorld,
 		FVoxelRuntimeChannelCache& Cache);
+
+	void DrawBrushBounds(FObjectKey World) const;
 
 private:
 	mutable FVoxelFastCriticalSection CriticalSection;
@@ -309,23 +311,22 @@ private:
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class VOXELGRAPHCORE_API FVoxelWorldChannelManager : public TSharedFromThis<FVoxelWorldChannelManager>
+class VOXELGRAPHCORE_API FVoxelWorldChannelManager : public IVoxelWorldSubsystem
 {
 public:
-	const FObjectKey World;
+	GENERATED_VOXEL_WORLD_SUBSYSTEM_BODY(FVoxelWorldChannelManager);
 
 	bool RegisterChannel(const FVoxelChannelDefinition& ChannelDefinition);
 	TSharedPtr<FVoxelWorldChannel> FindChannel(FName Name);
 	TArray<FName> GetValidChannelNames() const;
 
+	//~ Begin IVoxelWorldSubsystem Interface
+	virtual void Tick() override;
+	//~ End IVoxelWorldSubsystem Interface
+
 private:
 	mutable FVoxelFastCriticalSection CriticalSection;
 	TVoxelMap<FName, TSharedPtr<FVoxelWorldChannel>> Channels_RequiresLock;
-
-	explicit FVoxelWorldChannelManager(const FObjectKey& World)
-		: World(World)
-	{
-	}
 
 	friend class FVoxelChannelManager;
 };
@@ -336,19 +337,16 @@ private:
 
 extern VOXELGRAPHCORE_API FVoxelChannelManager* GVoxelChannelManager;
 
-class VOXELGRAPHCORE_API FVoxelChannelManager
-	: public FVoxelTicker
-	, public FGCObject
+class VOXELGRAPHCORE_API FVoxelChannelManager : public FVoxelSingleton
 {
 public:
-	FSimpleMulticastDelegate OnChannelDefinitionsChanged;
+	FSimpleMulticastDelegate OnChannelDefinitionsChanged_GameThread;
 
 	bool IsReady(bool bLog) const;
 
 	TArray<FName> GetValidChannelNames() const;
 	TArray<const UObject*> GetChannelAssets() const;
 	TOptional<FVoxelChannelDefinition> FindChannelDefinition(FName Name) const;
-	TSharedRef<FVoxelWorldChannelManager> GetWorldChannelManager(FObjectKey World);
 
 	void LogAllBrushes_GameThread();
 	void LogAllChannels_GameThread();
@@ -365,14 +363,11 @@ public:
 		bRefreshQueued = false;
 	}
 
-	//~ Begin FVoxelTicker Interface
+	//~ Begin FVoxelSingleton Interface
+	virtual void Initialize() override;
 	virtual void Tick() override;
-	//~ End FVoxelTicker Interface
-
-	//~ Begin FGCObject Interface
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	virtual FString GetReferencerName() const override;
-	//~ End FGCObject Interface
+	//~ End FVoxelSingleton Interface
 
 private:
 	bool bRefreshQueued = false;
@@ -380,6 +375,5 @@ private:
 	TVoxelArray<TSharedPtr<FStreamableHandle>> PendingHandles;
 
 	mutable FVoxelFastCriticalSection CriticalSection;
-	TVoxelMap<FObjectKey, TSharedPtr<FVoxelWorldChannelManager>> WorldToChannelManager_RequiresLock;
 	TVoxelMap<const UObject*, TVoxelMap<FName, FVoxelChannelDefinition>> AssetToChannelDefinitions_RequiresLock;
 };

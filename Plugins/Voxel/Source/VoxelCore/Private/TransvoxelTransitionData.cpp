@@ -34,7 +34,8 @@
 //
 //================================================================================
 
-BEGIN_VOXEL_NAMESPACE(Transvoxel, Transition)
+namespace Voxel::Transvoxel::Transition
+{
 
 const TConstArray<FCellClass, 512> CellCodeToCellClass =
 {
@@ -655,4 +656,4 @@ const TConstArray<FVertexDatas, 512> CellCodeToVertexDatas
 	{ Make<0, 0>(), Make<0, 2>(), Make<9, 5>(), Make<9, 4>() },
 };
 
-END_VOXEL_NAMESPACE(Transvoxel, Transition)
+}

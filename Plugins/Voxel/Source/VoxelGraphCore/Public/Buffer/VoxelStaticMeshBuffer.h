@@ -54,11 +54,11 @@ struct VOXELGRAPHCORE_API FVoxelStaticMeshPinType : public FVoxelObjectPinType
 	{
 		if (bSetObject)
 		{
-			Object = Struct.StaticMesh.Get();
+			Object = Struct.StaticMesh;
 		}
 		else
 		{
-			Struct = FVoxelStaticMesh::Make(Object);
+			Struct = FVoxelStaticMesh::Make(Object.Get());
 		}
 	}
 };

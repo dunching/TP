@@ -27,7 +27,10 @@ public:
 	int32 GetLOD() const;
 
 	UFUNCTION(Category = "Misc")
-	FVoxelBox GetSpawnableBounds() const;
+	FVoxelBox GetPointChunkBounds() const;
+
+	UFUNCTION(Category = "Misc")
+	ECollisionEnabled::Type GetCollisionEnabled(const FBodyInstance& BodyInstance) const;
 
 public:
 	UFUNCTION(Category = "Misc")
@@ -66,6 +69,7 @@ public:
 	bool IsServer() const;
 
 public:
+	// Returns the transform of the current actor/brush
 	UFUNCTION(Category = "Actor")
 	FTransform GetTransform() const;
 

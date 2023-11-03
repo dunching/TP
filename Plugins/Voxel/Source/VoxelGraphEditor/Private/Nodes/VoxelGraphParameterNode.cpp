@@ -1,48 +1,7 @@
 // Copyright Voxel Plugin, Inc. All Rights Reserved.
 
 #include "VoxelGraphParameterNode.h"
-#include "VoxelTransaction.h"
-#include "VoxelGraphSchema.h"
 #include "VoxelGraphToolkit.h"
-
-void UVoxelGraphParameterNode::PostPasteNode()
-{
-	Super::PostPasteNode();
-
-	UVoxelGraph* Graph = GetTypedOuter<UVoxelGraph>();
-	if (!ensure(Graph))
-	{
-		return;
-	}
-
-	if (Graph->Parameters.FindByKey(Guid))
-	{
-		return;
-	}
-
-	const FVoxelGraphParameter* Parameter = Graph->Parameters.FindByKey(CachedParameter.Name);
-	if (Parameter &&
-		Parameter->Type == CachedParameter.Type &&
-		Parameter->ParameterType == EVoxelGraphParameterType::Parameter)
-	{
-		// Update Guid
-		Guid = Parameter->Guid;
-		return;
-	}
-
-	// Add new parameter
-	// Regenerate guid to be safe
-	Guid = FGuid::NewGuid();
-	CachedParameter.Guid = Guid;
-
-	Graph->Parameters.Add(CachedParameter);
-
-	ensure(Graph->Parameters.Last().Guid == CachedParameter.Guid);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
 
 void UVoxelGraphParameterNode::AllocateParameterPins(const FVoxelGraphParameter& Parameter)
 {
@@ -70,17 +29,18 @@ FText UVoxelGraphParameterNode::GetNodeTitle(ENodeTitleType::Type TitleType) con
 	return FText::FromName(GetParameterSafe().Name);
 }
 
-FLinearColor UVoxelGraphParameterNode::GetNodeTitleColor() const
-{
-	return GetSchema()->GetPinTypeColor(GetParameterSafe().Type.GetEdGraphPinType());
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
 bool UVoxelGraphParameterNode::CanPromotePin(const UEdGraphPin& Pin, FVoxelPinTypeSet& OutTypes) const
 {
+	if (Pin.ParentPin ||
+		Pin.bOrphanedPin)
+	{
+		return false;
+	}
+
 	const FVoxelGraphParameter* Parameter = GetParameter();
 	if (!Parameter)
 	{

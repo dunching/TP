@@ -2,16 +2,13 @@
 
 #include "VoxelGraphInterfaceThumbnailRenderer.h"
 #include "VoxelActor.h"
+#include "VoxelGraph.h"
 #include "VoxelRuntime.h"
+#include "VoxelSettings.h"
 #include "SceneView.h"
 #include "Engine/Texture2D.h"
 
 DEFINE_VOXEL_THUMBNAIL_RENDERER(UVoxelGraphInterfaceThumbnailRenderer, UVoxelGraphInterface);
-
-VOXEL_CONSOLE_VARIABLE(
-	VOXELGRAPHEDITOR_API, bool, GVoxelEnableGraphThumbnails, true,
-	"voxel.EnableGraphThumbnails",
-	"");
 
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -65,6 +62,25 @@ void UVoxelGraphInterfaceThumbnailRenderer::BeginDestroy()
 	Super::BeginDestroy();
 }
 
+bool UVoxelGraphInterfaceThumbnailRenderer::CanVisualizeAsset(UObject* Object)
+{
+	const UVoxelGraphInterface* GraphInterface = Cast<UVoxelGraphInterface>(Object);
+	if (!ensure(GraphInterface))
+	{
+		return false;
+	}
+
+	if (!GetDefault<UVoxelSettings>()->bEnableGraphThumbnails)
+	{
+		return false;
+	}
+
+	const UVoxelGraph* Graph = GraphInterface->GetGraph();
+	return
+		Graph &&
+		Graph->bEnableThumbnail;
+}
+
 void UVoxelGraphInterfaceThumbnailRenderer::Draw(
 	UObject* Object,
 	const int32 X,
@@ -76,11 +92,7 @@ void UVoxelGraphInterfaceThumbnailRenderer::Draw(
 	const bool bAdditionalViewFamily)
 {
 	VOXEL_FUNCTION_COUNTER();
-
-	if (!GVoxelEnableGraphThumbnails)
-	{
-		return;
-	}
+	ensure(CanVisualizeAsset(Object));
 
 	const TSharedRef<FVoxelMessageSinkConsumer> MessageConsumer = MakeVoxelShared<FVoxelMessageSinkConsumer>();
 	const FVoxelScopedMessageConsumer ScopedMessageConsumer = FVoxelScopedMessageConsumer(MessageConsumer);

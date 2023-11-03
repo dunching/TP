@@ -8,9 +8,7 @@
 
 TSharedRef<SWidget> FVoxelGraphMembersMacroLibrarySchemaAction::CreatePaletteWidget(FCreateWidgetForActionData* const InCreateData) const
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
-	return SNew(SMacroLibraryPaletteItem, InCreateData);
+	return SNew(SVoxelGraphMembersMacroLibraryPaletteItem, InCreateData);
 }
 
 void FVoxelGraphMembersMacroLibrarySchemaAction::OnDelete() const

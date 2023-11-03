@@ -4,30 +4,35 @@
 
 #include "VoxelMinimal.h"
 #include "VoxelTask.h"
+#include "VoxelQuery.h"
 
-class FVoxelQueryContext;
 extern VOXELGRAPHCORE_API const uint32 GVoxelTaskGroupTLS;
 
 class VOXELGRAPHCORE_API FVoxelTaskGroup : public TSharedFromThis<FVoxelTaskGroup>
 {
 public:
 	const FName Name;
+	const FName InstanceStatName;
+	const FName GraphStatName;
+	const FName CallstackStatName;
 	const bool bIsSynchronous;
-	const bool bParallelTasks;
 	const FVoxelTaskPriority Priority;
-	const TSharedRef<FVoxelQueryContext> Context;
 	const TSharedRef<FVoxelTaskReferencer> Referencer;
+	const TSharedRef<const FVoxelRuntimeInfo> RuntimeInfo;
+	const TSharedRef<const FVoxelQueryContext> Context;
+
+	VOXEL_COUNT_INSTANCES();
 
 	static TSharedRef<FVoxelTaskGroup> Create(
 		FName Name,
 		const FVoxelTaskPriority& Priority,
-		const TSharedRef<FVoxelQueryContext>& Context,
-		const TSharedRef<FVoxelTaskReferencer>& Referencer);
+		const TSharedRef<FVoxelTaskReferencer>& Referencer,
+		const TSharedRef<const FVoxelQueryContext>& Context);
 
 	static TSharedRef<FVoxelTaskGroup> CreateSynchronous(
 		FName Name,
-		const TSharedRef<FVoxelQueryContext>& Context,
-		const TSharedRef<FVoxelTaskReferencer>& Referencer);
+		const TSharedRef<FVoxelTaskReferencer>& Referencer,
+		const TSharedRef<const FVoxelQueryContext>& Context);
 
 	static TSharedRef<FVoxelTaskGroup> CreateSynchronous(
 		const TSharedRef<FVoxelQueryContext>& Context);
@@ -67,6 +72,39 @@ public:
 	bool TryRunSynchronously_Ensure();
 
 public:
+	static void StartAsyncTaskGeneric(
+		FName Name,
+		const TSharedRef<FVoxelQueryContext>& Context,
+		const FVoxelPinType& Type,
+		TVoxelUniqueFunction<FVoxelFutureValue()> MakeFuture,
+		TFunction<void(const FVoxelRuntimePinValue&)> Callback);
+
+	template<typename T>
+	static void StartAsyncTask(
+		const FName Name,
+		const TSharedRef<FVoxelQueryContext>& Context,
+		TVoxelUniqueFunction<TVoxelFutureValue<T>()> MakeFuture,
+		TFunction<void(const typename TChooseClass<VoxelPassByValue<T>, T, TSharedRef<const T>>::Result&)> Callback)
+	{
+		FVoxelTaskGroup::StartAsyncTaskGeneric(
+			Name,
+			Context,
+			FVoxelPinType::Make<T>(),
+			MoveTemp(ReinterpretCastRef<TVoxelUniqueFunction<FVoxelFutureValue()>>(MakeFuture)),
+			[Callback = MoveTemp(Callback)](const FVoxelRuntimePinValue& Value)
+			{
+				if constexpr (VoxelPassByValue<T>)
+				{
+					Callback(Value.Get<T>());
+				}
+				else
+				{
+					Callback(Value.GetSharedStruct<T>());
+				}
+			});
+	}
+
+public:
 	FORCEINLINE FVoxelTaskReferencer& GetReferencer() const
 	{
 		return *Referencer;
@@ -92,7 +130,15 @@ public:
 public:
 	FORCEINLINE bool ShouldExit() const
 	{
-		return !bIsSynchronous && IsSharedFromThisUnique(this);
+		if (RuntimeInfo->ShouldExitTask())
+		{
+			return true;
+		}
+		if (bIsSynchronous)
+		{
+			return false;
+		}
+		return IsSharedFromThisUnique(this);
 	}
 	FORCEINLINE static FVoxelTaskGroup& Get()
 	{
@@ -118,26 +164,25 @@ private:
 		FName Name,
 		bool bIsSynchronous,
 		const FVoxelTaskPriority& Priority,
-		const TSharedRef<FVoxelQueryContext>& Context,
-		const TSharedRef<FVoxelTaskReferencer>& Referencer);
+		const TSharedRef<FVoxelTaskReferencer>& Referencer,
+		const TSharedRef<const FVoxelQueryContext>& Context);
 };
 
 struct VOXELGRAPHCORE_API FVoxelTaskGroupScope
 {
 public:
-	const TSharedRef<FVoxelTaskGroup> Group;
+	FVoxelTaskGroupScope() = default;
+	~FVoxelTaskGroupScope();
 
-	FORCEINLINE explicit FVoxelTaskGroupScope(FVoxelTaskGroup& Group)
-		: Group(Group.AsShared())
+	UE_NODISCARD bool Initialize(FVoxelTaskGroup& NewGroup);
+
+	FORCEINLINE FVoxelTaskGroup& GetGroup() const
 	{
-		PreviousTLS = FPlatformTLS::GetTlsValue(GVoxelTaskGroupTLS);
-		FPlatformTLS::SetTlsValue(GVoxelTaskGroupTLS, &Group);
-	}
-	FORCEINLINE ~FVoxelTaskGroupScope()
-	{
-		FPlatformTLS::SetTlsValue(GVoxelTaskGroupTLS, PreviousTLS);
+		return *Group;
 	}
 
 private:
+	TSharedPtr<FVoxelTaskGroup> Group;
 	void* PreviousTLS = nullptr;
+	double StartTime = FPlatformTime::Seconds();
 };

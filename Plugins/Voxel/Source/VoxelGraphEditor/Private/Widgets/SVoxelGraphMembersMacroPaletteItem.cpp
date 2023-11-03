@@ -3,9 +3,7 @@
 #include "SVoxelGraphMembersMacroPaletteItem.h"
 #include "SchemaActions/VoxelGraphMembersMacroSchemaAction.h"
 
-BEGIN_VOXEL_NAMESPACE(Graph)
-
-void SMacroPaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActionData* const InCreateData)
+void SVoxelGraphMembersMacroPaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActionData* const InCreateData)
 {
 	ActionPtr = InCreateData->Action;
 
@@ -38,7 +36,7 @@ void SMacroPaletteItem::Construct(const FArguments& InArgs, FCreateWidgetForActi
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedRef<SWidget> SMacroPaletteItem::CreateTextSlotWidget(FCreateWidgetForActionData* const InCreateData, TAttribute<bool> bIsReadOnly)
+TSharedRef<SWidget> SVoxelGraphMembersMacroPaletteItem::CreateTextSlotWidget(FCreateWidgetForActionData* const InCreateData, TAttribute<bool> bIsReadOnly)
 {
 	if (InCreateData->bHandleMouseButtonDown)
 	{
@@ -50,10 +48,10 @@ TSharedRef<SWidget> SMacroPaletteItem::CreateTextSlotWidget(FCreateWidgetForActi
 		+ SOverlay::Slot()
 		[
 			SAssignNew(InlineRenameWidget, SInlineEditableTextBlock)
-			.Text(this, &SMacroPaletteItem::GetDisplayText)
+			.Text(this, &SVoxelGraphMembersMacroPaletteItem::GetDisplayText)
 			.HighlightText(InCreateData->HighlightText)
-			.OnVerifyTextChanged(this, &SMacroPaletteItem::OnNameTextVerifyChanged)
-			.OnTextCommitted(this, &SMacroPaletteItem::OnNameTextCommitted)
+			.OnVerifyTextChanged(this, &SVoxelGraphMembersMacroPaletteItem::OnNameTextVerifyChanged)
+			.OnTextCommitted(this, &SVoxelGraphMembersMacroPaletteItem::OnNameTextCommitted)
 			.IsSelected(InCreateData->IsRowSelectedDelegate)
 			.IsReadOnly(bIsReadOnly)
 		];
@@ -63,7 +61,7 @@ TSharedRef<SWidget> SMacroPaletteItem::CreateTextSlotWidget(FCreateWidgetForActi
 	return DisplayWidget;
 }
 
-void SMacroPaletteItem::OnNameTextCommitted(const FText& NewText, ETextCommit::Type InTextCommit)
+void SVoxelGraphMembersMacroPaletteItem::OnNameTextCommitted(const FText& NewText, ETextCommit::Type InTextCommit)
 {
 	const TSharedPtr<FVoxelGraphMembersMacroSchemaAction> Action = GetAction();
 	if (!ensure(Action))
@@ -74,7 +72,7 @@ void SMacroPaletteItem::OnNameTextCommitted(const FText& NewText, ETextCommit::T
 	Action->SetName(NewText.ToString());
 }
 
-FText SMacroPaletteItem::GetDisplayText() const
+FText SVoxelGraphMembersMacroPaletteItem::GetDisplayText() const
 {
 	const TSharedPtr<FVoxelGraphMembersMacroSchemaAction> Action = GetAction();
 	if (!ensure(Action))
@@ -89,7 +87,7 @@ FText SMacroPaletteItem::GetDisplayText() const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-TSharedPtr<FVoxelGraphMembersMacroSchemaAction> SMacroPaletteItem::GetAction() const
+TSharedPtr<FVoxelGraphMembersMacroSchemaAction> SVoxelGraphMembersMacroPaletteItem::GetAction() const
 {
 	const TSharedPtr<FEdGraphSchemaAction> Action = ActionPtr.Pin();
 	if (!Action)
@@ -99,5 +97,3 @@ TSharedPtr<FVoxelGraphMembersMacroSchemaAction> SMacroPaletteItem::GetAction() c
 
 	return StaticCastSharedPtr<FVoxelGraphMembersMacroSchemaAction>(Action);
 }
-
-END_VOXEL_NAMESPACE(Graph)

@@ -1,14 +1,14 @@
 ﻿// Copyright Voxel Plugin, Inc. All Rights Reserved.
 
-#include "SVoxelChannelEditor.h"
+#include "Widgets/SVoxelChannelEditor.h"
 
 #include "VoxelChannel.h"
 #include "VoxelSettings.h"
 #include "VoxelGraphVisuals.h"
 #include "Customizations/VoxelChannelEditorDefinitionCustomization.h"
 
-#include "ContentBrowserModule.h"
 #include "IStructureDetailsView.h"
+#include "SVoxelReadWriteFilePermissions.h"
 
 void SVoxelChannelEditor::Construct(const FArguments& InArgs)
 {
@@ -17,7 +17,6 @@ void SVoxelChannelEditor::Construct(const FArguments& InArgs)
 	OnChannelSelectedDelegate = InArgs._OnChannelSelected;
 
 	MapChannels();
-	CreateDetailsView();
 
 	ChildSlot
 	[
@@ -26,66 +25,6 @@ void SVoxelChannelEditor::Construct(const FArguments& InArgs)
 		.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
 		[
 			SNew(SVerticalBox)
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.VAlign(VAlign_Top)
-			[
-				SNew(SCheckBox)
-				.IsChecked_Lambda([this]
-				{
-					return bAddNewVisible ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-				})
-				.OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState)
-				{
-					bAddNewVisible = NewState == ECheckBoxState::Checked;
-				})
-				.CheckedImage(FAppStyle::GetBrush("TreeArrow_Expanded"))
-				.CheckedHoveredImage(FAppStyle::GetBrush("TreeArrow_Expanded_Hovered"))
-				.CheckedPressedImage(FAppStyle::GetBrush("TreeArrow_Expanded"))
-				.UncheckedImage(FAppStyle::GetBrush("TreeArrow_Collapsed"))
-				.UncheckedHoveredImage(FAppStyle::GetBrush("TreeArrow_Collapsed_Hovered"))
-				.UncheckedPressedImage(FAppStyle::GetBrush("TreeArrow_Collapsed"))
-				[
-					SNew(STextBlock)
-					.Text(INVTEXT("Add/Edit Channel"))
-				]
-			]
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.VAlign(VAlign_Top)
-			[
-				SNew(SBox)
-				.MaxDesiredWidth(328.f)
-				[
-					SNew(SBorder)
-					.BorderImage(FAppStyle::Get().GetBrush("Brushes.Recessed"))
-					.Padding(16.f, 3.f)
-					[
-						SNew(SVerticalBox)
-						.Visibility_Lambda( [this]
-						{
-							return bAddNewVisible ? EVisibility::Visible : EVisibility::Collapsed;
-						})
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						[
-							DetailsView->GetWidget().ToSharedRef()
-						]
-						+ SVerticalBox::Slot()
-						.AutoHeight()
-						.HAlign(HAlign_Center)
-						.Padding(2.f)
-						[
-							SNew(SButton)
-							.Text_Lambda([this]
-							{
-								return AddEditButtonText;
-							})
-							.OnClicked(FOnClicked::CreateSP(this, &SVoxelChannelEditor::OnCreateEditChannelClicked))
-						]
-					]
-				]
-			]
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			.VAlign(VAlign_Top)
@@ -104,7 +43,7 @@ void SVoxelChannelEditor::Construct(const FArguments& InArgs)
 
 						return FReply::Handled();
 					})
-					.Text(INVTEXT("Expand All"))
+					.Text(INVTEXT("Expand"))
 				]
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -115,7 +54,7 @@ void SVoxelChannelEditor::Construct(const FArguments& InArgs)
 						ChannelsTreeWidget->ClearExpandedItems();
 						return FReply::Handled();
 					})
-					.Text(INVTEXT("Collapse All"))
+					.Text(INVTEXT("Collapse"))
 				]
 				+ SHorizontalBox::Slot()
 				.VAlign(VAlign_Center)
@@ -140,11 +79,17 @@ void SVoxelChannelEditor::Construct(const FArguments& InArgs)
 					.TreeItemsSource(&ChannelItems)
 					.OnGenerateRow(this, &SVoxelChannelEditor::OnGenerateRow)
 					.OnGetChildren(this, &SVoxelChannelEditor::OnGetChildren)
+					.OnSelectionChanged(this, &SVoxelChannelEditor::OnSelectionChanged)
 					.SelectionMode(ESelectionMode::Single)
 				]
 			]
 		]
 	];
+
+	if (const TSharedPtr<FChannelNode> ChannelNode = AllChannels.FindRef(SelectedChannel))
+	{
+		ChannelsTreeWidget->SetSelection(ChannelNode);
+	}
 
 	FilterChannels(true);
 }
@@ -172,7 +117,6 @@ FVector2D SVoxelChannelEditor::ComputeDesiredSize(const float LayoutScaleMultipl
 
 TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode> InItem, const TSharedRef<STableViewBase>& OwnerTable)
 {
-	TSharedPtr<SWidget> CheckBox = SNullWidget::NullWidget;
 	TSharedPtr<SWidget> TypeBox = SNullWidget::NullWidget;
 
 	if (!InItem->bIsCategory)
@@ -180,23 +124,6 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 		TOptional<FVoxelChannelDefinition> ChannelDef = GVoxelChannelManager->FindChannelDefinition(InItem->FullPath);
 		if (ChannelDef.IsSet())
 		{
-			CheckBox =
-				SNew(SCheckBox)
-				.OnCheckStateChanged_Lambda([this, InItem](const ECheckBoxState NewState)
-				{
-					if (NewState != ECheckBoxState::Checked)
-					{
-						return;
-					}
-
-					OnChannelSelectedDelegate.ExecuteIfBound(InItem->FullPath);
-					SelectedChannel = InItem->FullPath;
-				})
-				.IsChecked_Lambda([this, InItem]
-				{
-					return SelectedChannel == InItem->FullPath ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-				});
-
 			TypeBox =
 				SNew(SImage)
 				.Image(FVoxelGraphVisuals::GetPinIcon(ChannelDef->Type).GetIcon())
@@ -207,12 +134,6 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 
 	const TSharedRef<SHorizontalBox> HorizontalBox =
 		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		  .AutoWidth()
-		  .HAlign(HAlign_Left)
-		[
-			CheckBox.ToSharedRef()
-		]
 		+ SHorizontalBox::Slot()
 		  .AutoWidth()
 		  .Padding(1.f)
@@ -245,7 +166,7 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 			.ContentPadding(2.f)
 			.ForegroundColor(FSlateColor::UseForeground())
 			.IsFocusable(false)
-			.OnClicked(FOnClicked::CreateSP(this, &SVoxelChannelEditor::OnAddSubChannelClicked, InItem))
+			.OnClicked(this, &SVoxelChannelEditor::OnAddSubChannelClicked, InItem)
 			[
 				SNew(SImage)
 				.Image(FAppStyle::GetBrush("Icons.PlusCircle"))
@@ -255,7 +176,7 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 
 	if (InItem->bIsCategory)
 	{
-		if (!InItem->Parent &&
+		if (!InItem->Parent.IsValid() &&
 			Cast<UVoxelChannelRegistry>(InItem->Owner.Get()))
 		{
 			HorizontalBox->AddSlot()
@@ -269,7 +190,7 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 				.ContentPadding(2.f)
 				.ForegroundColor(FSlateColor::UseForeground())
 				.IsFocusable(false)
-				.OnClicked(FOnClicked::CreateSP(this, &SVoxelChannelEditor::OnBrowseToChannel, InItem))
+				.OnClicked(this, &SVoxelChannelEditor::OnBrowseToChannel, InItem)
 				[
 					SNew(SImage)
 					.Image(FAppStyle::GetBrush("Icons.BrowseContent"))
@@ -291,7 +212,7 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 			.ContentPadding(2.f)
 			.ForegroundColor(FSlateColor::UseForeground())
 			.IsFocusable(false)
-			.OnClicked(FOnClicked::CreateSP(this, &SVoxelChannelEditor::OnEditChannelClicked, InItem))
+			.OnClicked(this, &SVoxelChannelEditor::OnEditChannelClicked, InItem)
 			[
 				SNew(SImage)
 				.Image(FAppStyle::GetBrush("Icons.Edit"))
@@ -310,7 +231,7 @@ TSharedRef<ITableRow> SVoxelChannelEditor::OnGenerateRow(TSharedPtr<FChannelNode
 			.ContentPadding(2.f)
 			.ForegroundColor(FSlateColor::UseForeground())
 			.IsFocusable(false)
-			.OnClicked(FOnClicked::CreateSP(this, &SVoxelChannelEditor::OnDeleteChannelClicked, InItem))
+			.OnClicked(this, &SVoxelChannelEditor::OnDeleteChannelClicked, InItem)
 			[
 				SNew(SImage)
 				.Image(FAppStyle::GetBrush("Icons.Delete"))
@@ -345,44 +266,77 @@ void SVoxelChannelEditor::OnGetChildren(const TSharedPtr<FChannelNode> Item, TAr
 	});
 }
 
+void SVoxelChannelEditor::OnSelectionChanged(TSharedPtr<FChannelNode> ChannelNode, const ESelectInfo::Type SelectType)
+{
+	if (SelectType != ESelectInfo::OnMouseClick ||
+		!ChannelNode)
+	{
+		return;
+	}
+
+	if (ChannelNode->bIsCategory)
+	{
+		if (const TSharedPtr<FChannelNode> SelectedChannelNode = AllChannels.FindRef(SelectedChannel))
+		{
+			ChannelsTreeWidget->SetSelection(SelectedChannelNode);
+		}
+
+		return;
+	}
+
+	OnChannelSelectedDelegate.ExecuteIfBound(ChannelNode->FullPath);
+}
+
 FReply SVoxelChannelEditor::OnAddSubChannelClicked(TSharedPtr<FChannelNode> Item)
 {
-	bAddNewVisible = true;
 	AddEditButtonText = INVTEXT("Add new Channel");
 
-	FName FullPath = FName(Item->FullPath.ToString() + ".MyChannel");
+	FName FullPath = FName((Item ? Item->FullPath.ToString() : "Project") + ".MyChannel");
 	while (AllChannels.Contains(FullPath))
 	{
 		FullPath.SetNumber(FullPath.GetNumber() + 1);
 	}
 
-	FVoxelChannelEditorDefinition* ChannelDefinition = StructOnScope->Get();
-	ChannelDefinition->bEditChannel = false;
-	ChannelDefinition->SaveLocation = Item->Owner;
-	ChannelDefinition->Name = FName(FullPath.ToString().RightChop(FullPath.ToString().Find(".") + 1));
+	FVoxelChannelEditorDefinition Def;
+	Def.bEditChannel = false;
+	Def.SaveLocation = Item ? Item->Owner : GetMutableDefault<UVoxelSettings>();
+	Def.Type = FVoxelPinType::Make<float>().GetBufferType();
+	Def.DefaultValue = FVoxelPinValue(Def.Type.GetExposedType());
+	Def.Name = FName(FullPath.ToString().RightChop(FullPath.ToString().Find(".") + 1));
 
-	DetailsView->GetDetailsView()->ForceRefresh();
+	TSet<FName> ChannelsList;
+	AllChannels.GetKeys(ChannelsList);
+	SVoxelChannelEditDialog::EditChannel(ChannelsList, Def, OnChannelSelectedDelegate);
+
 	return FReply::Handled();
 }
 
 FReply SVoxelChannelEditor::OnEditChannelClicked(TSharedPtr<FChannelNode> Item)
 {
-	bAddNewVisible = true;
 	AddEditButtonText = INVTEXT("Edit Channel");
 
-	FVoxelChannelEditorDefinition* ChannelDefinition = StructOnScope->Get();
-	ChannelDefinition->bEditChannel = true;
-	ChannelDefinition->SaveLocation = Item->Owner;
-	ChannelDefinition->Name = FName(Item->FullPath.ToString().RightChop(Item->FullPath.ToString().Find(".") + 1));
+	FVoxelChannelEditorDefinition ChannelToEdit;
+	ChannelToEdit.bEditChannel = true;
+	ChannelToEdit.SaveLocation = Item->Owner;
+	ChannelToEdit.Name = FName(Item->FullPath.ToString().RightChop(Item->FullPath.ToString().Find(".") + 1));
 
 	TOptional<FVoxelChannelDefinition> ChannelDef = GVoxelChannelManager->FindChannelDefinition(Item->FullPath);
 	if (ensure(ChannelDef.IsSet()))
 	{
-		ChannelDefinition->Type = ChannelDef->Type;
-		ChannelDefinition->DefaultValue = ChannelDef->GetExposedDefaultValue();
+		ChannelToEdit.Type = ChannelDef->Type;
+		ChannelToEdit.DefaultValue = ChannelDef->GetExposedDefaultValue();
+	}
+	else
+	{
+		ChannelToEdit.Type = FVoxelPinType::Make<float>().GetBufferType();
+		ChannelToEdit.DefaultValue = FVoxelPinValue(ChannelToEdit.Type.GetExposedType());
 	}
 
-	DetailsView->GetDetailsView()->ForceRefresh();
+	TSet<FName> ChannelsList;
+	AllChannels.GetKeys(ChannelsList);
+
+	SVoxelChannelEditDialog::EditChannel(ChannelsList, ChannelToEdit, OnChannelSelectedDelegate);
+
 	return FReply::Handled();
 }
 
@@ -395,19 +349,9 @@ FReply SVoxelChannelEditor::OnDeleteChannelClicked(TSharedPtr<FChannelNode> Item
 	}
 
 	const FName FullPath = FName(Item->FullPath.ToString().RightChop(Item->FullPath.ToString().Find(".") + 1));
+	if (!SVoxelReadWriteFilePermissionsPopup::PromptForPermissions(GetChannelFilePath(SaveLocation)))
 	{
-		const FString TargetName = Cast<UVoxelSettings>(SaveLocation) ? "Project Settings" : SaveLocation->GetName() + " Asset";
-
-		const EAppReturnType::Type DialogResult = FMessageDialog::Open(
-			EAppMsgType::YesNo,
-			EAppReturnType::No,
-			FText::FromString("This action will edit " + TargetName + " to delete " + FullPath.ToString() + " channel.\nDo you wish to continue?"),
-			INVTEXT("Delete Channel"));
-
-		if (DialogResult == EAppReturnType::No)
-		{
-			return FReply::Handled();
-		}
+		return FReply::Handled();
 	}
 
 	if (UVoxelSettings* Settings = Cast<UVoxelSettings>(SaveLocation))
@@ -473,114 +417,6 @@ FReply SVoxelChannelEditor::OnBrowseToChannel(TSharedPtr<FChannelNode> Item) con
 	return FReply::Handled();
 }
 
-FReply SVoxelChannelEditor::OnCreateEditChannelClicked()
-{
-	const FVoxelChannelEditorDefinition* ChannelDef = StructOnScope->Get();
-	UObject* SaveLocation = ChannelDef->SaveLocation.Get();
-	if (!SaveLocation)
-	{
-		return FReply::Handled();
-	}
-
-	{
-		const FString TargetName = Cast<UVoxelSettings>(SaveLocation) ? "Project Settings" : SaveLocation->GetName() + " Asset";
-
-		const EAppReturnType::Type DialogResult = FMessageDialog::Open(
-			EAppMsgType::YesNo,
-			EAppReturnType::No,
-			FText::FromString("This action will edit " + TargetName + " to " + (ChannelDef->bEditChannel ? "update channel" : "create new channel") + ".\nDo you wish to continue?"),
-			ChannelDef->bEditChannel ? INVTEXT("Edit Channel") : INVTEXT("Create new Channel"));
-
-		if (DialogResult == EAppReturnType::No)
-		{
-			return FReply::Handled();
-		}
-	}
-
-	FName NewChannelPath;
-	const FVoxelChannelExposedDefinition NewChannel = *ChannelDef;
-	if (UVoxelSettings* Settings = Cast<UVoxelSettings>(SaveLocation))
-	{
-		{
-			FVoxelTransaction Transaction(Settings, "Add new Channel");
-			Transaction.SetProperty(FindFPropertyChecked(UVoxelSettings, GlobalChannels));
-
-			if (ChannelDef->bEditChannel)
-			{
-				for (FVoxelChannelExposedDefinition& Channel : Settings->GlobalChannels)
-				{
-					if (Channel.Name != ChannelDef->Name)
-					{
-						continue;
-					}
-
-					Channel.Type = ChannelDef->Type;
-					Channel.DefaultValue = ChannelDef->DefaultValue;
-					NewChannelPath = "Project." + Channel.Name;
-					break;
-				}
-			}
-			else
-			{
-				Settings->GlobalChannels.Add(NewChannel);
-			}
-
-			Settings->TryUpdateDefaultConfigFile();
-
-			// Force save config now
-			GConfig->Flush(false, GEngineIni);
-		}
-
-		if (!ChannelDef->bEditChannel &&
-			ensure(Settings->GlobalChannels.Num() > 0))
-		{
-			NewChannelPath = "Project." + Settings->GlobalChannels[Settings->GlobalChannels.Num() - 1].Name;
-		}
-	}
-	else if (UVoxelChannelRegistry* Registry = Cast<UVoxelChannelRegistry>(SaveLocation))
-	{
-		{
-			FVoxelTransaction Transaction(Registry, "Add new Channel");
-			Transaction.SetProperty(FindFPropertyChecked(UVoxelChannelRegistry, Channels));
-
-			if (ChannelDef->bEditChannel)
-			{
-				for (FVoxelChannelExposedDefinition& Channel : Registry->Channels)
-				{
-					if (Channel.Name != ChannelDef->Name)
-					{
-						continue;
-					}
-
-					Channel.Type = ChannelDef->Type;
-					Channel.DefaultValue = ChannelDef->DefaultValue;
-					NewChannelPath = Registry->GetName() + "." + Channel.Name;
-					break;
-				}
-			}
-			else
-			{
-				Registry->Channels.Add(NewChannel);
-			}
-		}
-
-		if (!ChannelDef->bEditChannel &&
-			ensure(Registry->Channels.Num() > 0))
-		{
-			NewChannelPath = Registry->GetName() + "." + Registry->Channels[Registry->Channels.Num() - 1].Name;
-		}
-	}
-	else
-	{
-		ensure(false);
-		return FReply::Handled();
-	}
-
-	OnChannelSelectedDelegate.ExecuteIfBound(NewChannelPath);
-
-	return FReply::Handled();
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
@@ -589,8 +425,11 @@ void SVoxelChannelEditor::MapChannels()
 {
 	AllChannels = {};
 
+	TSet<const UObject*> ExistingAssets;
 	for (const UObject* Asset : GVoxelChannelManager->GetChannelAssets())
 	{
+		ExistingAssets.Add(Asset);
+
 		FString Prefix;
 		const TArray<FVoxelChannelExposedDefinition>* ChannelsList;
 		if (const UVoxelSettings* Settings = Cast<UVoxelSettings>(Asset))
@@ -606,6 +445,20 @@ void SVoxelChannelEditor::MapChannels()
 		else
 		{
 			ensure(false);
+			continue;
+		}
+
+		if (ChannelsList->IsEmpty())
+		{
+			Prefix.RemoveFromEnd(".");
+			FName Name = *Prefix;
+
+			TSharedRef<FChannelNode> Node = MakeShared<FChannelNode>();
+			Node->Name = Name;
+			Node->FullPath = Name;
+			Node->Owner = ConstCast(Asset);
+
+			AllChannels.Add(Name, Node);
 			continue;
 		}
 
@@ -693,7 +546,8 @@ void SVoxelChannelEditor::FilterChannels(const bool bOnlySelectedChannel)
 				ChannelsTreeWidget->SetItemExpansion(Node, true);
 			}
 
-			if (!Node->Parent)
+			const TSharedPtr<FChannelNode> Parent = Node->Parent.Pin();
+			if (!Parent)
 			{
 				if (!AddedRootNodes.Contains(Node->Name))
 				{
@@ -703,30 +557,220 @@ void SVoxelChannelEditor::FilterChannels(const bool bOnlySelectedChannel)
 				break;
 			}
 
-			Node->Parent->Channels.Add(Node->FullPath, Node);
-			Node = Node->Parent;
+			Parent->Channels.Add(Node->FullPath, Node);
+			Node = Parent;
 		}
 	}
 
 	ChannelsTreeWidget->RequestTreeRefresh();
 }
 
-void SVoxelChannelEditor::CreateDetailsView()
+FString SVoxelChannelEditor::GetChannelFilePath(UObject* Object)
 {
-	StructOnScope = MakeShared<TStructOnScope<FVoxelChannelEditorDefinition>>();
-	StructOnScope->InitializeAs<FVoxelChannelEditorDefinition>();
-	FVoxelChannelEditorDefinition* ChannelDef = StructOnScope->Get();
-	ChannelDef->Type = FVoxelPinType::Make<float>();
-	ChannelDef->DefaultValue = FVoxelPinValue(ChannelDef->Type);
-	ChannelDef->SaveLocation = UVoxelSettings::StaticClass()->GetDefaultObject();
-
-	FName Path = STATIC_FNAME("Project.MyChannel");
-	while (AllChannels.Contains(Path))
+	if (const UVoxelSettings* Settings = Cast<UVoxelSettings>(Object))
 	{
-		Path.SetNumber(Path.GetNumber() + 1);
+		return Settings->GetDefaultConfigFilename();
 	}
 
-	ChannelDef->Name = FName(Path.ToString().RightChop(Path.ToString().Find(".") + 1));
+	if (const UVoxelChannelRegistry* Registry = Cast<UVoxelChannelRegistry>(Object))
+	{
+		FString FilePath;
+		ensure(FPackageName::TryConvertLongPackageNameToFilename(Registry->GetPackage()->GetName(), FilePath, FPackageName::GetAssetPackageExtension()));
+		return FilePath;
+	}
+
+	ensure(false);
+	return {};
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+void SVoxelChannelEditDialog::Construct(const FArguments& InArgs)
+{
+	WeakParentWindow = InArgs._ParentWindow;
+	ChannelsList = InArgs._ChannelsList;
+	ChannelToEdit = InArgs._ChannelToEdit;
+	OnChannelSelected = InArgs._OnChannelSelected;
+
+	CreateDetailsView();
+
+	ChildSlot
+	[
+		SNew(SBorder)
+		.BorderImage(FAppStyle::GetBrush("Brushes.Panel"))
+		[
+			SNew(SBox)
+			.WidthOverride(450.0f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SAssignNew(SettingsCheckoutNotice, SVoxelReadWriteFilePermissionsNotice)
+					.FilePath(SVoxelChannelEditor::GetChannelFilePath(ChannelToEdit.SaveLocation.Get()))
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					DetailsView->GetWidget().ToSharedRef()
+				]
+				+ SVerticalBox::Slot()
+				.FillHeight(1.f)
+				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Bottom)
+				.Padding(2.f)
+				[
+					SNew(SButton)
+					.Text(INVTEXT("Confirm"))
+					.OnClicked(this, &SVoxelChannelEditDialog::OnCreateEditChannelClicked)
+				]
+			]
+		]
+	];
+}
+
+void SVoxelChannelEditDialog::EditChannel(const TSet<FName>& ChannelsList, const FVoxelChannelEditorDefinition& Channel, const SVoxelChannelEditor::FOnChannelSelected& Delegate)
+{
+	const TSharedRef<SWindow> EditWindow = SNew(SWindow)
+		.Title(Channel.bEditChannel ? INVTEXT("Edit Channel") : INVTEXT("Create Channel"))
+		.SizingRule(ESizingRule::Autosized)
+		.ClientSize(FVector2D(0.f, 300.f))
+		.SupportsMaximize(false)
+		.SupportsMinimize(false);
+
+	const TSharedRef<SVoxelChannelEditDialog> ChannelEditDialog = SNew(SVoxelChannelEditDialog)
+		.ParentWindow(EditWindow)
+		.ChannelsList(ChannelsList)
+		.ChannelToEdit(Channel)
+		.OnChannelSelected(Delegate);
+
+	EditWindow->SetContent(ChannelEditDialog);
+
+	GEditor->EditorAddModalWindow(EditWindow);
+}
+
+FReply SVoxelChannelEditDialog::OnCreateEditChannelClicked()
+{
+	ON_SCOPE_EXIT
+	{
+		if (const TSharedPtr<SWindow> PinnedWindow = WeakParentWindow.Pin())
+		{
+			PinnedWindow->RequestDestroyWindow();
+		}
+	};
+
+	const FVoxelChannelEditorDefinition* ChannelDef = StructOnScope->Get();
+	UObject* SaveLocation = ChannelDef->SaveLocation.Get();
+	if (!SaveLocation)
+	{
+		return FReply::Handled();
+	}
+
+	if (ensure(SettingsCheckoutNotice) &&
+		!SettingsCheckoutNotice->IsUnlocked())
+	{
+		const EAppReturnType::Type DialogResult = FMessageDialog::Open(
+			EAppMsgType::YesNo,
+			EAppReturnType::No,
+			INVTEXT("You're about to make changes to a file which isn't writable. Whatever changes you make will not be saved when the editor is closed. Continue anyway?"),
+			ChannelDef->bEditChannel ? INVTEXT("Edit Channel") : INVTEXT("Create new Channel"));
+
+		if (DialogResult == EAppReturnType::No)
+		{
+			return FReply::Handled();
+		}
+	}
+
+	FName NewChannelPath;
+	const FVoxelChannelExposedDefinition NewChannel = *ChannelDef;
+	if (UVoxelSettings* Settings = Cast<UVoxelSettings>(SaveLocation))
+	{
+		{
+			FVoxelTransaction Transaction(Settings, "Add new Channel");
+			Transaction.SetProperty(FindFPropertyChecked(UVoxelSettings, GlobalChannels));
+
+			if (ChannelDef->bEditChannel)
+			{
+				for (FVoxelChannelExposedDefinition& Channel : Settings->GlobalChannels)
+				{
+					if (Channel.Name != ChannelDef->Name)
+					{
+						continue;
+					}
+
+					Channel.Type = ChannelDef->Type;
+					Channel.DefaultValue = ChannelDef->DefaultValue;
+					NewChannelPath = "Project." + Channel.Name;
+					break;
+				}
+			}
+			else
+			{
+				Settings->GlobalChannels.Add(NewChannel);
+			}
+
+			Settings->TryUpdateDefaultConfigFile();
+
+			// Force save config now
+			GConfig->Flush(false, GEngineIni);
+		}
+
+		if (!ChannelDef->bEditChannel &&
+			ensure(Settings->GlobalChannels.Num() > 0))
+		{
+			NewChannelPath = "Project." + Settings->GlobalChannels[Settings->GlobalChannels.Num() - 1].Name;
+		}
+	}
+	else if (UVoxelChannelRegistry* Registry = Cast<UVoxelChannelRegistry>(SaveLocation))
+	{
+		{
+			FVoxelTransaction Transaction(Registry, "Add new Channel");
+			Transaction.SetProperty(FindFPropertyChecked(UVoxelChannelRegistry, Channels));
+
+			if (ChannelDef->bEditChannel)
+			{
+				for (FVoxelChannelExposedDefinition& Channel : Registry->Channels)
+				{
+					if (Channel.Name != ChannelDef->Name)
+					{
+						continue;
+					}
+
+					Channel.Type = ChannelDef->Type;
+					Channel.DefaultValue = ChannelDef->DefaultValue;
+					NewChannelPath = Registry->GetName() + "." + Channel.Name;
+					break;
+				}
+			}
+			else
+			{
+				Registry->Channels.Add(NewChannel);
+			}
+		}
+
+		if (!ChannelDef->bEditChannel &&
+			ensure(Registry->Channels.Num() > 0))
+		{
+			NewChannelPath = Registry->GetName() + "." + Registry->Channels[Registry->Channels.Num() - 1].Name;
+		}
+	}
+	else
+	{
+		ensure(false);
+		return FReply::Handled();
+	}
+
+	OnChannelSelected.ExecuteIfBound(NewChannelPath);
+
+	return FReply::Handled();
+}
+
+void SVoxelChannelEditDialog::CreateDetailsView()
+{
+	StructOnScope = MakeShared<TStructOnScope<FVoxelChannelEditorDefinition>>();
+	StructOnScope->InitializeAs<FVoxelChannelEditorDefinition>(ChannelToEdit);
 
 	FDetailsViewArgs Args;
 	Args.bAllowSearch = false;
@@ -756,6 +800,7 @@ void SVoxelChannelEditor::CreateDetailsView()
 		if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_STATIC(FVoxelChannelEditorDefinition, Type))
 		{
 			ChannelDefinition->Fixup();
+			DetailsView->GetDetailsView()->ForceRefresh();
 		}
 		else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_STATIC(FVoxelChannelEditorDefinition, SaveLocation))
 		{
@@ -772,12 +817,15 @@ void SVoxelChannelEditor::CreateDetailsView()
 			}
 
 			FName NewPath = FName(RootName + "." + ChannelDefinition->Name);
-			while (AllChannels.Contains(NewPath))
+			while (ChannelsList.Contains(NewPath))
 			{
 				NewPath.SetNumber(NewPath.GetNumber() + 1);
 			}
 
 			ChannelDefinition->Name = FName(NewPath.ToString().RightChop(NewPath.ToString().Find(".") + 1));
+
+			SettingsCheckoutNotice->SetFilePath(SVoxelChannelEditor::GetChannelFilePath(SaveLocation));
+			SettingsCheckoutNotice->Invalidate();
 		}
 	});
 }

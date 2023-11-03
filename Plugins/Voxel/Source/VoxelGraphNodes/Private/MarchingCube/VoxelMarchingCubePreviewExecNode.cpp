@@ -18,14 +18,17 @@ FVoxelNodeAliases::TValue<FVoxelMarchingCubeBrushPreviewMesh> FVoxelMarchingCube
 {
 	checkVoxelSlow(FVoxelTaskReferencer::Get().IsReferenced(this));
 
+	const TSharedRef<FVoxelQueryParameters> SurfaceParameters = Query.CloneParameters();
+	SurfaceParameters->Add<FVoxelQueryChannelBoundsQueryParameter>().Bounds = Bounds;
+	const TValue<FVoxelSurface> FutureSurface = GetNodeRuntime().Get(SurfacePin, Query.MakeNewQuery(SurfaceParameters));
+
 	const TValue<FVoxelMarchingCubeSurface> MarchingCubeSurface = VOXEL_CALL_NODE(FVoxelNode_GenerateMarchingCubeSurface, SurfacePin, Query)
 	{
-		VOXEL_CALL_NODE_BIND(DistancePin)
+		VOXEL_CALL_NODE_BIND(DistancePin, FutureSurface)
 		{
-			const TValue<FVoxelSurface> Surface = GetNodeRuntime().Get(SurfacePin, Query);
-			return VOXEL_ON_COMPLETE(Surface)
+			return VOXEL_ON_COMPLETE(FutureSurface)
 			{
-				return Surface->GetDistance(Query);
+				return FutureSurface->GetDistance(Query);
 			};
 		};
 		VOXEL_CALL_NODE_BIND(VoxelSizePin, VoxelSize)
@@ -154,16 +157,16 @@ void FVoxelMarchingCubePreviewExecNodeRuntime::Create()
 		const FVoxelQuery Query = InQuery.EnterScope(Node);
 
 		const TValue<int32> FutureSize = Node.GetNodeRuntime().Get(Node.SizePin, Query);
-		const TValue<FVoxelBox> FutureLocalBounds = Node.GetNodeRuntime().Get(Node.BoundsPin, Query);
+		const TValue<FVoxelBounds> FutureLocalBounds = Node.GetNodeRuntime().Get(Node.BoundsPin, Query);
 
 		return
 			MakeVoxelTask(STATIC_FNAME("FVoxelMarchingCubePreviewExecNodeRuntime"))
 			.Dependencies(FutureSize, FutureLocalBounds)
 			.Execute<FVoxelMarchingCubeBrushPreviewMesh>([=, &Node]
 			{
-				const TValue<FVoxelSurface> Surface = FutureLocalBounds.Get_CheckCompleted() == FVoxelBox()
-					? Node.GetNodeRuntime().Get(Node.SurfacePin, Query)
-					: FVoxelSurface();
+				const TValue<FVoxelSurface> Surface = FutureLocalBounds.Get_CheckCompleted().IsValid()
+					? FVoxelSurface()
+					: Node.GetNodeRuntime().Get(Node.SurfacePin, Query);
 
 				return
 					MakeVoxelTask(STATIC_FNAME("FVoxelMarchingCubePreviewExecNodeRuntime"))
@@ -171,22 +174,25 @@ void FVoxelMarchingCubePreviewExecNodeRuntime::Create()
 					.Execute<FVoxelMarchingCubeBrushPreviewMesh>([=, &Node]() -> TValue<FVoxelMarchingCubeBrushPreviewMesh>
 					{
 						const int32 Size = FMath::Clamp(2 * FMath::DivideAndRoundUp(FutureSize.Get_CheckCompleted(), 2), 4, 128);
-						FVoxelBox LocalBounds = FutureLocalBounds.Get_CheckCompleted();
 
-						if (LocalBounds == FVoxelBox())
+						FVoxelBounds LocalBoundsRef = FutureLocalBounds.Get_CheckCompleted();
+						if (!LocalBoundsRef.IsValid())
 						{
-							LocalBounds = Surface.Get_CheckCompleted().LocalBounds.GetBounds();
+							LocalBoundsRef = Surface.Get_CheckCompleted().Bounds;
 						}
-						if (!LocalBounds.IsValid())
+
+						if (!LocalBoundsRef.IsValid())
 						{
 							VOXEL_MESSAGE(Error, "{0}: Invalid bounds", Node);
 							return {};
 						}
-						if (LocalBounds.IsInfinite())
+						if (LocalBoundsRef.IsInfinite())
 						{
 							VOXEL_MESSAGE(Error, "{0}: Infinite bounds", Node);
 							return {};
 						}
+
+						FVoxelBox LocalBounds = LocalBoundsRef.GetBox(Query, Query.GetQueryToWorld());
 
 						const float VoxelSize = FMath::CeilToFloat(LocalBounds.Size().GetAbsMax() / Size);
 						LocalBounds.Min = FVoxelUtilities::FloorToFloat(LocalBounds.Min);
@@ -303,13 +309,29 @@ FVoxelOptionalBox FVoxelMarchingCubePreviewExecNodeRuntime::GetBounds() const
 			MakeVoxelShared<FVoxelQueryParameters>(),
 			FVoxelDependencyTracker::Create("DependencyTracker"));
 
-		const TValue<FVoxelBox> LocalBounds = Node.GetNodeRuntime().Get(Node.BoundsPin, Query);
+		const TValue<FVoxelBounds> FutureLocalBounds = Node.GetNodeRuntime().Get(Node.BoundsPin, Query);
 
 		return MakeVoxelTask()
-			.Dependency(LocalBounds)
-			.Execute<FVoxelBox>([this, LocalBounds]
+			.Dependency(FutureLocalBounds)
+			.Execute<FVoxelBox>([=]
 			{
-				return LocalBounds.Get_CheckCompleted().TransformBy(GetLocalToWorld().Get_NoDependency());
+				const TValue<FVoxelSurface> Surface = FutureLocalBounds.Get_CheckCompleted().IsValid()
+					? FVoxelSurface()
+					: Node.GetNodeRuntime().Get(Node.SurfacePin, Query);
+
+				return MakeVoxelTask()
+					.Dependency(Surface)
+					.Execute<FVoxelBox>([=]
+					{
+						FVoxelBounds LocalBounds = FutureLocalBounds.Get_CheckCompleted();
+						if (!LocalBounds.IsValid())
+						{
+							LocalBounds = Surface.Get_CheckCompleted().Bounds;
+						}
+
+						// In world space
+						return LocalBounds.GetBox_NoDependency(FMatrix::Identity);
+					});
 			});
 	}, &Error);
 

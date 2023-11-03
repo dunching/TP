@@ -8,6 +8,7 @@
 #include "VoxelGraphVisuals.h"
 #include "VoxelGraphToolkit.h"
 #include "VoxelMacroLibrary.h"
+#include "VoxelRuntimeGraph.h"
 #include "VoxelGraphInstance.h"
 #include "VoxelMakeValueNode.h"
 #include "Templates/VoxelOperatorNodes.h"
@@ -18,6 +19,8 @@
 #include "Nodes/VoxelGraphLocalVariableNode.h"
 #include "Nodes/VoxelGraphMacroParameterNode.h"
 #include "Widgets/SVoxelGraphPinTypeSelector.h"
+#include "SchemaActions/VoxelGraphExpandMacroSchemaAction.h"
+#include "SchemaActions/VoxelGraphCollapseToMacroSchemaAction.h"
 
 #include "ToolMenu.h"
 
@@ -63,14 +66,23 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameterUsage::PerformAction(UEdGraph*
 
 		NewNode = Node;
 	}
-	else if (
-		ParameterType == EVoxelGraphParameterType::Input ||
-		ParameterType == EVoxelGraphParameterType::Output)
+	else if (ParameterType == EVoxelGraphParameterType::Input)
 	{
-		FGraphNodeCreator<UVoxelGraphMacroParameterNode> NodeCreator(*ParentGraph);
-		UVoxelGraphMacroParameterNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
+		FGraphNodeCreator<UVoxelGraphMacroParameterInputNode> NodeCreator(*ParentGraph);
+		UVoxelGraphMacroParameterInputNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
+		Node->bExposeDefaultPin = bInput_ExposeDefaultAsPin;
 		Node->Guid = Guid;
-		Node->Type = ParameterType;
+		Node->NodePosX = Location.X;
+		Node->NodePosY = Location.Y;
+		NodeCreator.Finalize();
+
+		NewNode = Node;
+	}
+	else if (ParameterType == EVoxelGraphParameterType::Output)
+	{
+		FGraphNodeCreator<UVoxelGraphMacroParameterOutputNode> NodeCreator(*ParentGraph);
+		UVoxelGraphMacroParameterOutputNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
+		Node->Guid = Guid;
 		Node->NodePosX = Location.X;
 		Node->NodePosY = Location.Y;
 		NodeCreator.Finalize();
@@ -79,7 +91,7 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameterUsage::PerformAction(UEdGraph*
 	}
 	else if (ParameterType == EVoxelGraphParameterType::LocalVariable)
 	{
-		if (bDeclaration)
+		if (bLocalVariable_IsDeclaration)
 		{
 			FGraphNodeCreator<UVoxelGraphLocalVariableDeclarationNode> NodeCreator(*ParentGraph);
 			UVoxelGraphLocalVariableDeclarationNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
@@ -124,8 +136,6 @@ void FVoxelGraphSchemaAction_NewParameterUsage::GetIcon(FSlateIcon& Icon, FLinea
 
 UEdGraphNode* FVoxelGraphSchemaAction_NewParameter::PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2D Location, bool bSelectNewNode)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	const FVoxelTransaction Transaction(ParentGraph, "Create new " + UEnum::GetDisplayValueAsText(ParameterType).ToString());
 
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = UVoxelGraphSchema::GetToolkit(ParentGraph);
@@ -153,7 +163,11 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameter::PerformAction(UEdGraph* Pare
 			NewParameter.Name = *PinName;
 		}
 		NewParameter.Type = FromPin->PinType;
-		NewParameter.DefaultValue = FVoxelPinValue::MakeFromPinDefaultValue(*FromPin);
+
+		if (NewParameter.Type.HasPinDefaultValue())
+		{
+			NewParameter.DefaultValue = FVoxelPinValue::MakeFromPinDefaultValue(*FromPin);
+		}
 
 		if (ParameterType == EVoxelGraphParameterType::Parameter &&
 			!NewParameter.Type.IsBufferArray())
@@ -165,6 +179,11 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameter::PerformAction(UEdGraph* Pare
 	{
 		NewParameter.Type = FVoxelPinType::Make<float>();
 		NewParameter.Fixup(nullptr);
+	}
+
+	if (!ParameterName.IsNone())
+	{
+		NewParameter.Name = ParameterName;
 	}
 
 	UVoxelGraphNode* ResultNode;
@@ -184,14 +203,22 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameter::PerformAction(UEdGraph* Pare
 
 			ResultNode = Node;
 		}
-		else if (
-			ParameterType == EVoxelGraphParameterType::Input ||
-			ParameterType == EVoxelGraphParameterType::Output)
+		else if (ParameterType == EVoxelGraphParameterType::Input)
 		{
-			FGraphNodeCreator<UVoxelGraphMacroParameterNode> NodeCreator(*ParentGraph);
-			UVoxelGraphMacroParameterNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
+			FGraphNodeCreator<UVoxelGraphMacroParameterInputNode> NodeCreator(*ParentGraph);
+			UVoxelGraphMacroParameterInputNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
 			Node->Guid = NewParameter.Guid;
-			Node->Type = ParameterType;
+			Node->NodePosX = Location.X;
+			Node->NodePosY = Location.Y;
+			NodeCreator.Finalize();
+
+			ResultNode = Node;
+		}
+		else if (ParameterType == EVoxelGraphParameterType::Output)
+		{
+			FGraphNodeCreator<UVoxelGraphMacroParameterOutputNode> NodeCreator(*ParentGraph);
+			UVoxelGraphMacroParameterOutputNode* Node = NodeCreator.CreateUserInvokedNode(bSelectNewNode);
+			Node->Guid = NewParameter.Guid;
 			Node->NodePosX = Location.X;
 			Node->NodePosY = Location.Y;
 			NodeCreator.Finalize();
@@ -206,6 +233,15 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameter::PerformAction(UEdGraph* Pare
 			Node->NodePosX = Location.X;
 			Node->NodePosY = Location.Y;
 			NodeCreator.Finalize();
+
+			// Local Variables don't use DefaultValue, just apply it to the pin
+			if (NewParameter.Type.HasPinDefaultValue())
+			{
+				UEdGraphPin& InputPin = *Node->GetInputPin(0);
+				NewParameter.DefaultValue.ApplyToPinDefaultValue(InputPin);
+				NewParameter.DefaultValue = {};
+				NewParameter.Fixup(nullptr);
+			}
 
 			ResultNode = Node;
 		}
@@ -250,8 +286,6 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewParameter::PerformAction(UEdGraph* Pare
 
 UEdGraphNode* FVoxelGraphSchemaAction_NewInlineMacro::PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2D Location, bool bSelectNewNode)
 {
-	VOXEL_USE_NAMESPACE(Graph);
-
 	const TSharedPtr<FVoxelGraphToolkit> Toolkit = UVoxelGraphSchema::GetToolkit(ParentGraph);
 	if (!ensure(Toolkit))
 	{
@@ -283,14 +317,16 @@ UEdGraphNode* FVoxelGraphSchemaAction_NewInlineMacro::PerformAction(UEdGraph* Pa
 		NewMacro = NewObject<UVoxelGraph>(Toolkit->Asset, NAME_None, Flags);
 		NewMacro->SetGraphName(NewMacroName.ToString());
 		NewMacro->Category = TargetCategory;
-		NewMacro->MainEdGraph = Toolkit->CreateGraph(NewMacro);
-		NewMacro->OnParametersChanged.AddSP(Toolkit.Get(), &FVoxelGraphToolkit::FixupGraphParameters);
 
+		Toolkit->FixupGraph(NewMacro);
 		Toolkit->Asset->InlineMacros.Add(NewMacro);
 	}
 
 	Toolkit->UpdateDetailsView(NewMacro);
-	Toolkit->OpenGraphAndBringToFront(NewMacro->MainEdGraph, false);
+	if (bOpenNewGraph)
+	{
+		Toolkit->OpenGraphAndBringToFront(NewMacro->MainEdGraph, false);
+	}
 	Toolkit->SelectMember(NewMacro, true, true);
 
 	return nullptr;
@@ -471,15 +507,9 @@ TOptional<FPinConnectionResponse> UVoxelGraphSchema::GetCanCreateConnectionOverr
 		return {};
 	}
 
-	if (FVoxelPinType(OutputPin->PinType).CanBeCastedTo_CheckArray(InputPin->PinType))
+	if (FVoxelPinType(OutputPin->PinType).CanBeCastedTo_Schema(InputPin->PinType))
 	{
 		// Can connect directly
-		return {};
-	}
-
-	if (FVoxelPinType(OutputPin->PinType).GetBufferType().CanBeCastedTo_CheckArray(InputPin->PinType))
-	{
-		// Can connect directly (uniform to buffer)
 		return {};
 	}
 
@@ -606,13 +636,14 @@ void UVoxelGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Context
 		INVTEXT("Create a reroute node"),
 		0));
 
-	TArray<FAssetData> AssetDatas;
 	FARFilter Filter;
 	Filter.ClassPaths.Add(UVoxelGraph::StaticClass()->GetClassPathName());
 	Filter.ClassPaths.Add(UVoxelGraphInstance::StaticClass()->GetClassPathName());
 	Filter.ClassPaths.Add(UVoxelMacroLibrary::StaticClass()->GetClassPathName());
 
 	const IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+
+	TArray<FAssetData> AssetDatas;
 	AssetRegistry.GetAssets(Filter, AssetDatas);
 
 	TArray<UVoxelGraphInterface*> GraphInterfaces;
@@ -789,12 +820,12 @@ void UVoxelGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Context
 				{
 					for (const FVoxelPinType& FromType : FromPinPromotionTypes.GetTypes())
 					{
-						if (FromPin.Direction == EGPD_Input && Type.CanBeCastedTo_CheckArray(FromType))
+						if (FromPin.Direction == EGPD_Input && Type.CanBeCastedTo_Schema(FromType))
 						{
 							PromotionTypes = ToPinPromotionTypes;
 							return true;
 						}
-						if (FromPin.Direction == EGPD_Output && FromType.CanBeCastedTo_CheckArray(Type))
+						if (FromPin.Direction == EGPD_Output && FromType.CanBeCastedTo_Schema(Type))
 						{
 							PromotionTypes = ToPinPromotionTypes;
 							return true;
@@ -905,7 +936,7 @@ void UVoxelGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Context
 
 		Action->Guid = Parameter.Guid;
 		Action->ParameterType = Parameter.ParameterType;
-		Action->bDeclaration = bDeclaration;
+		Action->bLocalVariable_IsDeclaration = bDeclaration;
 		Action->PinType = Parameter.Type.GetEdGraphPinType();
 
 		if (ContextMenuBuilder.FromPin)
@@ -918,7 +949,7 @@ void UVoxelGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Context
 
 			ShortListAction->Guid = Parameter.Guid;
 			ShortListAction->ParameterType = Parameter.ParameterType;
-			ShortListAction->bDeclaration = bDeclaration;
+			ShortListAction->bLocalVariable_IsDeclaration = bDeclaration;
 			ShortListAction->PinType = Parameter.Type.GetEdGraphPinType();
 
 			ShortListActions_Parameters.Add(ShortListAction);
@@ -1025,31 +1056,101 @@ void UVoxelGraphSchema::GetContextMenuActions(UToolMenu* Menu, UGraphNodeContext
 
 	Super::GetContextMenuActions(Menu, Context);
 
-	/*if (!Context->Pin &&
-		Context->Graph &&
-		GetNodeSelectionCount(Context->Graph) > 0)
+	if (!Context->Pin &&
+		Context->Graph)
 	{
-		FToolMenuSection& Section = Menu->FindOrAddSection("EdGraphSchemaOrganization");
-		Section.AddMenuEntry(
-			"CollapseToMacro",
-			INVTEXT("Collapse to Macro"),
-			INVTEXT("Collapse to Macro"),
-			{},
-			FUIAction(MakeLambdaDelegate([=]
-			{
-				const TSharedPtr<FVoxelGraphToolkit> Toolkit = GetToolkit(Context->Graph);
-				if (!Toolkit)
+		{
+			FToolMenuSection& Section = Menu->FindOrAddSection("VoxelGraphNodeEdit");
+			Section.AddMenuEntry(FGraphEditorCommands::Get().FindReferences);
+		}
+
+		const int32 NodesCount = GetNodeSelectionCount(Context->Graph);
+		if (NodesCount > 0)
+		{
+			FToolMenuSection& Section = Menu->FindOrAddSection("EdGraphSchemaOrganization");
+			Section.AddMenuEntry(
+				"CollapseToMacro",
+				INVTEXT("Collapse to Macro"),
+				INVTEXT("Collapse to Macro"),
+				{},
+				FUIAction(MakeLambdaDelegate([=]
 				{
-					return;
-				}
+					FVoxelGraphSchemaAction_CollapseToMacro Action;
+					if (const UVoxelGraphMacroNode* NewMacroNode = Cast<UVoxelGraphMacroNode>(Action.PerformAction(Cast<UEdGraph>(Context->Graph), nullptr, FVector2D::ZeroVector, true)))
+					{
+						Toolkit->SelectMember(NewMacroNode->GraphInterface, true, true);
+					}
+				}))
+			);
 
-				const FVoxelTransaction Transaction(Toolkit->GetAssetAs<UVoxelGraph>(), "Convert pin to Uniform");
+			if (NodesCount == 1 &&
+				Context->Node &&
+				Context->Node->IsA<UVoxelGraphMacroNode>())
+			{
+				Section.AddMenuEntry(
+					"ExpandMacro",
+					INVTEXT("Expand Macro"),
+					INVTEXT("Expand Macro"),
+					{},
+					FUIAction(MakeLambdaDelegate([=]
+					{
+						FVoxelGraphSchemaAction_ExpandMacro Action;
+						Action.PerformAction(Cast<UEdGraph>(Context->Graph), nullptr, FVector2D::ZeroVector, true);
+					}))
+				);
+			}
+		}
+	}
 
-				FVoxelGraphSchemaAction_CollapseToMacro Action;
-				Action.PerformAction(Cast<UEdGraph>(Context->Graph), nullptr, FVector2D::ZeroVector, true);
-			}))
-		);
-	}*/
+	if (UVoxelGraphNodeBase* Node = ConstCast(Cast<UVoxelGraphNodeBase>(Context->Node.Get())))
+	{
+		FToolMenuSection& DebugSection = Menu->FindOrAddSection("DebugSection");
+		DebugSection.InitSection("DebugSection", INVTEXT("Debug"), FToolMenuInsert({}, EToolMenuInsertType::First));
+
+		if (Node->bEnableDebug)
+		{
+			DebugSection.AddMenuEntry(
+				"StopDebug",
+				INVTEXT("Stop debugging"),
+				INVTEXT("Stop debugging this node"),
+				{},
+				FUIAction(
+					MakeLambdaDelegate([Node]
+					{
+						Node->bEnableDebug = false;
+						OnGraphChanged(Node);
+					})
+				)
+			);
+		}
+		else
+		{
+			DebugSection.AddMenuEntry(
+				"StartDebug",
+				INVTEXT("Debug node"),
+				INVTEXT("Debug this node"),
+				{},
+				FUIAction(
+					MakeLambdaDelegate([Node]
+					{
+						for (const TObjectPtr<UEdGraphNode>& OtherNode : Node->GetGraph()->Nodes)
+						{
+							if (UVoxelGraphNodeBase* OtherVoxelNode = Cast<UVoxelGraphNodeBase>(OtherNode.Get()))
+							{
+								if (OtherVoxelNode->bEnableDebug)
+								{
+									OtherVoxelNode->bEnableDebug = false;
+								}
+							}
+						}
+
+						Node->bEnableDebug = true;
+						OnGraphChanged(Node);
+					})
+				)
+			);
+		}
+	}
 
 	if (UVoxelGraphNodeBase* Node = ConstCast(Cast<UVoxelGraphNodeBase>(Context->Node.Get())))
 	{
@@ -1138,8 +1239,6 @@ void UVoxelGraphSchema::GetContextMenuActions(UToolMenu* Menu, UGraphNodeContext
 					INVTEXT("Convert this pin"),
 					MakeLambdaDelegate([=](const FToolMenuContext&) -> TSharedRef<SWidget>
 					{
-						VOXEL_USE_NAMESPACE(Graph);
-
 						return
 							SNew(SVoxelPinTypeSelector)
 							.AllowedTypes(Types)

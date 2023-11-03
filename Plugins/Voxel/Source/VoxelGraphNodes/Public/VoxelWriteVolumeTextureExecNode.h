@@ -28,7 +28,7 @@ struct VOXELGRAPHNODES_API FVoxelVolumeTexturePinType : public FVoxelObjectPinTy
 	{
 		if (bSetObject)
 		{
-			Object = Struct.Texture.Get();
+			Object = Struct.Texture;
 		}
 		else
 		{
@@ -43,10 +43,10 @@ struct VOXELGRAPHNODES_API FVoxelWriteVolumeTextureExecNode : public FVoxelExecN
 	GENERATED_BODY()
 	GENERATED_VOXEL_NODE_BODY()
 
-	VOXEL_INPUT_PIN(FVoxelVolumeTexture, Texture, nullptr, VirtualPin);
-	VOXEL_INPUT_PIN(FVector, Start, nullptr, VirtualPin);
-	VOXEL_INPUT_PIN(FIntVector, Size, FIntVector(128), VirtualPin);
-	VOXEL_INPUT_PIN(float, VoxelSize, 100.f, VirtualPin);
+	VOXEL_INPUT_PIN(FVoxelVolumeTexture, Texture, nullptr, ConstantPin);
+	VOXEL_INPUT_PIN(FVector, Start, nullptr, ConstantPin);
+	VOXEL_INPUT_PIN(FIntVector, Size, FIntVector(128), ConstantPin);
+	VOXEL_INPUT_PIN(float, VoxelSize, 100.f, ConstantPin);
 	VOXEL_INPUT_PIN(FVoxelFloatBuffer, Distance, nullptr, VirtualPin);
 
 	virtual TVoxelUniquePtr<FVoxelExecNodeRuntime> CreateExecRuntime(const TSharedRef<const FVoxelExecNode>& SharedThis) const override;
@@ -63,13 +63,5 @@ public:
 	//~ End FVoxelExecNodeRuntime Interface
 
 private:
-	DECLARE_VOXEL_PIN_VALUES(
-		Texture,
-		Start,
-		Size,
-		VoxelSize);
-
 	TVoxelDynamicValue<FVoxelFloatBuffer> DistanceValue;
-
-	void Update(const FPinValues& PinValues);
 };

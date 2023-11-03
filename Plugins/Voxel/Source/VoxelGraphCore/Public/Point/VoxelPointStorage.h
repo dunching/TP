@@ -9,7 +9,7 @@
 class FVoxelPointStorageData;
 
 UCLASS()
-class UVoxelPointStorageComponent : public UObject
+class UVoxelPointStorage : public UActorComponent
 {
 	GENERATED_BODY()
 

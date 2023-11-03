@@ -6,6 +6,7 @@
 #include "VoxelSubsystem.h"
 #include "VoxelDependency.h"
 #include "VoxelQueryCache.h"
+#include "VoxelExecNodeRuntimeWrapper.h"
 
 DEFINE_VOXEL_INSTANCE_COUNTER(FVoxelQueryContext);
 
@@ -91,6 +92,47 @@ bool FVoxelRuntimeInfoBase::IsHiddenInEditorImpl(const FVoxelQuery& Query) const
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
+FString FVoxelCallstack::ToDebugString() const
+{
+	TStringBuilderWithBuffer<TCHAR, NAME_SIZE> Result;
+
+	TVoxelArray<const FVoxelCallstack*, TVoxelInlineAllocator<64>> Callstacks;
+	for (const FVoxelCallstack* Callstack = this; Callstack; Callstack = Callstack->Parent.Get())
+	{
+		Callstacks.Add(Callstack);
+	}
+
+	for (int32 Index = Callstacks.Num() - 1; Index >= 0; Index--)
+	{
+		const FVoxelCallstack* Callstack = Callstacks[Index];
+		if (Callstack->Node.IsExplicitlyNull())
+		{
+			continue;
+		}
+
+		if (Callstack->Node.EdGraphNodeTitle.IsNone())
+		{
+			ensure(!Callstack->Node.NodeId.IsNone());
+			Callstack->Node.NodeId.AppendString(Result);
+		}
+		else
+		{
+			Callstack->Node.EdGraphNodeTitle.AppendString(Result);
+		}
+
+		if (Index > 0)
+		{
+			Result += " -> ";
+		}
+	}
+
+	return FString(Result.ToView());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
 FVoxelRuntimeInfo::FVoxelRuntimeInfo(const FVoxelRuntimeInfoBase& RuntimeInfoBase)
 	: FVoxelRuntimeInfoBase(RuntimeInfoBase)
 {
@@ -99,11 +141,36 @@ FVoxelRuntimeInfo::FVoxelRuntimeInfo(const FVoxelRuntimeInfoBase& RuntimeInfoBas
 FVoxelRuntimeInfo::~FVoxelRuntimeInfo()
 {
 	ensure(IsDestroyed());
+	ensure(NumActiveTasks.GetValue() == 0);
 }
 
 void FVoxelRuntimeInfo::Destroy()
 {
 	VOXEL_FUNCTION_COUNTER();
+	ensure(!IsDestroyed());
+
+	bDestroyStarted.Store(true);
+
+	if (NumActiveTasks.GetValue() > 0)
+	{
+		VOXEL_SCOPE_COUNTER("Wait");
+
+		double NextLogTime = FPlatformTime::Seconds() + 0.5;
+
+		while (NumActiveTasks.GetValue() > 0)
+		{
+			if (NextLogTime < FPlatformTime::Seconds())
+			{
+				NextLogTime += 0.5;
+				LOG_VOXEL(Log, "Destroy: Waiting for %d tasks", NumActiveTasks.GetValue());
+			}
+
+			FPlatformProcess::YieldThread();
+		}
+	}
+
+	// Not always true, see FVoxelTaskGroupScope::Initialize
+	// check(NumActiveTasks.GetValue() == 0);
 
 	for (const TSharedPtr<FVoxelSubsystem>& Subsystem : SubsystemRefs)
 	{
@@ -256,23 +323,23 @@ TSharedRef<FVoxelQueryContext> FVoxelQueryContext::GetChildContext(const FVoxelC
 	return Context.ToSharedRef();
 }
 
-TSharedRef<FVoxelExecNodeRuntime> FVoxelQueryContext::FindOrAddExecNodeRuntime(
-	const FName NodeId,
-	const TSharedRef<FVoxelExecNodeRuntime>& NodeRuntime)
+TSharedRef<FVoxelExecNodeRuntimeWrapper> FVoxelQueryContext::FindOrAddExecNodeRuntimeWrapper(const TSharedRef<FVoxelExecNode>& Node)
 {
+	TSharedPtr<FVoxelExecNodeRuntimeWrapper> NodeRuntimeWrapper;
 	{
 		VOXEL_SCOPE_LOCK(CriticalSection);
 
-		TWeakPtr<FVoxelExecNodeRuntime>& WeakNodeRuntime = NodeIdToWeakRuntime_RequiresLock.FindOrAdd(NodeId);
-		if (const TSharedPtr<FVoxelExecNodeRuntime> PinnedNodeRuntime = WeakNodeRuntime.Pin())
+		TWeakPtr<FVoxelExecNodeRuntimeWrapper>& WeakNodeRuntimeWrapper = NodeIdToWeakRuntimeWrapper_RequiresLock.FindOrAdd(Node->GetNodeRef().NodeId);
+		if (const TSharedPtr<FVoxelExecNodeRuntimeWrapper> PinnedNodeRuntimeWrapper = WeakNodeRuntimeWrapper.Pin())
 		{
-			return PinnedNodeRuntime.ToSharedRef();
+			return PinnedNodeRuntimeWrapper.ToSharedRef();
 		}
-		WeakNodeRuntime = NodeRuntime;
-	}
 
-	NodeRuntime->CallCreate(AsShared());
-	return NodeRuntime;
+		NodeRuntimeWrapper = MakeVoxelShared<FVoxelExecNodeRuntimeWrapper>(Node);
+		WeakNodeRuntimeWrapper = NodeRuntimeWrapper;
+	}
+	NodeRuntimeWrapper->Initialize(AsShared());
+	return NodeRuntimeWrapper.ToSharedRef();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -293,7 +360,7 @@ FVoxelQuery FVoxelQuery::Make(
 		DependencyTracker,
 		Context->Callstack,
 		SharedCache,
-		SharedCache->GetQueryCache(Context->Path));
+		SharedCache->GetQueryCache(*Context));
 }
 
 FVoxelQuery FVoxelQuery::EnterScope(const FVoxelGraphNodeRef& Node) const
@@ -326,7 +393,7 @@ FVoxelQuery FVoxelQuery::MakeNewQuery(const TSharedRef<FVoxelQueryContext>& NewC
 		DependencyTracker,
 		Callstack,
 		SharedCache,
-		SharedCache->GetQueryCache(NewContext->Path));
+		SharedCache->GetQueryCache(*NewContext));
 }
 
 FVoxelQuery FVoxelQuery::MakeNewQuery(const TSharedRef<const FVoxelQueryParameters>& NewParameters) const
@@ -341,7 +408,33 @@ FVoxelQuery FVoxelQuery::MakeNewQuery(const TSharedRef<const FVoxelQueryParamete
 		DependencyTracker,
 		Callstack,
 		NewSharedCache,
-		NewSharedCache->GetQueryCache(Context->Path));
+		NewSharedCache->GetQueryCache(*Context));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
+
+FVoxelTransformRef FVoxelQuery::GetLocalToWorld() const
+{
+	return GetInfo(EVoxelQueryInfo::Local).GetLocalToWorld();
+}
+
+FVoxelTransformRef FVoxelQuery::GetQueryToWorld() const
+{
+	return GetInfo(EVoxelQueryInfo::Query).GetLocalToWorld();
+}
+
+FVoxelTransformRef FVoxelQuery::GetLocalToQuery() const
+{
+	return
+		GetLocalToWorld() *
+		GetQueryToWorld().Inverse();
+}
+
+FVoxelTransformRef FVoxelQuery::GetQueryToLocal() const
+{
+	return GetLocalToQuery().Inverse();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -350,14 +443,18 @@ FVoxelQuery FVoxelQuery::MakeNewQuery(const TSharedRef<const FVoxelQueryParamete
 
 FVoxelQuery::FSharedCache::FSharedCache()
 {
-	NodePathToQueryCache_RequiresLock.Reserve(8);
+	RuntimeInfoAndNodePathToQueryCache_RequiresLock.Reserve(8);
 }
 
-FVoxelQueryCache& FVoxelQuery::FSharedCache::GetQueryCache(const FVoxelNodePath& Path) const
+FVoxelQueryCache& FVoxelQuery::FSharedCache::GetQueryCache(const FVoxelQueryContext& QueryContext) const
 {
 	VOXEL_SCOPE_LOCK(CriticalSection);
 
-	TSharedPtr<FVoxelQueryCache>& Cache = NodePathToQueryCache_RequiresLock.FindOrAdd(Path);
+	TSharedPtr<FVoxelQueryCache>& Cache = RuntimeInfoAndNodePathToQueryCache_RequiresLock.FindOrAdd(
+	{
+		QueryContext.RuntimeInfo.ToWeakPtr(),
+		QueryContext.Path
+	});
 	if (!Cache)
 	{
 		Cache = MakeVoxelShared<FVoxelQueryCache>();

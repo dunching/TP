@@ -70,8 +70,14 @@ public:
 
 	using FVertexFactory::FVertexFactory;
 
+	VOXEL_COUNT_INSTANCES();
+
 	static bool ShouldCompilePermutation(const FVertexFactoryShaderPermutationParameters& Parameters);
 	static void ModifyCompilationEnvironment(const FVertexFactoryShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment);
+	static void GetPSOPrecacheVertexFetchElements(
+		EVertexInputStreamType VertexInputStreamType,
+		FVertexDeclarationElementList& Elements,
+		bool bHasVertexNormals);
 
 	virtual bool SupportsPositionOnlyStream() const override { return true; }
 	virtual bool SupportsPositionAndNormalOnlyStream() const override { return true; }
@@ -88,6 +94,13 @@ class VOXELGRAPHNODES_API FVoxelMarchingCubeVertexFactory_NoVertexNormals : publ
 
 public:
 	using FVoxelMarchingCubeVertexFactoryBase::FVoxelMarchingCubeVertexFactoryBase;
+
+	static void GetPSOPrecacheVertexFetchElements(
+		EVertexInputStreamType VertexInputStreamType,
+		FVertexDeclarationElementList& Elements)
+	{
+		FVoxelMarchingCubeVertexFactoryBase::GetPSOPrecacheVertexFetchElements(VertexInputStreamType, Elements, false);
+	}
 };
 
 class VOXELGRAPHNODES_API FVoxelMarchingCubeVertexFactory_WithVertexNormals : public FVoxelMarchingCubeVertexFactoryBase
@@ -96,6 +109,13 @@ class VOXELGRAPHNODES_API FVoxelMarchingCubeVertexFactory_WithVertexNormals : pu
 
 public:
 	using FVoxelMarchingCubeVertexFactoryBase::FVoxelMarchingCubeVertexFactoryBase;
+
+	static void GetPSOPrecacheVertexFetchElements(
+		EVertexInputStreamType VertexInputStreamType,
+		FVertexDeclarationElementList& Elements)
+	{
+		FVoxelMarchingCubeVertexFactoryBase::GetPSOPrecacheVertexFetchElements(VertexInputStreamType, Elements, true);
+	}
 };
 
 USTRUCT()
